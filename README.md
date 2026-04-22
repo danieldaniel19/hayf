@@ -2,58 +2,84 @@
 
 HAYF stands for "How Are You Feeling".
 
-This repository starts with a deliberately small iOS prototype that tests the first technical hypothesis behind the product:
+HAYF is an iOS fitness coaching app that helps busy professionals decide what to train today based on how they feel, their recent workout and recovery data, and their longer-term goals.
 
-- Can we ask for HealthKit permission from an iPhone app?
-- Can we read a small set of relevant Apple Health data after the user grants access?
-- Can we give the user a simple path to manage or revoke that access later?
+The product idea is simple:
 
-The answer should be "yes", with one Apple-specific caveat:
+- the user opens the app before training
+- HAYF reads relevant context such as sleep, workouts, and activity history
+- the user provides a quick pre-workout check-in
+- HAYF recommends the best workout for that moment
+- after the workout, HAYF checks what Apple Health logged and lets the user confirm or manually log it
+- over time, HAYF tracks recommendation compliance and improves personalization
 
-- Apps can request HealthKit access in-app.
-- Apps cannot fully revoke HealthKit access programmatically on the user's behalf.
-- The user manages revocation from Apple's Health permission screens.
+## Product Direction
 
-## Project included here
+HAYF is being built first for:
 
-- `HAYFHealthKitPrototype.xcodeproj`: minimal iOS SwiftUI app project
+- busy professionals
+- users with some existing training experience
+- people balancing multiple exercise modalities such as gym, running, cycling, HIIT, and recovery work
+
+The core value proposition is deep personalization without forcing the user to plan everything themselves.
+
+## Current Status
+
+This repository currently contains the first validated technical slice of the product:
+
+- a minimal iOS SwiftUI app
+- HealthKit permission flow
+- sample Apple Health reads for sleep, workouts, and steps
+- foundational product and roadmap documentation
+
+That prototype proved the first important hypothesis: HAYF can request HealthKit access and read relevant Apple Health data on iPhone.
+
+## Repository Structure
+
+- `HAYFHealthKitPrototype.xcodeproj`: current Xcode project
 - `HAYFHealthKitPrototype/`: app source code
-- `docs/healthkit-prototype.md`: setup, scope, and next steps
-- `docs/architecture.md`: recommended backend/data architecture for HAYF
+- `docs/healthkit-prototype.md`: HealthKit prototype notes
+- `docs/architecture.md`: early architecture recommendation
+- `docs/roadmap.md`: beginner-first product and build roadmap
 
-## First run checklist
+## Getting Started
 
-1. Accept the Xcode license in Terminal:
-   ```bash
-   sudo xcodebuild -license
-   ```
-2. Open `HAYFHealthKitPrototype.xcodeproj` in Xcode.
-3. In the Signing & Capabilities tab:
-   - choose your Apple Team
-   - let Xcode fix signing if prompted
-   - confirm the `HealthKit` capability is present
-4. Run on a physical iPhone.
+1. Open `HAYFHealthKitPrototype.xcodeproj` in Xcode.
+2. Select your Apple Team in Signing if you want to run on a real device.
+3. Run on iPhone Simulator for UI validation.
+4. Run on a physical iPhone to test real HealthKit permissions and real Apple Health data.
 
-## Why a physical iPhone?
+## HealthKit Notes
 
-HealthKit permissions and real health samples are best tested on-device. The Simulator is not the right target for proving this hypothesis.
+A couple of platform realities are already known:
 
-## Prototype scope
+- apps can request HealthKit access in-app
+- users manage true HealthKit revocation through Apple's Health permission screens
+- real HealthKit behavior should be validated on a physical iPhone, not just in the simulator
 
-This first app is intentionally plain. It focuses on:
+## Product Documentation
 
-- requesting read access to a few useful health signals
-- showing whether HealthKit is available
-- running a couple of small sample queries after authorization
-- explaining how the user can manage or revoke access later
+The working product docs live in Notion and are mirrored here only where useful for engineering context.
 
-It does not attempt to build the full HAYF experience yet.
+Current planning areas include:
 
-## Suggested repo setup next
+- product overview
+- PRD for v1
+- roadmap and story map
+- backlog
+- decision log
+- open questions
 
-Once you create the GitHub repo, a clean next step is:
+## Next Build Focus
 
-1. initialize git locally
-2. commit this prototype baseline
-3. push to GitHub
-4. continue in small vertical slices: permissions, data normalization, recommendation engine, coaching UI
+The next major product slices are:
+
+1. onboarding for goals, workout preferences, and constraints
+2. pre-workout check-in
+3. recommendation engine and output schema
+4. post-workout Apple Health detection and manual confirmation flow
+5. compliance tracking
+
+## Philosophy
+
+HAYF is being built as a serious side project with lean process, tight scope control, and fast validation of the core user loop.
