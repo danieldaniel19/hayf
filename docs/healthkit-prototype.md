@@ -8,6 +8,8 @@ Prove the riskiest early iOS integration for HAYF:
 - read a few relevant data types
 - provide a simple user-facing permission management flow
 
+This prototype supports the v1 fitness wedge of the product. The final HAYF vision is broader: a holistic coaching experience across fitness, nutrition, and mind, where domain assistants can eventually share context and take bounded user-approved actions.
+
 ## What this prototype reads
 
 The app asks for read-only access to:
@@ -56,3 +58,4 @@ After running on a real iPhone and granting access, the prototype should show:
 3. Save local snapshots of context used for each recommendation.
 4. Add backend sync only for data you truly need off-device.
 5. Add coaching logic after the data contract is stable.
+6. Keep the feature model domain-aware so future nutrition and mind coaching can plug into the same shared context without rewriting the fitness foundation.

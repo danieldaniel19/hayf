@@ -2,7 +2,9 @@
 
 HAYF stands for "How Are You Feeling".
 
-HAYF is an iOS fitness coaching app that helps busy professionals decide what to train today based on how they feel, their recent workout and recovery data, and their longer-term goals.
+HAYF is an iOS coaching app for people balancing strength and cardio who want to know what to train today without guessing. It combines current context, recent workout and recovery data, and longer-term goals to recommend the most appropriate next session.
+
+The long-term vision is broader than fitness alone: HAYF should become a holistic coaching experience across fitness, nutrition, and mind. Those coaching areas may eventually be powered by standalone agents that understand their own domain, share context with one another, and take useful actions for the user, such as adding a recommended workout to the user's calendar.
 
 The product idea is simple:
 
@@ -15,13 +17,34 @@ The product idea is simple:
 
 ## Product Direction
 
-HAYF is being built first for:
+HAYF is being built fitness-first for:
 
-- busy professionals
-- users with some existing training experience
-- people balancing multiple exercise modalities such as gym, running, cycling, HIIT, and recovery work
+- busy professionals and tech-forward users
+- people who already rely on ChatGPT-like tools for planning but want something with more context and continuity
+- ambitious but inconsistent exercisers trying to balance strength and endurance across a changing week
 
-The core value proposition is deep personalization without forcing the user to plan everything themselves.
+The v1 value proposition is a personal fitness coach that helps the user balance strength and cardio without forcing them to research best practices or manually re-plan every time life changes.
+
+The product should still leave space for the fuller coaching system:
+
+- V1: fitness coaching, with strength/cardio recommendations and workout follow-through
+- V2: nutrition coaching, connected to training goals, recovery, and daily constraints
+- V3: mind coaching, connected to motivation, stress, confidence, and habit formation
+- Final vision: all coaching areas are aware of one another, can collaborate, and can take bounded user-approved actions
+
+The product promise is:
+
+- HAYF tells the user what to train today based on their data and longer-term goals
+- the user can adapt on the fly when time, motivation, schedule, travel, weather, or recovery changes
+- the recommendation still protects long-term consistency instead of reacting only to momentary vibes
+
+The intended product feel is:
+
+- highly personal
+- calm
+- coach-like
+- intelligent, with AI clearly present but not marketed as the hero
+- minimal, with a mostly black, white, and grey palette plus a restrained terracotta accent
 
 ## Current Status
 
@@ -38,6 +61,8 @@ That prototype proved the first important hypothesis: HAYF can request HealthKit
 
 - `HAYFHealthKitPrototype.xcodeproj`: current Xcode project
 - `HAYFHealthKitPrototype/`: app source code
+- `docs/product-positioning.md`: ICP, product promise, and design direction
+- `docs/onboarding-flow.md`: adaptive onboarding flow and branch design
 - `docs/healthkit-prototype.md`: HealthKit prototype notes
 - `docs/architecture.md`: early architecture recommendation
 - `docs/roadmap.md`: beginner-first product and build roadmap
@@ -64,6 +89,7 @@ The working product docs live in Notion and are mirrored here only where useful 
 Current planning areas include:
 
 - product overview
+- product positioning
 - PRD for v1
 - roadmap and story map
 - backlog
@@ -74,11 +100,14 @@ Current planning areas include:
 
 The next major product slices are:
 
-1. onboarding for goals, workout preferences, and constraints
+1. onboarding for goals, feasible training options, preferences, and constraints
 2. pre-workout check-in
-3. recommendation engine and output schema
-4. post-workout Apple Health detection and manual confirmation flow
-5. compliance tracking
+3. recommendation engine and output schema for balancing strength and cardio
+4. lightweight but always-accessible coach/chat affordance
+5. post-workout Apple Health detection and manual confirmation flow
+6. consistency and compliance tracking
+
+These slices should be designed as the first fitness domain inside a future multi-domain coaching system, not as a one-off fitness-only product.
 
 ## Philosophy
 

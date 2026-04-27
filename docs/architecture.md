@@ -11,6 +11,8 @@ For HAYF's first versions, the best architecture is:
 - Supabase stores user account data, user-entered check-ins, recommendation history, and selected derived summaries
 - AI coaching consumes derived features and user context, not a giant dump of raw HealthKit samples
 
+This keeps v1 fitness-focused while preserving a path toward the final product vision: a holistic coaching system where fitness, nutrition, and mind assistants can share context, consult one another, and take bounded user-approved actions.
+
 ## Why not sync all raw HealthKit data to Supabase?
 
 Because early on it creates more risk than value:
@@ -67,6 +69,8 @@ A practical first approach is:
 - AI returns a recommended training session and rationale
 - app stores the recommendation and the user's response
 
+The v1 AI layer can be implemented as a single fitness coach, but its contracts should anticipate later domain coaches. In practice, that means keeping context packets explicit, outputs structured, and actions separate from recommendation text.
+
 Example context packet:
 
 - self-reported feeling today
@@ -116,6 +120,18 @@ Avoid storing these remotely at first:
 - A/B testing for coaching prompts
 - selective sync of derived metrics
 
+### Phase 4
+
+- introduce nutrition-domain context and recommendations
+- separate shared user context from domain-specific coaching state
+- add explicit action requests for tasks such as calendar scheduling
+
+### Phase 5
+
+- introduce mind-domain context and recommendations
+- allow domain coaches to exchange compact advice before producing a user-facing recommendation
+- enforce consent, permissions, and auditability for any agentic action
+
 ## Why this fits HAYF
 
 HAYF is not just a logging app. It is a decision app.
@@ -138,5 +154,6 @@ Start with this stack:
 - local lightweight feature builder
 - Supabase for auth, app data, and recommendation history
 - AI layer only after the feature contract is stable
+- action layer later, with user approval and clear permissions
 
 That gives you a clean beginner-friendly path without painting HAYF into a privacy or architecture corner too early.

@@ -7,24 +7,34 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A00000010000000000000001 /* HAYFHealthKitPrototypeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000001 /* HAYFHealthKitPrototypeApp.swift */; };
-		A00000020000000000000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000120000000000000001 /* ContentView.swift */; };
+		A00000010000000000000001 /* HAYFApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000001 /* HAYFApp.swift */; };
+		A00000020000000000000001 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000120000000000000001 /* AppRootView.swift */; };
 		A00000030000000000000001 /* HealthKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000130000000000000001 /* HealthKitManager.swift */; };
 		A00000040000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000140000000000000001 /* Assets.xcassets */; };
 		A00000050000000000000001 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000150000000000000001 /* Preview Assets.xcassets */; };
 		A00000060000000000000001 /* HealthKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A00000170000000000000001 /* HealthKit.framework */; };
+		A00000070000000000000001 /* AuthMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001A000000000000001 /* AuthMode.swift */; };
+		A00000080000000000000001 /* AuthScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001B000000000000001 /* AuthScreen.swift */; };
+		A00000090000000000000001 /* HAYFColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001C000000000000001 /* HAYFColor.swift */; };
+		A000000A000000000000001 /* HAYFLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001D000000000000001 /* HAYFLogo.swift */; };
+		A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		A00000110000000000000001 /* HAYFHealthKitPrototypeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFHealthKitPrototypeApp.swift; sourceTree = "<group>"; };
-		A00000120000000000000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A00000110000000000000001 /* HAYFApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFApp.swift; sourceTree = "<group>"; };
+		A00000120000000000000001 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
 		A00000130000000000000001 /* HealthKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitManager.swift; sourceTree = "<group>"; };
 		A00000140000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A00000150000000000000001 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
 		A00000160000000000000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000170000000000000001 /* HealthKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = HealthKit.framework; path = System/Library/Frameworks/HealthKit.framework; sourceTree = SDKROOT; };
-		A00000180000000000000001 /* HAYFHealthKitPrototype.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = HAYFHealthKitPrototype.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000180000000000000001 /* HAYF.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = HAYF.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000190000000000000001 /* HAYFHealthKitPrototype.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = HAYFHealthKitPrototype.entitlements; sourceTree = "<group>"; };
+		A000001A000000000000001 /* AuthMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthMode.swift; sourceTree = "<group>"; };
+		A000001B000000000000001 /* AuthScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthScreen.swift; sourceTree = "<group>"; };
+		A000001C000000000000001 /* HAYFColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFColor.swift; sourceTree = "<group>"; };
+		A000001D000000000000001 /* HAYFLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFLogo.swift; sourceTree = "<group>"; };
+		A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthPermissionsPrototypeView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,9 +61,10 @@
 		A00000320000000000000001 /* HAYFHealthKitPrototype */ = {
 			isa = PBXGroup;
 			children = (
-				A00000110000000000000001 /* HAYFHealthKitPrototypeApp.swift */,
-				A00000120000000000000001 /* ContentView.swift */,
-				A00000130000000000000001 /* HealthKitManager.swift */,
+				A00000360000000000000001 /* App */,
+				A00000370000000000000001 /* Auth */,
+				A00000380000000000000001 /* DesignSystem */,
+				A00000390000000000000001 /* Health */,
 				A00000140000000000000001 /* Assets.xcassets */,
 				A00000350000000000000001 /* Preview Content */,
 				A00000160000000000000001 /* Info.plist */,
@@ -65,7 +76,7 @@
 		A00000330000000000000001 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A00000180000000000000001 /* HAYFHealthKitPrototype.app */,
+				A00000180000000000000001 /* HAYF.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -86,6 +97,42 @@
 			path = "Preview Content";
 			sourceTree = "<group>";
 		};
+		A00000360000000000000001 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000001 /* HAYFApp.swift */,
+				A00000120000000000000001 /* AppRootView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A00000370000000000000001 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				A000001A000000000000001 /* AuthMode.swift */,
+				A000001B000000000000001 /* AuthScreen.swift */,
+			);
+			path = Auth;
+			sourceTree = "<group>";
+		};
+		A00000380000000000000001 /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				A000001C000000000000001 /* HAYFColor.swift */,
+				A000001D000000000000001 /* HAYFLogo.swift */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		A00000390000000000000001 /* Health */ = {
+			isa = PBXGroup;
+			children = (
+				A00000130000000000000001 /* HealthKitManager.swift */,
+				A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */,
+			);
+			path = Health;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -102,8 +149,8 @@
 			dependencies = (
 			);
 			name = HAYFHealthKitPrototype;
-			productName = HAYFHealthKitPrototype;
-			productReference = A00000180000000000000001 /* HAYFHealthKitPrototype.app */;
+			productName = HAYF;
+			productReference = A00000180000000000000001 /* HAYF.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -156,9 +203,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A00000010000000000000001 /* HAYFHealthKitPrototypeApp.swift in Sources */,
-				A00000020000000000000001 /* ContentView.swift in Sources */,
+				A00000010000000000000001 /* HAYFApp.swift in Sources */,
+				A00000020000000000000001 /* AppRootView.swift in Sources */,
+				A00000070000000000000001 /* AuthMode.swift in Sources */,
+				A00000080000000000000001 /* AuthScreen.swift in Sources */,
+				A00000090000000000000001 /* HAYFColor.swift in Sources */,
+				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
+				A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -228,7 +280,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = HAYF;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -254,7 +306,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = HAYF;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
