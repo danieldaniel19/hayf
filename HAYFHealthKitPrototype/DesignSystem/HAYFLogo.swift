@@ -1,15 +1,19 @@
 import SwiftUI
 
 struct HAYFLogo: View {
+    var markSize: CGFloat = 48
+    var textSize: CGFloat = 42
+    var spacing: CGFloat = 13
+
     var body: some View {
-        HStack(alignment: .center, spacing: 13) {
+        HStack(alignment: .center, spacing: spacing) {
             Image("HAYFMark")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 48, height: 48)
+                .frame(width: markSize, height: markSize)
 
             Text("HAYF")
-                .font(.system(size: 42, weight: .black, design: .default))
+                .font(.system(size: textSize, weight: .black, design: .default))
                 .foregroundStyle(.black)
         }
         .accessibilityElement(children: .ignore)

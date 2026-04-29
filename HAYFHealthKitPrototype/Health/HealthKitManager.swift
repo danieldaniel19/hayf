@@ -5,6 +5,8 @@ struct HealthSnapshot {
     let sleepHoursLastNight: Double?
     let workoutsLast7Days: Int
     let averageStepsLast7Days: Double?
+    let heightCentimeters: Double?
+    let bodyMassKilograms: Double?
 }
 
 enum HealthAuthorizationState: String {
@@ -33,6 +35,7 @@ final class HealthKitManager {
             HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
             HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN),
             HKQuantityType.quantityType(forIdentifier: .restingHeartRate),
+            HKQuantityType.quantityType(forIdentifier: .height),
             HKQuantityType.quantityType(forIdentifier: .bodyMass)
         ].compactMap { $0 }.forEach { types.insert($0) }
 
@@ -75,11 +78,15 @@ final class HealthKitManager {
         async let sleepHours = fetchSleepHoursLastNight()
         async let workouts = fetchWorkoutCountLast7Days()
         async let averageSteps = fetchAverageStepsLast7Days()
+        async let height = fetchLatestQuantityValue(identifier: .height, unit: .meterUnit(with: .centi))
+        async let bodyMass = fetchLatestQuantityValue(identifier: .bodyMass, unit: .gramUnit(with: .kilo))
 
         return try await HealthSnapshot(
             sleepHoursLastNight: sleepHours,
             workoutsLast7Days: workouts,
-            averageStepsLast7Days: averageSteps
+            averageStepsLast7Days: averageSteps,
+            heightCentimeters: height,
+            bodyMassKilograms: bodyMass
         )
     }
 
@@ -202,6 +209,28 @@ final class HealthKitManager {
 
         let average = dailyTotals.reduce(0, +) / Double(dailyTotals.count)
         return average
+    }
+
+    private func fetchLatestQuantityValue(identifier: HKQuantityTypeIdentifier, unit: HKUnit) async throws -> Double? {
+        guard let quantityType = HKQuantityType.quantityType(forIdentifier: identifier) else {
+            return nil
+        }
+
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: false)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKSampleQuery(sampleType: quantityType, predicate: nil, limit: 1, sortDescriptors: [sortDescriptor]) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                let value = (samples?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit)
+                continuation.resume(returning: value)
+            }
+
+            healthStore.execute(query)
+        }
     }
 }
 

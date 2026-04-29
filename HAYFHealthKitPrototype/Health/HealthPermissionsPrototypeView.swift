@@ -9,6 +9,8 @@ final class HealthPermissionsViewModel: ObservableObject {
     @Published var sleepSummaryText = "-"
     @Published var workoutSummaryText = "-"
     @Published var stepsSummaryText = "-"
+    @Published var heightSummaryText = "-"
+    @Published var bodyMassSummaryText = "-"
     @Published var isLoading = false
     @Published var revokeInstructionsPresented = false
 
@@ -52,6 +54,18 @@ final class HealthPermissionsViewModel: ObservableObject {
             stepsSummaryText = String(format: "%.0f average daily steps over 7 days", averageSteps)
         } else {
             stepsSummaryText = "No recent steps data returned"
+        }
+
+        if let heightCentimeters = snapshot.heightCentimeters {
+            heightSummaryText = String(format: "%.0f cm", heightCentimeters)
+        } else {
+            heightSummaryText = "No height data returned"
+        }
+
+        if let bodyMassKilograms = snapshot.bodyMassKilograms {
+            bodyMassSummaryText = String(format: "%.1f kg", bodyMassKilograms)
+        } else {
+            bodyMassSummaryText = "No body mass data returned"
         }
     }
 
@@ -133,6 +147,16 @@ struct HealthPermissionsPrototypeView: View {
 
                     LabeledContent("Steps") {
                         Text(viewModel.stepsSummaryText)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    LabeledContent("Height") {
+                        Text(viewModel.heightSummaryText)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    LabeledContent("Body mass") {
+                        Text(viewModel.bodyMassSummaryText)
                             .multilineTextAlignment(.trailing)
                     }
                 }

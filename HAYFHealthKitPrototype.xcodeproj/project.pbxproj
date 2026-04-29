@@ -22,6 +22,8 @@
 		A000000D000000000000001 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000020000000000000001 /* AuthViewModel.swift */; };
 		A000000E000000000000001 /* AuthenticatedHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000024000000000000001 /* AuthenticatedHomeView.swift */; };
 		A000000F000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = A0000022000000000000001 /* Supabase */; };
+		A000001000000000000001 /* AccountCreationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000025000000000000001 /* AccountCreationView.swift */; };
+		A000001100000000000001 /* AccountProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000026000000000000001 /* AccountProfileStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +44,8 @@
 		A000001F000000000000001 /* SupabaseClientProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClientProvider.swift; sourceTree = "<group>"; };
 		A0000020000000000000001 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		A0000024000000000000001 /* AuthenticatedHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedHomeView.swift; sourceTree = "<group>"; };
+		A0000025000000000000001 /* AccountCreationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCreationView.swift; sourceTree = "<group>"; };
+		A0000026000000000000001 /* AccountProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -119,6 +123,8 @@
 			children = (
 				A000001A000000000000001 /* AuthMode.swift */,
 				A000001B000000000000001 /* AuthScreen.swift */,
+				A0000025000000000000001 /* AccountCreationView.swift */,
+				A0000026000000000000001 /* AccountProfileStore.swift */,
 				A0000020000000000000001 /* AuthViewModel.swift */,
 				A0000024000000000000001 /* AuthenticatedHomeView.swift */,
 				A000001F000000000000001 /* SupabaseClientProvider.swift */,
@@ -224,6 +230,8 @@
 				A00000020000000000000001 /* AppRootView.swift in Sources */,
 				A00000070000000000000001 /* AuthMode.swift in Sources */,
 				A00000080000000000000001 /* AuthScreen.swift in Sources */,
+				A000001000000000000001 /* AccountCreationView.swift in Sources */,
+				A000001100000000000001 /* AccountProfileStore.swift in Sources */,
 				A000000D000000000000001 /* AuthViewModel.swift in Sources */,
 				A000000E000000000000001 /* AuthenticatedHomeView.swift in Sources */,
 				A000000C000000000000001 /* SupabaseClientProvider.swift in Sources */,

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AuthenticatedHomeView: View {
     let userEmail: String?
+    let displayName: String?
     let signOut: () -> Void
 
     var body: some View {
@@ -13,9 +14,10 @@ struct AuthenticatedHomeView: View {
                 HAYFLogo()
 
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("You're in.")
+                    Text(displayName.map { "You're in,\n\($0)." } ?? "You're in.")
                         .font(.system(size: 44, weight: .bold, design: .default))
                         .foregroundStyle(HAYFColor.primary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     Text(userEmail ?? "Google auth completed.")
                         .font(.system(size: 18, weight: .regular, design: .default))
@@ -43,5 +45,5 @@ struct AuthenticatedHomeView: View {
 }
 
 #Preview {
-    AuthenticatedHomeView(userEmail: "you@example.com") {}
+    AuthenticatedHomeView(userEmail: "you@example.com", displayName: "Daniel") {}
 }
