@@ -45,7 +45,7 @@
         <string>UIInterfaceOrientationPortrait</string>
     </array>
     <key>NSHealthShareUsageDescription</key>
-    <string>HAYF reads your health data to understand your recovery and recommend the right exercise for how you feel today.</string>
+    <string>HAYF reads Apple Health data such as workouts, activity, sleep, recovery signals, heart-rate trends, cardio fitness, height, and body metrics to recommend training that fits how ready you are today.</string>
     <key>NSHealthUpdateUsageDescription</key>
     <string>HAYF may later save workout-related outputs with your permission, but this prototype only reads your health data.</string>
 </dict>

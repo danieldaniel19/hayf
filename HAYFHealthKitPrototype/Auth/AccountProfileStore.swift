@@ -37,6 +37,22 @@ private struct CreateAccountProfileRequest: Encodable {
     }
 }
 
+private struct UpdateAccountProfileRequest: Encodable {
+    let name: String
+    let birthdate: String
+    let mainCity: String
+    let profilePhotoPath: String?
+    let profilePhotoURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case birthdate
+        case mainCity = "main_city"
+        case profilePhotoPath = "profile_photo_path"
+        case profilePhotoURL = "profile_photo_url"
+    }
+}
+
 @MainActor
 final class AccountProfileStore: ObservableObject {
     @Published private(set) var profile: StoredAccountProfile?
@@ -87,6 +103,32 @@ final class AccountProfileStore: ObservableObject {
             .value
 
         return createdProfile
+    }
+
+    func updateCurrentUserProfile(from draft: AccountProfile, existingProfile: StoredAccountProfile) async throws -> StoredAccountProfile {
+        let user = try await supabase.auth.session.user
+        let uploadedProfilePhotoPath = try await uploadProfilePhotoIfNeeded(draft.profilePhotoData, userID: user.id)
+        let profilePhotoPath = uploadedProfilePhotoPath ?? existingProfile.profilePhotoPath
+        let profilePhotoURL = uploadedProfilePhotoPath == nil ? (draft.profilePhotoURL?.absoluteString ?? existingProfile.profilePhotoURL) : nil
+
+        let request = UpdateAccountProfileRequest(
+            name: draft.name,
+            birthdate: birthdateFormatter.string(from: draft.birthdate),
+            mainCity: draft.mainCity,
+            profilePhotoPath: profilePhotoPath,
+            profilePhotoURL: profilePhotoURL
+        )
+
+        let updatedProfile: StoredAccountProfile = try await supabase
+            .from("profiles")
+            .update(request)
+            .eq("id", value: user.id)
+            .select()
+            .single()
+            .execute()
+            .value
+
+        return updatedProfile
     }
 
     func useProfile(_ profile: StoredAccountProfile) {

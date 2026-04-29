@@ -87,7 +87,7 @@ struct HealthPermissionsPrototypeView: View {
         NavigationStack {
             Form {
                 Section("Goal") {
-                    Text("This prototype proves that HAYF can request Apple Health permission and read a few useful signals for future exercise recommendations.")
+                    Text("This prototype proves that HAYF can request Apple Health permission for workouts, activity, sleep, recovery, cardio fitness, and basic body context.")
                         .font(.subheadline)
                 }
 

@@ -133,11 +133,11 @@ Lean toward an almost brutal monochrome system:
 - whites
 - greys
 - black
-- a very restrained terracotta accent
+- a very restrained HAYF orange accent
 
 Also worth testing:
 
-- cool whites with graphite and black plus the same terracotta accent
+- cool whites with graphite and black plus the same HAYF orange accent
 
 Hybrid-athlete positioning should be visually explicit:
 

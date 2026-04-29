@@ -48,7 +48,7 @@ Use a hybrid pattern:
 2. Extract a draft profile.
 3. Show a short coach-style readback.
 4. Ask focused clarifying questions with buttons.
-5. Always include "something else", "not sure", or a short free-text input.
+5. Use short free-text inputs where rigid options would hide important context.
 6. End with a first useful output: a next-session recommendation, weekly direction, or suggested goal.
 
 The repeated interaction pattern is:
@@ -60,11 +60,11 @@ The repeated interaction pattern is:
 
 Use open input for:
 
-- the first coach intake
 - natural-language goals
 - unusual constraints
 - injuries and edge cases
 - answers that do not fit the available buttons
+- motivation notes or blocker details that a coach should remember
 
 Use buttons for:
 
@@ -77,10 +77,15 @@ Use buttons for:
 - confidence and readiness
 - goal category
 
+Do not add generic "Something else" options when the screen already has an optional text field. On multi-select screens, selected states should use square checkbox/tick affordances, not radio controls, so the interaction reads as multi-select immediately.
+
 ## Top-level onboarding
 
 1. Welcome: "HAYF helps you decide what to train today."
-2. Open input: "What should your coach know? Mention sports, current routine, goals, constraints, or what usually gets in the way."
+2. Intent choice:
+   - Help me stay consistent
+   - I have a concrete goal
+   - Help me choose a goal
 3. Feasible training menu: "What can HAYF recommend?"
    - Strength
    - Running
@@ -92,27 +97,22 @@ Use buttons for:
    - Mobility
    - Walking
    - Yoga
-   - Other
-4. Intent choice:
-   - Help me stay consistent
-   - I have a concrete goal
-   - Help me choose a goal
-5. Adaptive questions based on intent.
-6. Health and constraints:
+4. Adaptive questions based on intent.
+5. Health and constraints:
    - injuries
    - soreness
    - recovery
    - forbidden movements
-7. Availability and access:
+6. Availability and access:
    - training days
    - typical duration
    - gym, home, outdoor, equipment
-8. Coach summary:
+7. Coach summary:
    - confirm or edit the understood profile
-9. HealthKit permission:
+8. HealthKit permission:
    - ask after the user has seen that HAYF understands them
    - explain that sleep, workouts, heart rate, and activity improve recommendations
-10. First useful output:
+9. First useful output:
    - next recommendation, starter week, or chosen goal plan
 
 HealthKit permission should come after the value preview. Permission asks are easier to justify once the user understands why HAYF needs the data.
@@ -146,7 +146,8 @@ What should HAYF optimize for most?
 - Feeling better day to day
 - Balanced strength and cardio
 - General fitness
-- Something else
+
+If none fit, use the optional motivation note rather than adding a generic "Something else" button.
 
 How many days per week feels realistic?
 
@@ -172,7 +173,8 @@ What usually breaks consistency?
 - No plan
 - Travel
 - Motivation
-- Other
+
+The optional blocker note captures unusual blockers.
 
 On a bad day, what is still acceptable?
 
@@ -180,7 +182,21 @@ On a bad day, what is still acceptable?
 - 20-minute easy session
 - Short strength circuit
 - Rest, but intentional
-- Ask me that day
+
+Current implementation:
+
+1. Intent: choose stay consistent, specific goal, or help me find a goal.
+2. Training options: multi-select feasible recommendation types.
+3. Anchor: multi-select the deeper reason consistency matters, with an optional note.
+4. Rhythm: single-select days per week and session length.
+5. Friction: multi-select consistency blockers, with an optional note.
+6. Support style: single-select the coaching behavior HAYF should use when the user is drifting.
+7. Bad-day floor: single-select the minimum session or intentional rest pattern that still counts.
+8. Summary: read back the interpreted profile and allow adjustment.
+9. Apple Health: request the v1 read-only HealthKit scope after the value preview.
+10. First rhythm: show a starter weekly rhythm and a coach note based on blockers and bad-day floor.
+
+The concrete-goal and help-me-find-a-goal branches currently route to a placeholder that explains their planned shape, then lets the tester continue through the stay-consistent path. They should be implemented next.
 
 Example output:
 
@@ -218,7 +234,7 @@ What kind of goal is this?
 - Sport performance
 - Consistency streak
 - Rehab or return to training
-- Other
+- Custom goal
 
 What is the target?
 
@@ -394,3 +410,33 @@ By the end of onboarding, HAYF should have enough structured data to produce a r
 - HealthKit permission state
 
 The profile should be editable later. Onboarding should create the first useful version, not the permanent truth.
+
+## Health permission ask
+
+HealthKit permission should be asked after HAYF has shown enough value for the user to understand why it matters. The ask should not be framed as "height access"; height is only one small part of the useful context.
+
+For v1, ask for read-only Apple Health access to:
+
+- workouts
+- sleep analysis
+- steps
+- active energy
+- exercise minutes
+- walking and running distance
+- resting heart rate
+- heart rate variability
+- heart rate
+- VO2 max
+- height
+- body mass
+
+User-facing copy should group these as:
+
+- recent workouts
+- daily movement
+- sleep
+- recovery signals
+- cardio fitness
+- basic body metrics
+
+Do not ask for nutrition, reproductive health, clinical records, medications, symptoms, or mindfulness data in the v1 fitness onboarding. These may belong to later nutrition or mind coaching flows, but they would make the first permission ask feel too broad.

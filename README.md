@@ -44,24 +44,29 @@ The intended product feel is:
 - calm
 - coach-like
 - intelligent, with AI clearly present but not marketed as the hero
-- minimal, with a mostly black, white, and grey palette plus a restrained terracotta accent
+- minimal, with a mostly black, white, and grey palette plus a restrained HAYF orange accent
 
 ## Current Status
 
-This repository currently contains the first validated technical slice of the product:
+This repository currently contains the first validated technical slice of the product plus the first onboarding implementation:
 
 - a minimal iOS SwiftUI app
-- HealthKit permission flow
-- sample Apple Health reads for sleep, workouts, and steps
+- Google auth and post-auth account creation
+- Supabase profile storage
+- stay-consistent onboarding flow
+- HealthKit permission flow with the v1 read scope
+- sample Apple Health reads for sleep, workouts, steps, height, and body mass
+- tester restart controls for account creation and onboarding
 - foundational product and roadmap documentation
 
-That prototype proved the first important hypothesis: HAYF can request HealthKit access and read relevant Apple Health data on iPhone.
+The prototype has proved the first important hypothesis: HAYF can authenticate a user, create a profile, request HealthKit access, and read relevant Apple Health data on iPhone.
 
 ## Repository Structure
 
 - `HAYFHealthKitPrototype.xcodeproj`: current Xcode project
 - `HAYFHealthKitPrototype/`: app source code
 - `docs/product-positioning.md`: ICP, product promise, and design direction
+- `docs/account-creation.md`: post-auth account setup flow, profile schema, and Supabase wiring
 - `docs/onboarding-flow.md`: adaptive onboarding flow and branch design
 - `docs/healthkit-prototype.md`: HealthKit prototype notes
 - `docs/architecture.md`: early architecture recommendation
@@ -100,7 +105,7 @@ Current planning areas include:
 
 The next major product slices are:
 
-1. onboarding for goals, feasible training options, preferences, and constraints
+1. concrete-goal and help-me-find-a-goal onboarding branches
 2. pre-workout check-in
 3. recommendation engine and output schema for balancing strength and cardio
 4. lightweight but always-accessible coach/chat affordance

@@ -3,8 +3,11 @@ import SwiftUI
 struct AppRootView: View {
     @StateObject private var authViewModel = AuthViewModel()
     @StateObject private var accountProfileStore = AccountProfileStore()
+    @AppStorage("hayf.completedOnboardingUserID") private var completedOnboardingUserID = ""
     @State private var authMode: AuthMode = .signIn
     @State private var createdProfilePendingFinish: StoredAccountProfile?
+    @State private var updatedProfilePendingFinish: StoredAccountProfile?
+    @State private var isRestartingAccountCreation = false
 
     var body: some View {
         Group {
@@ -12,11 +15,39 @@ struct AppRootView: View {
                 if accountProfileStore.isLoading {
                     AccountProfileLoadingView()
                 } else if let accountProfile = accountProfileStore.profile {
-                    AuthenticatedHomeView(
-                        userEmail: authViewModel.userEmail,
-                        displayName: accountProfile.name,
-                        signOut: signOut
-                    )
+                    if isRestartingAccountCreation {
+                        AccountCreationView(
+                            existingProfile: accountProfile,
+                            onCreate: { profile in
+                                let updatedProfile = try await accountProfileStore.updateCurrentUserProfile(from: profile, existingProfile: accountProfile)
+                                updatedProfilePendingFinish = updatedProfile
+                            },
+                            onFinish: {
+                                if let updatedProfilePendingFinish {
+                                    accountProfileStore.useProfile(updatedProfilePendingFinish)
+                                }
+                                updatedProfilePendingFinish = nil
+                                isRestartingAccountCreation = false
+                            }
+                        )
+                    } else if shouldShowOnboarding(for: accountProfile) {
+                        OnboardingFlowView {
+                            completedOnboardingUserID = accountProfile.id.uuidString
+                        }
+                    } else {
+                        AuthenticatedHomeView(
+                            userEmail: authViewModel.userEmail,
+                            displayName: accountProfile.name,
+                            restartAccountCreation: {
+                                updatedProfilePendingFinish = nil
+                                isRestartingAccountCreation = true
+                            },
+                            restartOnboarding: {
+                                completedOnboardingUserID = ""
+                            },
+                            signOut: signOut
+                        )
+                    }
                 } else {
                     AccountCreationView(
                         prefilledName: authViewModel.userDisplayName,
@@ -55,13 +86,21 @@ struct AppRootView: View {
             } else {
                 accountProfileStore.reset()
                 createdProfilePendingFinish = nil
+                updatedProfilePendingFinish = nil
+                isRestartingAccountCreation = false
             }
         }
+    }
+
+    private func shouldShowOnboarding(for profile: StoredAccountProfile) -> Bool {
+        completedOnboardingUserID != profile.id.uuidString
     }
 
     private func signOut() {
         accountProfileStore.reset()
         createdProfilePendingFinish = nil
+        updatedProfilePendingFinish = nil
+        isRestartingAccountCreation = false
         authViewModel.signOut()
     }
 }

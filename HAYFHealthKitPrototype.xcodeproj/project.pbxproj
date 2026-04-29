@@ -24,6 +24,7 @@
 		A000000F000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = A0000022000000000000001 /* Supabase */; };
 		A000001000000000000001 /* AccountCreationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000025000000000000001 /* AccountCreationView.swift */; };
 		A000001100000000000001 /* AccountProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000026000000000000001 /* AccountProfileStore.swift */; };
+		A000001200000000000001 /* OnboardingFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000027000000000000001 /* OnboardingFlowView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +47,7 @@
 		A0000024000000000000001 /* AuthenticatedHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedHomeView.swift; sourceTree = "<group>"; };
 		A0000025000000000000001 /* AccountCreationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCreationView.swift; sourceTree = "<group>"; };
 		A0000026000000000000001 /* AccountProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileStore.swift; sourceTree = "<group>"; };
+		A0000027000000000000001 /* OnboardingFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -77,6 +79,7 @@
 				A00000370000000000000001 /* Auth */,
 				A00000380000000000000001 /* DesignSystem */,
 				A00000390000000000000001 /* Health */,
+				A000003A000000000000001 /* Onboarding */,
 				A00000140000000000000001 /* Assets.xcassets */,
 				A00000350000000000000001 /* Preview Content */,
 				A00000160000000000000001 /* Info.plist */,
@@ -148,6 +151,14 @@
 				A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */,
 			);
 			path = Health;
+			sourceTree = "<group>";
+		};
+		A000003A000000000000001 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				A0000027000000000000001 /* OnboardingFlowView.swift */,
+			);
+			path = Onboarding;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -237,6 +248,7 @@
 				A000000C000000000000001 /* SupabaseClientProvider.swift in Sources */,
 				A00000090000000000000001 /* HAYFColor.swift in Sources */,
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
+				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */,
 			);

@@ -60,6 +60,8 @@ Supabase is a good fit for:
 - coaching conversation records
 - row-level security and admin tooling
 
+The current post-auth account creation contract is documented in `docs/account-creation.md`.
+
 ### For AI coaching
 
 A practical first approach is:
@@ -144,6 +146,8 @@ That means the real asset is not raw sensor data alone. The real asset is the de
 - what constraints they have right now
 
 So design around `context packets` and `derived features`, not bulk storage.
+
+For v1, the HealthKit read scope should cover workouts, sleep, daily movement, recovery signals, cardio fitness, height, and body mass. The app should turn these into compact derived features before recommendation, rather than sending raw HealthKit samples to the AI layer.
 
 ## Recommendation
 

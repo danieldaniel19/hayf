@@ -33,8 +33,12 @@ final class HealthKitManager {
         [
             HKQuantityType.quantityType(forIdentifier: .stepCount),
             HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
+            HKQuantityType.quantityType(forIdentifier: .appleExerciseTime),
+            HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning),
             HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN),
             HKQuantityType.quantityType(forIdentifier: .restingHeartRate),
+            HKQuantityType.quantityType(forIdentifier: .heartRate),
+            HKQuantityType.quantityType(forIdentifier: .vo2Max),
             HKQuantityType.quantityType(forIdentifier: .height),
             HKQuantityType.quantityType(forIdentifier: .bodyMass)
         ].compactMap { $0 }.forEach { types.insert($0) }

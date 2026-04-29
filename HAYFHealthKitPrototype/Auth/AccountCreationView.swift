@@ -13,6 +13,7 @@ struct AccountProfile {
 struct AccountCreationView: View {
     let prefilledName: String?
     let prefilledAvatarURL: URL?
+    let existingProfile: StoredAccountProfile?
     let onCreate: (AccountProfile) async throws -> Void
     let onFinish: () -> Void
 
@@ -31,14 +32,18 @@ struct AccountCreationView: View {
     init(
         prefilledName: String? = nil,
         prefilledAvatarURL: URL? = nil,
+        existingProfile: StoredAccountProfile? = nil,
         onCreate: @escaping (AccountProfile) async throws -> Void,
         onFinish: @escaping () -> Void
     ) {
-        self.prefilledName = prefilledName
-        self.prefilledAvatarURL = prefilledAvatarURL
+        self.prefilledName = existingProfile?.name ?? prefilledName
+        self.prefilledAvatarURL = existingProfile?.profilePhotoURL.flatMap(URL.init(string:)) ?? prefilledAvatarURL
+        self.existingProfile = existingProfile
         self.onCreate = onCreate
         self.onFinish = onFinish
-        _name = State(initialValue: prefilledName ?? "")
+        _name = State(initialValue: existingProfile?.name ?? prefilledName ?? "")
+        _birthdate = State(initialValue: existingProfile.flatMap { Self.storedBirthdateFormatter.date(from: $0.birthdate) })
+        _mainCity = State(initialValue: existingProfile?.mainCity ?? "")
     }
 
     var body: some View {
@@ -117,7 +122,7 @@ struct AccountCreationView: View {
             AccountIntro(
                 eyebrow: "ACCOUNT SETUP",
                 title: "Let's set up\nyour account.",
-                copy: "Just a few basics to personalize HAYF. This isn't your workout onboarding."
+                copy: existingProfile == nil ? "Just a few basics to personalize HAYF. This isn't your workout onboarding." : "Update the basics HAYF uses for your profile."
             )
 
             ProfilePhotoControl(
@@ -393,7 +398,7 @@ struct AccountCreationView: View {
                     .padding(.bottom, 12)
             }
 
-            AccountPrimaryButton(title: isSaving ? "Creating account" : "Create account", isEnabled: isProfileComplete && !isSaving, isLoading: isSaving) {
+            AccountPrimaryButton(title: saveButtonTitle, isEnabled: isProfileComplete && !isSaving, isLoading: isSaving) {
                 createAccount()
             }
         }
@@ -429,7 +434,7 @@ struct AccountCreationView: View {
 
             Spacer()
 
-            AccountPrimaryButton(title: "Start onboarding", isEnabled: true) {
+            AccountPrimaryButton(title: existingProfile == nil ? "Start onboarding" : "Back to HAYF", isEnabled: true) {
                 onFinish()
             }
         }
@@ -437,6 +442,14 @@ struct AccountCreationView: View {
 
     private var isProfileComplete: Bool {
         !name.trimmed.isEmpty && birthdate != nil && !mainCity.trimmed.isEmpty
+    }
+
+    private var saveButtonTitle: String {
+        if isSaving {
+            return existingProfile == nil ? "Creating account" : "Updating account"
+        }
+
+        return existingProfile == nil ? "Create account" : "Update account"
     }
 
     private func continueFromSetup() {
@@ -485,6 +498,14 @@ struct AccountCreationView: View {
     private static let birthdateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy"
+        return formatter
+    }()
+
+    private static let storedBirthdateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
 }
