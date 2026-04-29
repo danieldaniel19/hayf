@@ -18,6 +18,10 @@
 		A00000090000000000000001 /* HAYFColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001C000000000000001 /* HAYFColor.swift */; };
 		A000000A000000000000001 /* HAYFLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001D000000000000001 /* HAYFLogo.swift */; };
 		A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */; };
+		A000000C000000000000001 /* SupabaseClientProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A000001F000000000000001 /* SupabaseClientProvider.swift */; };
+		A000000D000000000000001 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000020000000000000001 /* AuthViewModel.swift */; };
+		A000000E000000000000001 /* AuthenticatedHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000024000000000000001 /* AuthenticatedHomeView.swift */; };
+		A000000F000000000000001 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = A0000022000000000000001 /* Supabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +39,9 @@
 		A000001C000000000000001 /* HAYFColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFColor.swift; sourceTree = "<group>"; };
 		A000001D000000000000001 /* HAYFLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFLogo.swift; sourceTree = "<group>"; };
 		A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthPermissionsPrototypeView.swift; sourceTree = "<group>"; };
+		A000001F000000000000001 /* SupabaseClientProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseClientProvider.swift; sourceTree = "<group>"; };
+		A0000020000000000000001 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
+		A0000024000000000000001 /* AuthenticatedHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedHomeView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,6 +50,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000060000000000000001 /* HealthKit.framework in Frameworks */,
+				A000000F000000000000001 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -111,6 +119,9 @@
 			children = (
 				A000001A000000000000001 /* AuthMode.swift */,
 				A000001B000000000000001 /* AuthScreen.swift */,
+				A0000020000000000000001 /* AuthViewModel.swift */,
+				A0000024000000000000001 /* AuthenticatedHomeView.swift */,
+				A000001F000000000000001 /* SupabaseClientProvider.swift */,
 			);
 			path = Auth;
 			sourceTree = "<group>";
@@ -149,6 +160,9 @@
 			dependencies = (
 			);
 			name = HAYFHealthKitPrototype;
+			packageProductDependencies = (
+				A0000022000000000000001 /* Supabase */,
+			);
 			productName = HAYF;
 			productReference = A00000180000000000000001 /* HAYF.app */;
 			productType = "com.apple.product-type.application";
@@ -177,6 +191,9 @@
 				Base,
 			);
 			mainGroup = A00000310000000000000001;
+			packageReferences = (
+				A0000021000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
 			productRefGroup = A00000330000000000000001 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -207,6 +224,9 @@
 				A00000020000000000000001 /* AppRootView.swift in Sources */,
 				A00000070000000000000001 /* AuthMode.swift in Sources */,
 				A00000080000000000000001 /* AuthScreen.swift in Sources */,
+				A000000D000000000000001 /* AuthViewModel.swift in Sources */,
+				A000000E000000000000001 /* AuthenticatedHomeView.swift in Sources */,
+				A000000C000000000000001 /* SupabaseClientProvider.swift in Sources */,
 				A00000090000000000000001 /* HAYFColor.swift in Sources */,
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
@@ -215,6 +235,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A0000021000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A0000022000000000000001 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A0000021000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A00000610000000000000001 /* Debug */ = {

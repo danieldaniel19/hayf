@@ -2,11 +2,28 @@ import SwiftUI
 
 struct AuthScreen: View {
     let mode: AuthMode
+    let isLoading: Bool
+    let errorMessage: String?
     let switchMode: () -> Void
+    let onGoogleAuth: () -> Void
 
     private let sidePadding: CGFloat = 30
     private let topPadding: CGFloat = 48
     private let logoToCopySpacing: CGFloat = 54
+
+    init(
+        mode: AuthMode,
+        isLoading: Bool = false,
+        errorMessage: String? = nil,
+        switchMode: @escaping () -> Void,
+        onGoogleAuth: @escaping () -> Void = {}
+    ) {
+        self.mode = mode
+        self.isLoading = isLoading
+        self.errorMessage = errorMessage
+        self.switchMode = switchMode
+        self.onGoogleAuth = onGoogleAuth
+    }
 
     var body: some View {
         ZStack {
@@ -49,9 +66,22 @@ struct AuthScreen: View {
                 Spacer(minLength: 22)
 
                 VStack(spacing: 12) {
-                    AuthProviderButton(title: mode.googleTitle, provider: .google)
+                    AuthProviderButton(
+                        title: mode.googleTitle,
+                        provider: .google,
+                        isLoading: isLoading,
+                        action: onGoogleAuth
+                    )
                     AuthProviderButton(title: mode.appleTitle, provider: .apple)
                     AuthProviderButton(title: mode.emailTitle, provider: .email)
+                }
+
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundStyle(HAYFColor.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 12)
                 }
 
                 OrDivider()
@@ -82,20 +112,29 @@ private enum AuthProvider {
 private struct AuthProviderButton: View {
     let title: String
     let provider: AuthProvider
+    var isLoading = false
+    var action: () -> Void = {}
 
     var body: some View {
-        Button(action: {}) {
+        Button(action: action) {
             HStack(spacing: 0) {
                 icon
                     .frame(width: 36, height: 36)
 
-                Text(title)
-                    .font(.system(size: 19, weight: .regular, design: .default))
-                    .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.84)
-                    .frame(maxWidth: .infinity)
-                    .padding(.trailing, 36)
+                Group {
+                    if isLoading {
+                        ProgressView()
+                            .tint(HAYFColor.primary)
+                    } else {
+                        Text(title)
+                            .font(.system(size: 19, weight: .regular, design: .default))
+                            .foregroundStyle(HAYFColor.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.84)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.trailing, 36)
             }
             .padding(.leading, 25)
             .frame(height: 56)
@@ -109,6 +148,7 @@ private struct AuthProviderButton: View {
             .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
+        .disabled(isLoading)
         .accessibilityLabel(title)
     }
 
@@ -205,9 +245,9 @@ private struct LegalCopy: View {
 }
 
 #Preview("Sign in") {
-    AuthScreen(mode: .signIn) {}
+    AuthScreen(mode: .signIn, switchMode: {}) {}
 }
 
 #Preview("Create account") {
-    AuthScreen(mode: .signUp) {}
+    AuthScreen(mode: .signUp, switchMode: {}) {}
 }

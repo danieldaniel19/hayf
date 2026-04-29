@@ -8,4 +8,5 @@ enum HAYFColor {
     static let surface = Color.white
     static let border = Color(red: 224 / 255, green: 224 / 255, blue: 224 / 255)
     static let orange = Color(red: 250 / 255, green: 91 / 255, blue: 28 / 255)
+    static let error = Color(red: 239 / 255, green: 68 / 255, blue: 68 / 255)
 }
