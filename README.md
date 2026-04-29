@@ -53,13 +53,15 @@ This repository currently contains the first validated technical slice of the pr
 - a minimal iOS SwiftUI app
 - Google auth and post-auth account creation
 - Supabase profile storage
-- stay-consistent onboarding flow
+- adaptive onboarding for consistency, concrete goals, and goal discovery
+- Supabase-backed onboarding AI using an Edge Function and OpenAI Structured Outputs
+- completed onboarding stored in Supabase as the post-auth source of truth
 - HealthKit permission flow with the v1 read scope
 - sample Apple Health reads for sleep, workouts, steps, height, and body mass
 - tester restart controls for account creation and onboarding
 - foundational product and roadmap documentation
 
-The prototype has proved the first important hypothesis: HAYF can authenticate a user, create a profile, request HealthKit access, and read relevant Apple Health data on iPhone.
+The prototype has proved the first important hypothesis: HAYF can authenticate a user, create a profile, request HealthKit access, read relevant Apple Health data on iPhone, and generate/save structured onboarding AI output through Supabase.
 
 ## Repository Structure
 
@@ -68,6 +70,7 @@ The prototype has proved the first important hypothesis: HAYF can authenticate a
 - `docs/product-positioning.md`: ICP, product promise, and design direction
 - `docs/account-creation.md`: post-auth account setup flow, profile schema, and Supabase wiring
 - `docs/onboarding-flow.md`: adaptive onboarding flow and branch design
+- `docs/onboarding-ai-backend.md`: onboarding AI backend, prompt surface, context shape, deployment, and QA notes
 - `docs/healthkit-prototype.md`: HealthKit prototype notes
 - `docs/architecture.md`: early architecture recommendation
 - `docs/roadmap.md`: beginner-first product and build roadmap
@@ -105,12 +108,13 @@ Current planning areas include:
 
 The next major product slices are:
 
-1. concrete-goal and help-me-find-a-goal onboarding branches
-2. pre-workout check-in
-3. recommendation engine and output schema for balancing strength and cardio
-4. lightweight but always-accessible coach/chat affordance
-5. post-workout Apple Health detection and manual confirmation flow
-6. consistency and compliance tracking
+1. prompt refinement and output QA for onboarding AI
+2. post-onboarding home experience
+3. pre-workout check-in
+4. recommendation engine and output schema for balancing strength and cardio
+5. lightweight but always-accessible coach/chat affordance
+6. post-workout Apple Health detection and manual confirmation flow
+7. consistency and compliance tracking
 
 These slices should be designed as the first fitness domain inside a future multi-domain coaching system, not as a one-off fitness-only product.
 

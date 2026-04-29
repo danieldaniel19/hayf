@@ -1,0 +1,4 @@
+project_id = "nehwppenlaxozpwqepwp"
+
+[functions.onboarding-ai]
+verify_jwt = true

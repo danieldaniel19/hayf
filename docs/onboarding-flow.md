@@ -192,11 +192,11 @@ Current implementation:
 5. Friction: multi-select consistency blockers, with an optional note.
 6. Support style: single-select the coaching behavior HAYF should use when the user is drifting.
 7. Bad-day floor: single-select the minimum session or intentional rest pattern that still counts.
-8. Summary: read back the interpreted profile and allow adjustment.
+8. Summary: read back the interpreted profile with AI-shaped content and allow adjustment.
 9. Apple Health: request the v1 read-only HealthKit scope after the value preview.
-10. First rhythm: show a starter weekly rhythm and a coach note based on blockers and bad-day floor.
+10. First rhythm: show a starter weekly rhythm and coach note from the onboarding AI provider.
 
-The concrete-goal and help-me-find-a-goal branches currently route to a placeholder that explains their planned shape, then lets the tester continue through the stay-consistent path. They should be implemented next.
+The current implementation calls a Supabase Edge Function through a remote `OnboardingAIProvider`. If the function, model call, or schema decoding fails, the app falls back to local deterministic fixtures so onboarding can still complete. Rules remain as hidden fallback behavior only.
 
 Example output:
 
@@ -206,19 +206,86 @@ Design note:
 
 Ask fewer preference questions in this branch. For consistency users, too much personalization can become friction. Ask about blockers and minimums first. That is more coach-like.
 
+## Backend Contract
+
+Onboarding completion is stored remotely in `public.onboarding_profiles`. The app no longer treats a local flag as the source of truth. On app launch after auth, `AppRootView` loads the signed-in user's onboarding profile row; if it exists, the user goes to the authenticated shell, and if it does not, onboarding opens.
+
+The first backend implementation is scaffolded in:
+
+- `supabase/config.toml`
+- `supabase/migrations/20260429212000_onboarding_ai.sql`
+- `supabase/functions/onboarding-ai/index.ts`
+
+### Tables
+
+`public.onboarding_profiles` stores one completed onboarding row per user:
+
+- `id uuid primary key references auth.users(id)`
+- `intent text`
+- `selected_answers jsonb`
+- `generated_summary jsonb`
+- `first_rhythm jsonb`
+- `health_permission_state text`
+- `completed_at timestamptz`
+- `created_at timestamptz`
+- `updated_at timestamptz`
+
+RLS allows authenticated users to select, insert, update, and delete only their own onboarding profile row.
+
+`public.onboarding_ai_generations` stores server-side traces for each AI generation:
+
+- `user_id uuid`
+- `task text`
+- `model text`
+- `compact_request jsonb`
+- `structured_response jsonb`
+- `status text`
+- `latency_ms integer`
+- `error_message text`
+- `created_at timestamptz`
+
+No client RLS policies are added for the trace table. The Edge Function writes traces with the service role, including failures.
+
+### Edge Function
+
+`onboarding-ai` is an authenticated Supabase Edge Function. It supports the current iOS provider task surface:
+
+- `generate_summary`
+- `generate_first_rhythm`
+- `generate_goal_candidates`
+- `generate_blended_candidate`
+
+The function uses the OpenAI Responses API with strict JSON schemas. It reads `OPENAI_API_KEY` and `OPENAI_MODEL` from Supabase secrets, defaulting the model to `gpt-5-mini` when `OPENAI_MODEL` is unset.
+
+The iOS app sends compact onboarding context only: intent, selected options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, bad-day floor, and a derived HealthKit snapshot for first rhythm when available. It does not send raw HealthKit samples.
+
+## Completion And Restart Behavior
+
+Tapping `Start with this rhythm` upserts `public.onboarding_profiles` with the final selected answers, generated summary, first rhythm, Health permission state, and completion timestamp. The app routes home after the upsert succeeds.
+
+The temporary tester `Restart onboarding` control deletes the signed-in user's `public.onboarding_profiles` row. The next authenticated app state opens onboarding again.
+
 ## Branch B: I have a concrete goal
 
 This is the most structured branch. HAYF should behave like a coach building a training brief.
 
-Flow:
+Current frontend flow:
 
-1. Identify goal type.
-2. Capture target and timeline.
-3. Capture current baseline.
-4. Capture constraints.
-5. Capture success markers.
-6. Confirm whether the goal is realistic.
-7. Create the plan shape.
+1. Intent.
+2. Open goal brief, with no helper chips.
+3. Goal clarification:
+   - baseline
+   - timeline
+   - priority tradeoff
+   - optional marker text
+4. Supporting training options.
+5. Rhythm.
+6. Friction.
+7. Support style.
+8. Bad-day floor.
+9. AI summary with realism note, backed by deterministic fallback.
+10. Apple Health.
+11. AI goal-aware first rhythm, backed by deterministic fallback.
 
 Typical scenario:
 
@@ -300,15 +367,24 @@ Options:
 
 This branch is not the same as the consistency branch. This user wants direction. HAYF should infer motivating goal candidates from identity, constraints, preferred challenge type, and feasible training options.
 
-Flow:
+Current frontend flow:
 
-1. Ask desired feeling or identity.
-2. Ask preferred challenge type.
-3. Ask feasible sports and training options.
-4. Ask timeline appetite.
-5. Offer 2-3 goal candidates.
-6. Let the user choose or edit.
-7. Convert the chosen goal into a lighter version of Branch B.
+1. Intent.
+2. Feasible training options.
+3. Desired change.
+4. Challenge style.
+5. Avoids.
+6. AI goal candidates with choose, edit, or blend actions:
+   - choose selects one candidate
+   - edit opens one seeded text area and uses the edited text as the chosen goal
+   - blend lets the user pick two candidates and previews one blended goal
+7. Rhythm.
+8. Friction.
+9. Support style.
+10. Bad-day floor.
+11. AI summary, backed by deterministic fallback.
+12. Apple Health.
+13. AI goal-aware first rhythm, backed by deterministic fallback.
 
 Typical scenario:
 
@@ -390,6 +466,31 @@ The v1 onboarding should be dynamic but bounded:
 - one first recommendation or starter plan
 
 Avoid building a sprawling conversational onboarding at first. The first version should create the feeling of a coach through good extraction, smart clarifying questions, and a strong summary.
+
+## AI-shaped frontend contract
+
+The onboarding frontend is AI-shaped but bounded. The app owns fixed screens and renders only structured model output from the `OnboardingAIProvider`. The default provider calls the Supabase `onboarding-ai` Edge Function, while the local mock provider remains the deterministic fallback for offline, undeployed, failed, or malformed backend responses.
+
+The backend function receives a compact onboarding context:
+
+- intent mode
+- selected training options
+- goal brief or selected candidate
+- baseline, timeline, priority tradeoff, and marker text
+- desired change, challenge style, and avoids
+- rhythm, blockers, support style, and bad-day floor
+- derived Apple Health snapshot fields for first rhythm, when available
+
+The backend should return structured content only:
+
+- summary rows
+- coach note
+- realism note, when relevant
+- exactly three goal candidates for the goal-discovery branch
+- blended candidate preview
+- first rhythm rows and rhythm coach note
+
+The model should not invent screens, controls, navigation, permissions, or arbitrary UI copy. If the backend fails or returns malformed content, the app should silently use deterministic fallback content and let the user continue.
 
 ## Profile outputs
 

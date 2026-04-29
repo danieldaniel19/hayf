@@ -33,7 +33,7 @@ The overview uses per-row checkmarks instead of a top progress bar because users
 The authenticated home screen includes two temporary tester controls:
 
 - `Restart account creation`: reopens account setup with the current Supabase profile prefilled. Completing the flow updates the existing `public.profiles` row instead of inserting a new one.
-- `Restart onboarding`: clears the local onboarding completion marker so the user can run onboarding again.
+- `Restart onboarding`: deletes the signed-in user's `public.onboarding_profiles` row so the user can run onboarding again.
 
 These controls are intentionally app-local/product-testing affordances. They should be removed or hidden behind a debug flag before a production release.
 

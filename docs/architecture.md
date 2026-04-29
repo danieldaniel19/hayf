@@ -83,6 +83,21 @@ Example context packet:
 - optional weather summary
 - optional coarse location context if truly needed
 
+### Onboarding AI boundary
+
+Onboarding should use the same boundary: the app owns fixed screens and sends a compact onboarding context to a backend function when it needs coach-like interpretation. The backend should return structured content for summaries, goal candidates, realism notes, blended candidate previews, and first rhythm rows.
+
+Current implementation status: the iOS app uses a remote `OnboardingAIProvider` backed by the authenticated Supabase Edge Function `onboarding-ai`. Local deterministic fixtures remain as fallback output if the function, model call, or schema decoding fails.
+
+Implemented backend tasks:
+
+- summarize setup
+- generate goal candidates
+- generate blended candidate preview
+- generate first rhythm
+
+The first backend scaffold lives under `supabase/`. It adds `public.onboarding_profiles` as the completed onboarding source of truth and `public.onboarding_ai_generations` as server-side trace storage for AI calls. HealthKit data sent to the function is limited to derived snapshot fields, not raw samples.
+
 ## Suggested data boundary
 
 Store these remotely early:

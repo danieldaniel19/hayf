@@ -75,9 +75,14 @@ Goal: persist only the data that creates product value.
 Good first backend items:
 
 - authentication
+- account profiles
+- completed onboarding profiles
+- onboarding AI generation traces
 - check-in history
 - recommendation history
 - feedback on whether the workout felt right
+
+Current status: authentication, account profiles, onboarding profiles, and onboarding AI traces are implemented with Supabase. Onboarding completion now survives restart/sign-out because `public.onboarding_profiles` is the source of truth.
 
 ## Stage 6: AI coaching
 
@@ -101,6 +106,8 @@ The coaching layer should eventually support:
 - context from sources such as weather, calendar, and location when it materially improves coaching
 - a future domain-agent shape where fitness, nutrition, and mind assistants can share relevant context and advice
 - an action layer for bounded user-approved tasks, such as adding a workout to the user's calendar
+
+Current status: the first AI orchestration layer exists for onboarding only. It uses Supabase Edge Function `onboarding-ai`, OpenAI Structured Outputs, compact context packets, and local deterministic fallback. The next AI work is prompt refinement and output QA before expanding to post-onboarding recommendations.
 
 ## Stage 7: Learning loop
 
