@@ -7,7 +7,7 @@ Use `Supabase`, but not as a raw mirror of Apple Health data.
 For HAYF's first versions, the best architecture is:
 
 - HealthKit stays the source of truth for Apple health data on-device
-- the iOS app computes a small normalized feature set locally
+- the iOS app computes normalized deterministic feature snapshots locally
 - Supabase stores user account data, user-entered check-ins, recommendation history, and selected derived summaries
 - AI coaching consumes derived features and user context, not a giant dump of raw HealthKit samples
 
@@ -32,14 +32,17 @@ For a beginner project, keeping raw health data mostly on-device is the simplest
 The iPhone app should:
 
 - request HealthKit permissions
-- query recent data when needed
+- request broad read-only Apple Health access for the personal-first build
+- query recent data and long workout history when needed
 - transform raw samples into compact features such as:
   - last night's sleep duration
   - 7-day sleep average
   - workouts in the last 7 days
+  - workout ledger by modality, recency, duration, distance, and time window
   - resting heart rate trend
   - HRV trend
   - activity load estimate
+  - available body and nutrition summaries, marked absent or stale when missing
 - collect user check-ins such as:
   - energy
   - soreness
@@ -96,7 +99,7 @@ Implemented backend tasks:
 - generate blended candidate preview
 - generate first rhythm
 
-The first backend scaffold lives under `supabase/`. It adds `public.onboarding_profiles` as the completed onboarding source of truth and `public.onboarding_ai_generations` as server-side trace storage for AI calls. HealthKit data sent to the function is limited to derived snapshot fields, not raw samples.
+The first backend scaffold lives under `supabase/`. It adds `public.onboarding_profiles` as the completed onboarding source of truth and `public.onboarding_ai_generations` as server-side trace storage for AI calls. HealthKit data sent to the function is limited to locally derived feature snapshots, not raw samples.
 
 ## Suggested data boundary
 
@@ -162,7 +165,9 @@ That means the real asset is not raw sensor data alone. The real asset is the de
 
 So design around `context packets` and `derived features`, not bulk storage.
 
-For v1, the HealthKit read scope should cover workouts, sleep, daily movement, recovery signals, cardio fitness, height, and body mass. The app should turn these into compact derived features before recommendation, rather than sending raw HealthKit samples to the AI layer.
+For the personal-first v1, the HealthKit read scope should be broad: workouts, routes, sleep, daily movement, recovery signals, heart/cardio signals, body metrics, mindful sessions, relevant event categories, and available nutrition logs. The app should turn these into compact derived features before recommendation, rather than sending raw HealthKit samples to the AI layer.
+
+The current implementation has a deterministic feature builder in `HealthKitManager.fetchFeatureSnapshot()`. It builds workout-ledger windows, activity baselines, recovery/body summaries, nutrition summaries, and notes about missing data. Onboarding uses that feature snapshot when generating the first rhythm, and the authenticated home screen exposes `HealthDebugView` for requesting access, rebuilding features, inspecting the JSON payload, and copying it while debugging in Xcode.
 
 ## Recommendation
 

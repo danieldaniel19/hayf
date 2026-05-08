@@ -25,6 +25,9 @@
 		A000001000000000000001 /* AccountCreationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000025000000000000001 /* AccountCreationView.swift */; };
 		A000001100000000000001 /* AccountProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000026000000000000001 /* AccountProfileStore.swift */; };
 		A000001200000000000001 /* OnboardingFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000027000000000000001 /* OnboardingFlowView.swift */; };
+		A000001300000000000001 /* HealthDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000028000000000000001 /* HealthDebugView.swift */; };
+		B00000010000000000000001 /* HealthSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000001 /* HealthSyncService.swift */; };
+		B00000020000000000000001 /* PlanningAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000120000000000000001 /* PlanningAIProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +51,9 @@
 		A0000025000000000000001 /* AccountCreationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountCreationView.swift; sourceTree = "<group>"; };
 		A0000026000000000000001 /* AccountProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountProfileStore.swift; sourceTree = "<group>"; };
 		A0000027000000000000001 /* OnboardingFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFlowView.swift; sourceTree = "<group>"; };
+		A0000028000000000000001 /* HealthDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDebugView.swift; sourceTree = "<group>"; };
+		B00000110000000000000001 /* HealthSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthSyncService.swift; sourceTree = "<group>"; };
+		B00000120000000000000001 /* PlanningAIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanningAIProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +85,7 @@
 				A00000370000000000000001 /* Auth */,
 				A00000380000000000000001 /* DesignSystem */,
 				A00000390000000000000001 /* Health */,
+				B000003B000000000000001 /* Planning */,
 				A000003A000000000000001 /* Onboarding */,
 				A00000140000000000000001 /* Assets.xcassets */,
 				A00000350000000000000001 /* Preview Content */,
@@ -148,9 +155,19 @@
 			isa = PBXGroup;
 			children = (
 				A00000130000000000000001 /* HealthKitManager.swift */,
+				B00000110000000000000001 /* HealthSyncService.swift */,
 				A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */,
+				A0000028000000000000001 /* HealthDebugView.swift */,
 			);
 			path = Health;
+			sourceTree = "<group>";
+		};
+		B000003B000000000000001 /* Planning */ = {
+			isa = PBXGroup;
+			children = (
+				B00000120000000000000001 /* PlanningAIProvider.swift */,
+			);
+			path = Planning;
 			sourceTree = "<group>";
 		};
 		A000003A000000000000001 /* Onboarding */ = {
@@ -250,7 +267,10 @@
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
+				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */,
+				A000001300000000000001 /* HealthDebugView.swift in Sources */,
+				B00000020000000000000001 /* PlanningAIProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

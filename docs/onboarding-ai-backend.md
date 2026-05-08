@@ -15,8 +15,9 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 - Store completed onboarding in `public.onboarding_profiles`.
 - Store every AI attempt in `public.onboarding_ai_generations`, including failures.
 - Keep raw HealthKit samples on device.
-- Send only derived HealthKit snapshot fields when generating the first rhythm.
+- Send only deterministic HealthKit feature snapshot fields when generating the first rhythm.
 - Keep local deterministic mock output as fallback so onboarding can complete if AI fails.
+- Keep the final setup preview app-owned: goal paths may show a starter program and phases, but the Edge Function only generates the bounded first rhythm and summary content.
 - Let tester restart onboarding by deleting the signed-in user's `onboarding_profiles` row.
 
 ## Files
@@ -37,7 +38,8 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 6. The function inserts one `onboarding_ai_generations` trace row.
 7. The app decodes the structured output and renders it.
 8. If anything fails, the app uses `MockOnboardingAIProvider` fallback output.
-9. At the final screen, the app upserts `onboarding_profiles`.
+9. At the final screen, the app wraps the first rhythm in a local setup preview: rolling rhythm for consistency, starter program/phases for goal paths.
+10. The app upserts `onboarding_profiles`.
 
 ## Supported Tasks
 
@@ -65,6 +67,8 @@ Expected output:
 - `coachNote`
 
 This task may receive `healthSnapshot`, but only as derived features.
+
+The app can present this output as the first weekly rhythm inside a larger local setup preview. For concrete or goal-discovery onboarding, that preview includes a starter program and high-level phases derived from the existing draft context. The backend should not generate a full long-term calendar in this task.
 
 ### `generate_goal_candidates`
 
@@ -102,7 +106,7 @@ Primary context:
 - blockers and blocker note
 - support style
 - bad-day floor
-- optional derived HealthKit snapshot for first rhythm
+- optional deterministic HealthKit feature snapshot for first rhythm
 
 ### I Have A Specific Goal
 
@@ -125,7 +129,7 @@ Primary context:
 - blockers
 - support style
 - bad-day floor
-- optional derived HealthKit snapshot for first rhythm
+- optional deterministic HealthKit feature snapshot for first rhythm
 
 ### Help Me Find A Goal
 
@@ -149,7 +153,7 @@ Primary context:
 - blockers
 - support style
 - bad-day floor
-- optional derived HealthKit snapshot for first rhythm
+- optional deterministic HealthKit feature snapshot for first rhythm
 
 ## Compact Context Shape
 
@@ -189,11 +193,25 @@ For first rhythm only, `healthSnapshot` may look like:
   "workoutsLast7Days": 2,
   "averageStepsLast7Days": 7200,
   "heightCentimeters": 178,
-  "bodyMassKilograms": 76
+  "bodyMassKilograms": 76,
+  "deterministicFeatureSnapshot": {
+    "generatedAt": "2026-05-07T17:00:00Z",
+    "importWindow": "Last 6 years, plus latest available body/recovery/nutrition samples",
+    "workoutLedger": {
+      "totalWorkouts": 420,
+      "daysSinceLastWorkout": 2,
+      "windows": []
+    },
+    "activity": {},
+    "recovery": {},
+    "body": {},
+    "nutrition": {},
+    "notes": []
+  }
 }
 ```
 
-Do not add raw HealthKit samples to this context.
+Do not add raw HealthKit samples to this context. The app may request broad Apple Health access, but the backend receives only deterministic summaries.
 
 ## Prompt Surface
 
@@ -206,7 +224,7 @@ You are HAYF's onboarding coach. Return concise, practical fitness setup JSON th
 Each task also adds task-specific rules through `taskRules(task)`:
 
 - Summary: return 5-7 rows, optional coach note, optional realism note.
-- First rhythm: return 3-5 starter rhythm rows and use derived health gently when present.
+- First rhythm: return 3-5 starter rhythm rows and use deterministic health features cautiously when present. Do not generate full programs, phases, or long-term calendars here.
 - Goal candidates: return exactly three distinct candidates.
 - Blended candidate: combine the selected candidates into one clearer goal.
 
@@ -260,7 +278,7 @@ Good outputs should:
 - keep consistency users away from forced performance goals
 - give concrete-goal users a realism note when the timeline or target is risky
 - give goal-discovery users meaningfully different candidates
-- use HealthKit snapshot only as a gentle modifier
+- use HealthKit feature snapshot only as a cautious modifier
 - never mention unavailable data as if it is known
 - never invent UI, navigation, permissions, or unsupported app features
 

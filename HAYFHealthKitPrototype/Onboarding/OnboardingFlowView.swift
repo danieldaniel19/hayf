@@ -20,6 +20,7 @@ struct OnboardingFlowView: View {
 
     private let healthKitManager = HealthKitManager()
     private let aiProvider: any OnboardingAIProvider = RemoteOnboardingAIProvider()
+    private let planningAIProvider = PlanningAIProvider()
     private let onboardingProfileStore: OnboardingProfileStore
 
     init(onboardingProfileStore: OnboardingProfileStore, onComplete: @escaping () -> Void) {
@@ -156,7 +157,7 @@ struct OnboardingFlowView: View {
         case .generatingRhythm:
             loadingScreen(title: "Building your first rhythm.", copy: "HAYF is matching the plan to your goal, constraints, and bad-day floor.")
         case .firstRhythm:
-            firstRhythmScreen
+            setupPreviewScreen
         }
     }
 
@@ -634,7 +635,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "Connect\nApple Health.",
-                copy: "HAYF uses recent activity, workouts, sleep, recovery signals, and basic body metrics to coach around how ready you are today."
+                copy: "HAYF reads your workouts, daily movement, sleep, recovery, body metrics, and available nutrition logs before building the first plan."
             )
 
             VStack(alignment: .leading, spacing: 0) {
@@ -644,10 +645,10 @@ struct OnboardingFlowView: View {
                     .foregroundStyle(HAYFColor.secondary)
                     .padding(.bottom, 14)
 
-                HealthUseRow(systemImage: "figure.strengthtraining.traditional", title: "Recent workouts", subtitle: "Workout types, duration, and training consistency.")
-                HealthUseRow(systemImage: "figure.walk", title: "Daily movement", subtitle: "Steps, active energy, exercise minutes, and distance.")
-                HealthUseRow(systemImage: "moon", title: "Sleep and recovery", subtitle: "Sleep timing, resting heart rate, HRV, and heart-rate trends.")
-                HealthUseRow(systemImage: "heart", title: "Cardio and body context", subtitle: "Cardio fitness, height, and body mass.", showsDivider: false)
+                HealthUseRow(systemImage: "figure.strengthtraining.traditional", title: "Workout ledger", subtitle: "Workout history, type mix, duration, distance, and recency.")
+                HealthUseRow(systemImage: "figure.walk", title: "Activity baseline", subtitle: "Steps, active energy, exercise minutes, and distance trends.")
+                HealthUseRow(systemImage: "moon", title: "Recovery signals", subtitle: "Sleep, resting heart rate, HRV, respiratory rate, and cardio fitness.")
+                HealthUseRow(systemImage: "fork.knife", title: "Body and nutrition context", subtitle: "Body metrics and any available nutrition logs, treated cautiously if stale.", showsDivider: false)
             }
             .padding(18)
             .background(HAYFColor.surface)
@@ -664,8 +665,8 @@ struct OnboardingFlowView: View {
                     .frame(width: 26)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Used to personalize recommendations.")
-                    Text("You stay in control of Health permissions.")
+                    Text("Used locally first to compute deterministic features.")
+                    Text("AI receives compact summaries, not raw HealthKit samples.")
                 }
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(HAYFColor.muted)
@@ -681,21 +682,44 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var firstRhythmScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
+    private var setupPreviewScreen: some View {
+        let preview = currentSetupPreview
+
+        return VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                eyebrow: "SETUP COMPLETE",
-                title: "Your first rhythm\nis ready.",
-                copy: currentRhythm.copy
+                eyebrow: preview.eyebrow,
+                title: preview.title,
+                copy: preview.copy
             )
 
             VStack(spacing: 10) {
-                SummaryRow(systemImage: "target", label: currentRhythm.focusLabel, value: currentRhythm.focusValue)
-                SummaryRow(systemImage: "bolt.heart", label: "Reason", value: currentRhythm.reasonValue)
+                ForEach(preview.overviewRows) { row in
+                    SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
+                }
+            }
+
+            if !preview.phases.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("PROGRAM PHASES")
+                        .font(.system(size: 10, weight: .medium))
+                        .kerning(1.2)
+                        .foregroundStyle(HAYFColor.secondary)
+
+                    ForEach(Array(preview.phases.enumerated()), id: \.element.id) { index, phase in
+                        ProgramPhaseRow(number: index + 1, phase: phase)
+                    }
+                }
+                .padding(18)
+                .background(HAYFColor.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(HAYFColor.border, lineWidth: 1)
+                }
             }
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("WEEKLY RHYTHM PREVIEW")
+                Text(preview.rhythmHeading)
                     .font(.system(size: 10, weight: .medium))
                     .kerning(1.2)
                     .foregroundStyle(HAYFColor.secondary)
@@ -712,7 +736,20 @@ struct OnboardingFlowView: View {
                     .stroke(HAYFColor.border, lineWidth: 1)
             }
 
-            CoachNote(text: currentRhythm.coachNote)
+            if !preview.watchRows.isEmpty {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("WHAT HAYF WILL WATCH")
+                        .font(.system(size: 10, weight: .medium))
+                        .kerning(1.2)
+                        .foregroundStyle(HAYFColor.secondary)
+
+                    ForEach(preview.watchRows) { row in
+                        SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
+                    }
+                }
+            }
+
+            CoachNote(text: preview.coachNote)
 
             if let completionErrorMessage {
                 Text(completionErrorMessage)
@@ -788,13 +825,6 @@ struct OnboardingFlowView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
                 .buttonStyle(.plain)
-            } else if step == .health {
-                Button("Set up later") {
-                    step = .generatingRhythm
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.secondary)
-                .buttonStyle(.plain)
             } else if step == .firstRhythm {
                 Button("Edit setup") {
                     step = .summary
@@ -818,7 +848,7 @@ struct OnboardingFlowView: View {
             }
             return "Connect Apple Health"
         case .firstRhythm:
-            return "Start with this rhythm"
+            return currentSetupPreview.primaryButtonTitle
         case .blendPreview:
             return "Use blended goal"
         case .editCandidate:
@@ -1050,6 +1080,10 @@ struct OnboardingFlowView: View {
         rhythmOutput ?? MockOnboardingAIProvider.fallbackRhythm(intent: currentIntent, draft: draft)
     }
 
+    private var currentSetupPreview: OnboardingSetupPreview {
+        OnboardingSetupPreview(intent: currentIntent, draft: draft, rhythm: currentRhythm)
+    }
+
     private var summaryEditStep: OnboardingStep {
         switch currentIntent {
         case .stayConsistent:
@@ -1164,30 +1198,183 @@ struct OnboardingFlowView: View {
             defer { isCompleting = false }
 
             do {
-                try await onboardingProfileStore.completeCurrentUserOnboarding(
+                let healthSnapshot = await planningHealthSnapshot()
+                let completedProfile = try await onboardingProfileStore.completeCurrentUserOnboarding(
                     intent: currentIntent,
                     draft: draft,
                     summary: currentSummary,
                     rhythm: currentRhythm,
                     healthRequestState: healthRequestState
                 )
+                _ = try await planningAIProvider.bootstrapAfterOnboarding(
+                    healthSnapshot: healthSnapshot,
+                    deviceTimezone: TimeZone.current.identifier
+                )
+                onboardingProfileStore.useProfile(completedProfile)
                 onComplete()
             } catch {
-                completionErrorMessage = "Could not save onboarding yet: \(error.localizedDescription)"
+                completionErrorMessage = "Could not finish onboarding yet: \(error.localizedDescription)"
             }
         }
     }
 
     private func compactHealthSnapshot() async -> OnboardingAIHealthSnapshot? {
+        guard let snapshot = await planningHealthSnapshot() else { return nil }
+        return OnboardingAIHealthSnapshot(snapshot: snapshot)
+    }
+
+    private func planningHealthSnapshot() async -> HealthFeatureSnapshot? {
         guard healthRequestState == .connected else { return nil }
 
         do {
-            let snapshot = try await healthKitManager.fetchSnapshot()
-            return OnboardingAIHealthSnapshot(snapshot: snapshot)
+            return try await healthKitManager.fetchFeatureSnapshot()
         } catch {
             return nil
         }
     }
+}
+
+private struct OnboardingSetupPreview {
+    let eyebrow: String
+    let title: String
+    let copy: String
+    let overviewRows: [SummaryItem]
+    let phases: [ProgramPhasePreview]
+    let rhythmHeading: String
+    let watchRows: [SummaryItem]
+    let coachNote: String
+    let primaryButtonTitle: String
+
+    init(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, rhythm: OnboardingRhythmOutput) {
+        switch intent {
+        case .stayConsistent:
+            eyebrow = "SETUP COMPLETE"
+            title = "Your rolling rhythm\nis ready."
+            copy = "No fixed program yet. HAYF will run this as a 4-week rhythm, then adjust based on what you actually do."
+            overviewRows = [
+                SummaryItem(systemImage: "target", label: "Intent", value: "Stay consistent"),
+                SummaryItem(systemImage: "calendar", label: "Review", value: "4-week check-in"),
+                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+            ]
+            phases = []
+            rhythmHeading = "FIRST WEEKLY RHYTHM"
+            watchRows = [
+                SummaryItem(systemImage: "checkmark.circle", label: "Adherence", value: "Did the rhythm actually happen?"),
+                SummaryItem(systemImage: "exclamationmark.triangle", label: "Friction", value: draft.blockerSummary),
+                SummaryItem(systemImage: "circle.lefthalf.filled", label: "Balance", value: "Strength, cardio, mobility, and recovery")
+            ]
+            coachNote = rhythm.coachNote
+            primaryButtonTitle = "Start with this rhythm"
+        case .concreteGoal:
+            let horizon = Self.goalHorizon(for: draft)
+            eyebrow = "ACTIVE BLOCK"
+            title = "Your starter program\nis ready."
+            copy = "HAYF will treat this as a \(horizon) block. The phases show the arc; the rhythm is what starts this week."
+            overviewRows = [
+                SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "calendar", label: "Horizon", value: horizon),
+                SummaryItem(systemImage: "arrow.left.arrow.right", label: "Protect", value: draft.prioritySummary),
+                SummaryItem(systemImage: "timer", label: "Week one", value: draft.rhythmSummary)
+            ]
+            phases = [
+                ProgramPhasePreview(
+                    title: "Base",
+                    duration: "First third",
+                    description: "Make goal work repeatable around your schedule, support training, and bad-day floor."
+                ),
+                ProgramPhasePreview(
+                    title: "Build",
+                    duration: "Middle third",
+                    description: "Increase goal-specific work while keeping recovery and support sessions visible."
+                ),
+                ProgramPhasePreview(
+                    title: "Sharpen / review",
+                    duration: "Final third",
+                    description: "Protect the target, reduce noise, then adjust the next block from real progress."
+                )
+            ]
+            rhythmHeading = "FIRST WEEKLY RHYTHM"
+            watchRows = [
+                SummaryItem(systemImage: "target", label: "Progress", value: "Goal sessions and chosen markers"),
+                SummaryItem(systemImage: "heart", label: "Recovery", value: "Sleep, soreness, fatigue, and readiness"),
+                SummaryItem(systemImage: "checkmark.circle", label: "Adherence", value: "Whether the rhythm survives real weeks")
+            ]
+            coachNote = "This is not a full locked 12-week calendar. HAYF starts with the active block, keeps this week's rhythm concrete, and adapts the next rhythm from your data and feedback."
+            primaryButtonTitle = "Start this program"
+        case .findGoal:
+            let horizon = Self.discoveryHorizon(for: draft)
+            eyebrow = "ACTIVE BLOCK"
+            title = "Your starter program\nis ready."
+            copy = "HAYF will use the goal you chose as the active block, then keep the first week simple enough to validate."
+            overviewRows = [
+                SummaryItem(systemImage: "target", label: "Goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "calendar", label: "Horizon", value: horizon),
+                SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
+                SummaryItem(systemImage: "timer", label: "Week one", value: draft.rhythmSummary)
+            ]
+            phases = [
+                ProgramPhasePreview(
+                    title: "Base",
+                    duration: "Start",
+                    description: "Turn the chosen goal into repeatable training signals without overloading the week."
+                ),
+                ProgramPhasePreview(
+                    title: "Build",
+                    duration: "Middle",
+                    description: "Nudge the rhythm toward the goal once HAYF sees adherence and recovery."
+                ),
+                ProgramPhasePreview(
+                    title: "Review",
+                    duration: "End",
+                    description: "Keep, sharpen, or replace the goal based on what felt useful in practice."
+                )
+            ]
+            rhythmHeading = "FIRST WEEKLY RHYTHM"
+            watchRows = [
+                SummaryItem(systemImage: "checkmark.circle", label: "Fit", value: "Does this goal still feel like you?"),
+                SummaryItem(systemImage: "exclamationmark.triangle", label: "Avoids", value: draft.avoidsSummary),
+                SummaryItem(systemImage: "heart", label: "Recovery", value: "Whether the block is motivating or too costly")
+            ]
+            coachNote = "The goal gives HAYF direction, but the first block is still a test. The rhythm starts now; the program sharpens after HAYF sees what you actually follow."
+            primaryButtonTitle = "Start this program"
+        }
+    }
+
+    private static func goalHorizon(for draft: ConsistencyOnboardingDraft) -> String {
+        switch draft.goalTimeline {
+        case .fourWeeks:
+            return "4-week goal block"
+        case .eightWeeks:
+            return "8-week goal block"
+        case .twelveWeeks:
+            return "12-week goal block"
+        case .specificDate:
+            return "Until \(draft.timelineSummary)"
+        case nil:
+            return "12-week starter block"
+        }
+    }
+
+    private static func discoveryHorizon(for draft: ConsistencyOnboardingDraft) -> String {
+        let goalTitle = draft.goalSummary.lowercased()
+        if goalTitle.contains("4-week") || goalTitle.contains("4 week") {
+            return "4-week starter block"
+        }
+
+        if goalTitle.contains("12-week") || goalTitle.contains("12 week") {
+            return "12-week starter block"
+        }
+
+        return "8-week starter block"
+    }
+}
+
+private struct ProgramPhasePreview: Identifiable {
+    var id: String { title }
+    let title: String
+    let duration: String
+    let description: String
 }
 
 private enum OnboardingStep: Equatable {
@@ -1468,13 +1655,15 @@ private struct OnboardingAIHealthSnapshot: Codable {
     let averageStepsLast7Days: Double?
     let heightCentimeters: Double?
     let bodyMassKilograms: Double?
+    let deterministicFeatureSnapshot: HealthFeatureSnapshot
 
-    init(snapshot: HealthSnapshot) {
-        sleepHoursLastNight = snapshot.sleepHoursLastNight
-        workoutsLast7Days = snapshot.workoutsLast7Days
-        averageStepsLast7Days = snapshot.averageStepsLast7Days
-        heightCentimeters = snapshot.heightCentimeters
-        bodyMassKilograms = snapshot.bodyMassKilograms
+    init(snapshot: HealthFeatureSnapshot) {
+        sleepHoursLastNight = snapshot.recovery.sleepHoursLastNight
+        workoutsLast7Days = snapshot.workoutLedger.windows.first { $0.window == "7d" }?.workouts ?? 0
+        averageStepsLast7Days = snapshot.activity.averageSteps7Days
+        heightCentimeters = snapshot.body.heightCentimeters
+        bodyMassKilograms = snapshot.body.bodyMassKilograms
+        deterministicFeatureSnapshot = snapshot
     }
 }
 
@@ -2168,7 +2357,6 @@ private enum GoalTimeline: String, CaseIterable, Identifiable {
     case eightWeeks
     case twelveWeeks
     case specificDate
-    case noFirmDate
 
     var id: String { rawValue }
 
@@ -2178,7 +2366,6 @@ private enum GoalTimeline: String, CaseIterable, Identifiable {
         case .eightWeeks: return "8 weeks"
         case .twelveWeeks: return "12 weeks"
         case .specificDate: return "Date"
-        case .noFirmDate: return "No date"
         }
     }
 }
@@ -2497,7 +2684,7 @@ private enum HealthRequestState: Equatable {
         case .idle, .requesting:
             return nil
         case .connected:
-            return "Apple Health is connected. HAYF can use this context to adapt recommendations."
+            return "Apple Health is connected. HAYF will build the first plan from local deterministic health features."
         case .unavailable:
             return "Health data is not available on this device. You can continue the prototype here."
         case .failed(let message):
@@ -2943,6 +3130,43 @@ private struct HealthUseRow: View {
     }
 }
 
+private struct ProgramPhaseRow: View {
+    let number: Int
+    let phase: ProgramPhasePreview
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text("\(number)")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(HAYFColor.primary)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(phase.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Text(phase.duration)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(HAYFColor.muted)
+                }
+
+                Text(phase.description)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct RhythmPreviewRow: View {
     let day: String
     let workout: String
@@ -3148,7 +3372,7 @@ final class OnboardingProfileStore: ObservableObject {
         summary: OnboardingSummaryOutput,
         rhythm: OnboardingRhythmOutput,
         healthRequestState: HealthRequestState
-    ) async throws {
+    ) async throws -> StoredOnboardingProfile {
         let user = try await supabase.auth.session.user
         let request = CompletedOnboardingProfileRequest(
             id: user.id,
@@ -3168,6 +3392,11 @@ final class OnboardingProfileStore: ObservableObject {
             .execute()
             .value
 
+        errorMessage = nil
+        return completedProfile
+    }
+
+    fileprivate func useProfile(_ completedProfile: StoredOnboardingProfile) {
         profile = completedProfile
         errorMessage = nil
     }

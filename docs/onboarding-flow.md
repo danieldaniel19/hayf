@@ -111,7 +111,7 @@ Do not add generic "Something else" options when the screen already has an optio
    - confirm or edit the understood profile
 8. HealthKit permission:
    - ask after the user has seen that HAYF understands them
-   - explain that sleep, workouts, heart rate, and activity improve recommendations
+   - explain that workout history, activity, sleep, recovery, body context, and available nutrition logs improve recommendations
 9. First useful output:
    - next recommendation, starter week, or chosen goal plan
 
@@ -193,8 +193,8 @@ Current implementation:
 6. Support style: single-select the coaching behavior HAYF should use when the user is drifting.
 7. Bad-day floor: single-select the minimum session or intentional rest pattern that still counts.
 8. Summary: read back the interpreted profile with AI-shaped content and allow adjustment.
-9. Apple Health: request the v1 read-only HealthKit scope after the value preview.
-10. First rhythm: show a starter weekly rhythm and coach note from the onboarding AI provider.
+9. Apple Health: request the broad personal-first read-only HealthKit scope after the value preview.
+10. Setup preview: show a rolling 4-week rhythm frame, the first weekly rhythm, what HAYF will watch, and a coach note from the onboarding AI provider.
 
 The current implementation calls a Supabase Edge Function through a remote `OnboardingAIProvider`. If the function, model call, or schema decoding fails, the app falls back to local deterministic fixtures so onboarding can still complete. Rules remain as hidden fallback behavior only.
 
@@ -257,11 +257,11 @@ No client RLS policies are added for the trace table. The Edge Function writes t
 
 The function uses the OpenAI Responses API with strict JSON schemas. It reads `OPENAI_API_KEY` and `OPENAI_MODEL` from Supabase secrets, defaulting the model to `gpt-5-mini` when `OPENAI_MODEL` is unset.
 
-The iOS app sends compact onboarding context only: intent, selected options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, bad-day floor, and a derived HealthKit snapshot for first rhythm when available. It does not send raw HealthKit samples.
+The iOS app sends compact onboarding context only: intent, selected options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, bad-day floor, and a deterministic HealthKit feature snapshot for first rhythm when available. It does not send raw HealthKit samples.
 
 ## Completion And Restart Behavior
 
-Tapping `Start with this rhythm` upserts `public.onboarding_profiles` with the final selected answers, generated summary, first rhythm, Health permission state, and completion timestamp. The app routes home after the upsert succeeds.
+Tapping the final setup action upserts `public.onboarding_profiles` with the final selected answers, generated summary, first rhythm, Health permission state, and completion timestamp. The app routes home after the upsert succeeds.
 
 The temporary tester `Restart onboarding` control deletes the signed-in user's `public.onboarding_profiles` row. The next authenticated app state opens onboarding again.
 
@@ -285,7 +285,7 @@ Current frontend flow:
 8. Bad-day floor.
 9. AI summary with realism note, backed by deterministic fallback.
 10. Apple Health.
-11. AI goal-aware first rhythm, backed by deterministic fallback.
+11. Active block preview: show the starter program, high-level phases, first weekly rhythm, and what HAYF will watch. The first rhythm is AI-backed with deterministic fallback; the program/phases are derived locally from the chosen goal, timeline, and draft answers.
 
 Typical scenario:
 
@@ -384,7 +384,7 @@ Current frontend flow:
 10. Bad-day floor.
 11. AI summary, backed by deterministic fallback.
 12. Apple Health.
-13. AI goal-aware first rhythm, backed by deterministic fallback.
+13. Active block preview: show the starter program, high-level phases, first weekly rhythm, and what HAYF will watch. The first rhythm is AI-backed with deterministic fallback; the program/phases are derived locally from the chosen, edited, or blended goal.
 
 Typical scenario:
 
@@ -479,7 +479,7 @@ The backend function receives a compact onboarding context:
 - baseline, timeline, priority tradeoff, and marker text
 - desired change, challenge style, and avoids
 - rhythm, blockers, support style, and bad-day floor
-- derived Apple Health snapshot fields for first rhythm, when available
+- deterministic Apple Health feature snapshot fields for first rhythm, when available
 
 The backend should return structured content only:
 
@@ -489,6 +489,13 @@ The backend should return structured content only:
 - exactly three goal candidates for the goal-discovery branch
 - blended candidate preview
 - first rhythm rows and rhythm coach note
+
+The final onboarding screen may derive a local setup preview around that output:
+
+- consistency path: rolling rhythm, 4-week review window, first weekly rhythm, and watch signals
+- goal paths: starter program, high-level phases, first weekly rhythm, and watch signals
+
+This preview should not require the model to generate a full long-term calendar. HAYF should show the arc, then keep the first week concrete.
 
 The model should not invent screens, controls, navigation, permissions, or arbitrary UI copy. If the backend fails or returns malformed content, the app should silently use deterministic fallback content and let the user continue.
 
@@ -516,28 +523,34 @@ The profile should be editable later. Onboarding should create the first useful 
 
 HealthKit permission should be asked after HAYF has shown enough value for the user to understand why it matters. The ask should not be framed as "height access"; height is only one small part of the useful context.
 
-For v1, ask for read-only Apple Health access to:
+For the personal-first v1, ask for read-only Apple Health access to:
 
 - workouts
+- workout routes
 - sleep analysis
 - steps
 - active energy
+- basal energy
 - exercise minutes
+- stand time
 - walking and running distance
+- cycling and swimming distance
 - resting heart rate
 - heart rate variability
 - heart rate
+- walking heart rate average
+- respiratory rate
+- oxygen saturation
 - VO2 max
-- height
-- body mass
+- body metrics such as height, body mass, body fat, lean mass, waist, and BMI
+- available nutrition logs
 
 User-facing copy should group these as:
 
-- recent workouts
-- daily movement
-- sleep
+- workout ledger
+- activity baseline
 - recovery signals
-- cardio fitness
-- basic body metrics
+- cardio and heart context
+- body and nutrition context
 
-Do not ask for nutrition, reproductive health, clinical records, medications, symptoms, or mindfulness data in the v1 fitness onboarding. These may belong to later nutrition or mind coaching flows, but they would make the first permission ask feel too broad.
+The app should still avoid write permissions, clinical records, reproductive health, medications, and symptom categories in the current fitness build. Broad access is acceptable here because HAYF is being built personal-first, but AI only receives compact deterministic features.

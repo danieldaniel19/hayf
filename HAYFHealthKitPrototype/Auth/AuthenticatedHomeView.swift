@@ -7,6 +7,12 @@ struct AuthenticatedHomeView: View {
     let restartOnboarding: () -> Void
     let signOut: () -> Void
 
+    @State private var isShowingHealthDebug = false
+    @State private var didRunPlanningRefresh = false
+
+    private let healthSyncService = HealthSyncService()
+    private let planningAIProvider = PlanningAIProvider()
+
     var body: some View {
         ZStack {
             HAYFColor.neutral
@@ -27,6 +33,7 @@ struct AuthenticatedHomeView: View {
                 }
 
                 VStack(spacing: 12) {
+                    TesterHomeButton(title: "Health debug", systemImage: "heart.text.square", action: { isShowingHealthDebug = true })
                     TesterHomeButton(title: "Restart account creation", systemImage: "person.crop.circle.badge.plus", action: restartAccountCreation)
                     TesterHomeButton(title: "Restart onboarding", systemImage: "arrow.triangle.2.circlepath", action: restartOnboarding)
 
@@ -48,6 +55,23 @@ struct AuthenticatedHomeView: View {
             .padding(.top, 48)
             .frame(maxWidth: 480)
         }
+        .sheet(isPresented: $isShowingHealthDebug) {
+            HealthDebugView()
+        }
+        .task {
+            await refreshPlanningOnOpen()
+        }
+    }
+
+    private func refreshPlanningOnOpen() async {
+        guard !didRunPlanningRefresh else { return }
+        didRunPlanningRefresh = true
+
+        if let payload = try? await healthSyncService.buildSyncPayload(daysBack: 14) {
+            _ = try? await planningAIProvider.syncHealthKitAndReconcile(payload: payload)
+        }
+
+        _ = try? await planningAIProvider.refreshPlanWindow()
     }
 }
 
