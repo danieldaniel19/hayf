@@ -38,6 +38,12 @@ Core tables:
 - `planned_workouts`: source for Home and Plan UI.
 - `health_feature_snapshots`: compact derived HealthKit feature snapshots.
 - `actual_workouts`: recent HealthKit-derived workout summaries.
+- `fitness_metric_observations`: source-agnostic derived facts from HealthKit now, manual logs / feedback later.
+- `fitness_history_insights`: coach-readable history patterns for goal suggestion and the future Fitness Profile.
+- `fitness_goal_targets`: primary active-block goals and supporting sub-goals.
+- `fitness_goal_evaluations`: append-only goal status evaluations.
+- `workout_debrief_requests`: feedback prompts created after completed workouts are detected.
+- `workout_feedback`: future post-workout feedback records.
 - `plan_events`: append-only audit trail.
 - `replan_proposals`: user-approved repair layer.
 - `planning_ai_generations`: planning AI traces and failures.
@@ -89,13 +95,54 @@ Important QA fix:
 `sync_healthkit_and_reconcile`:
 
 - stores the latest derived feature snapshot
+- stores reusable fitness history observations and insight candidates from the snapshot
 - upserts actual workout summaries by `(user_id, healthkit_uuid)`
 - matches actuals to planned workouts by date, modality compatibility, and duration proximity
 - marks matched planned workouts `done`
 - inserts unmatched actual workouts as `planned_workouts.source = healthkit_detected` and `status = done`
+- creates `workout_debrief_requests` for matched or detected actual workouts so Today / Workout Detail can ask for feedback later
+- creates initial active-block goal targets when needed and evaluates goal status after sync
 - creates one batched `replan_proposal` if any unexpected actuals were detected
 
 The first sync can be slower because it imports many recent workouts and writes events. Later syncs should be much lighter because HealthKit UUID upsert makes it idempotent.
+
+### Fitness History And Goal Evidence
+
+The app now builds a broader `fitnessHistory` profile inside `HealthFeatureSnapshot`.
+This is not intended to become an analytics dashboard. It is a reusable evidence layer for:
+
+- onboarding Flow C goal suggestions
+- active-block goal and sub-goal tracking
+- later Fitness Profile UI under Profile
+- future coach chat answers about training history
+
+Current history categories:
+
+- training identity and modality mix
+- consistency, active weeks, streaks, and gaps
+- monthly/seasonal activity
+- rolling volume/load windows
+- generic distance-effort performance proxies
+- strength continuity
+- recovery and body trend context
+- activity floor
+
+HealthKit is the first source, but the database model is source-agnostic. Manual gym logs, HAYF workout debriefs, and future external sources should feed the same observation / insight / evaluation pipeline instead of creating parallel systems.
+
+Product decisions:
+
+- The AI should receive labelled evidence and compact insight summaries, not raw HealthKit samples.
+- Calculations should stay broad and reusable. Running and cycling can have extra helpers, but the foundation should not need a rebuild for every new goal idea.
+- Active blocks can have a primary goal and supporting sub-goals.
+- Goal status language should be simple: on track, lagging, achieved, or needs review.
+- When imported data proves a goal was achieved early, HAYF should create a review moment instead of silently continuing.
+- Profile > Fitness Profile is the user-facing home for long-term highlights. Plan and Today should consume the same evidence but stay focused on action.
+- Onboarding Flow C should run HealthKit consent and feature extraction before suggesting goals.
+
+First Profile mock:
+
+- `design/mocks/Profile/profile-fitness-profile-entry-and-sheet.png`
+- Shows a Profile tab entry point plus a pull-up Fitness Profile detail card, matching the active block sheet pattern from Plan.
 
 ### Window Refresh
 
@@ -279,3 +326,6 @@ supabase secrets set OPENAI_MODEL=gpt-5-mini
 - Add tests around matching actual workouts to planned workouts.
 - Decide how far back initial HealthKit actual sync should go for production.
 - Add deployment notes for configuring `app.supabase_project_url` and `app.supabase_service_role_key` for cron.
+- Build Profile > Fitness Profile UI using `historyInsights`, `goalTargets`, `goalEvaluations`, and `debriefRequests`.
+- Build workout feedback capture from pending `workout_debrief_requests`.
+- Move onboarding Flow C HealthKit consent before AI goal candidate generation.

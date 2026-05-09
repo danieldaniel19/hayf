@@ -7,6 +7,10 @@ final class PlanDataStore: ObservableObject {
     @Published private(set) var phases: [PlanFitnessBlockPhase] = []
     @Published private(set) var weeklyRhythms: [PlanWeeklyRhythm] = []
     @Published private(set) var workouts: [PlanWorkout] = []
+    @Published private(set) var goalTargets: [PlanGoalTarget] = []
+    @Published private(set) var goalEvaluations: [PlanGoalEvaluation] = []
+    @Published private(set) var historyInsights: [FitnessHistoryInsight] = []
+    @Published private(set) var debriefRequests: [WorkoutDebriefRequest] = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
@@ -32,17 +36,29 @@ final class PlanDataStore: ObservableObject {
                 phases = []
                 weeklyRhythms = []
                 workouts = []
+                goalTargets = []
+                goalEvaluations = []
+                historyInsights = []
+                debriefRequests = []
                 return
             }
 
             async let phases = fetchPhases(for: block.id)
             async let weeklyRhythms = fetchWeeklyRhythms(for: block.id)
             async let workouts = fetchWorkouts(for: block.id)
+            async let goalTargets = fetchGoalTargets(for: block.id)
+            async let goalEvaluations = fetchGoalEvaluations(for: block.id)
+            async let historyInsights = fetchHistoryInsights(for: block.id)
+            async let debriefRequests = fetchDebriefRequests(for: block.id)
 
             activeBlock = block
             self.phases = try await phases
             self.weeklyRhythms = try await weeklyRhythms
             self.workouts = try await workouts
+            self.goalTargets = try await goalTargets
+            self.goalEvaluations = try await goalEvaluations
+            self.historyInsights = try await historyInsights
+            self.debriefRequests = try await debriefRequests
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -101,6 +117,50 @@ final class PlanDataStore: ObservableObject {
             .not("status", operator: .in, value: "(deleted,superseded)")
             .order("scheduled_date", ascending: true)
             .order("sequence_order", ascending: true)
+            .execute()
+            .value
+    }
+
+    private func fetchGoalTargets(for blockID: UUID) async throws -> [PlanGoalTarget] {
+        try await supabase
+            .from("fitness_goal_targets")
+            .select("id, active_block_id, parent_goal_target_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status")
+            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .order("target_kind", ascending: true)
+            .order("created_at", ascending: true)
+            .execute()
+            .value
+    }
+
+    private func fetchGoalEvaluations(for blockID: UUID) async throws -> [PlanGoalEvaluation] {
+        try await supabase
+            .from("fitness_goal_evaluations")
+            .select("id, active_block_id, goal_target_id, status, current_value, target_value, unit, progress_ratio, evaluated_at, evidence_json, message, confidence")
+            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .order("evaluated_at", ascending: false)
+            .limit(50)
+            .execute()
+            .value
+    }
+
+    private func fetchHistoryInsights(for blockID: UUID) async throws -> [FitnessHistoryInsight] {
+        try await supabase
+            .from("fitness_history_insights")
+            .select("id, active_block_id, insight_key, category, title, summary, evidence_json, source, confidence, valid_from, valid_until, updated_at")
+            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .order("updated_at", ascending: false)
+            .limit(12)
+            .execute()
+            .value
+    }
+
+    private func fetchDebriefRequests(for blockID: UUID) async throws -> [WorkoutDebriefRequest] {
+        try await supabase
+            .from("workout_debrief_requests")
+            .select("id, active_block_id, planned_workout_id, actual_workout_id, status, prompt_reason, created_at")
+            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .eq("status", value: "needed")
+            .order("created_at", ascending: false)
             .execute()
             .value
     }
@@ -234,6 +294,151 @@ struct PlanWorkout: Decodable, Identifiable {
         case status
         case source
         case fuelingSummary = "fueling_summary"
+    }
+}
+
+struct PlanGoalTarget: Decodable, Identifiable {
+    let id: UUID
+    let activeBlockID: UUID
+    let parentGoalTargetID: UUID?
+    let targetKind: PlanGoalTargetKind
+    let title: String
+    let description: String?
+    let metricKey: String?
+    let metricCategory: String?
+    let direction: String
+    let baselineValue: Double?
+    let targetValue: Double?
+    let unit: String?
+    let startDate: String
+    let targetDate: String?
+    let evaluationRule: JSONValue
+    let source: String
+    let status: PlanGoalStatus
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case activeBlockID = "active_block_id"
+        case parentGoalTargetID = "parent_goal_target_id"
+        case targetKind = "target_kind"
+        case title
+        case description
+        case metricKey = "metric_key"
+        case metricCategory = "metric_category"
+        case direction
+        case baselineValue = "baseline_value"
+        case targetValue = "target_value"
+        case unit
+        case startDate = "start_date"
+        case targetDate = "target_date"
+        case evaluationRule = "evaluation_rule_json"
+        case source
+        case status
+    }
+}
+
+enum PlanGoalTargetKind: String, Decodable {
+    case primary
+    case subGoal = "sub_goal"
+}
+
+enum PlanGoalStatus: String, Decodable {
+    case onTrack = "on_track"
+    case lagging
+    case achieved
+    case needsReview = "needs_review"
+
+    var displayName: String {
+        switch self {
+        case .onTrack:
+            return "On track"
+        case .lagging:
+            return "Lagging"
+        case .achieved:
+            return "Achieved"
+        case .needsReview:
+            return "Needs review"
+        }
+    }
+}
+
+struct PlanGoalEvaluation: Decodable, Identifiable {
+    let id: UUID
+    let activeBlockID: UUID
+    let goalTargetID: UUID
+    let status: PlanGoalStatus
+    let currentValue: Double?
+    let targetValue: Double?
+    let unit: String?
+    let progressRatio: Double?
+    let evaluatedAt: String
+    let evidence: JSONValue
+    let message: String
+    let confidence: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case activeBlockID = "active_block_id"
+        case goalTargetID = "goal_target_id"
+        case status
+        case currentValue = "current_value"
+        case targetValue = "target_value"
+        case unit
+        case progressRatio = "progress_ratio"
+        case evaluatedAt = "evaluated_at"
+        case evidence = "evidence_json"
+        case message
+        case confidence
+    }
+}
+
+struct FitnessHistoryInsight: Decodable, Identifiable {
+    let id: UUID
+    let activeBlockID: UUID?
+    let insightKey: String
+    let category: String
+    let title: String
+    let summary: String
+    let evidence: JSONValue
+    let source: String
+    let confidence: String
+    let validFrom: String?
+    let validUntil: String?
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case activeBlockID = "active_block_id"
+        case insightKey = "insight_key"
+        case category
+        case title
+        case summary
+        case evidence = "evidence_json"
+        case source
+        case confidence
+        case validFrom = "valid_from"
+        case validUntil = "valid_until"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct WorkoutDebriefRequest: Decodable, Identifiable {
+    let id: UUID
+    let activeBlockID: UUID?
+    let plannedWorkoutID: UUID?
+    let actualWorkoutID: UUID?
+    let status: String
+    let promptReason: String
+    let createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case activeBlockID = "active_block_id"
+        case plannedWorkoutID = "planned_workout_id"
+        case actualWorkoutID = "actual_workout_id"
+        case status
+        case promptReason = "prompt_reason"
+        case createdAt = "created_at"
     }
 }
 

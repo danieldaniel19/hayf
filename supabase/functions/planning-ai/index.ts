@@ -1,5 +1,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
+type SupabaseAdminClient = any;
+
 type PlanningTask =
   | "bootstrap_after_onboarding"
   | "sync_healthkit_and_reconcile"
@@ -303,7 +305,7 @@ Deno.serve(async (req) => {
   const supabaseUrl = mustGetEnv("SUPABASE_URL");
   const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
   const anonKey = mustGetEnv("SUPABASE_ANON_KEY");
-  const admin = createClient(supabaseUrl, serviceRoleKey);
+  const admin: SupabaseAdminClient = createClient(supabaseUrl, serviceRoleKey);
   const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
 
   let requestBody: PlanningAIRequest | null = null;
@@ -331,7 +333,7 @@ Deno.serve(async (req) => {
       userID = data.user.id;
     }
 
-    const output = await handleTask({
+    const output: any = await handleTask({
       admin,
       requestBody,
       userID,
@@ -369,7 +371,7 @@ Deno.serve(async (req) => {
 });
 
 async function handleTask(args: {
-  admin: ReturnType<typeof createClient>;
+  admin: SupabaseAdminClient;
   requestBody: PlanningAIRequest;
   userID: string | null;
   model: string;
@@ -400,7 +402,7 @@ async function handleTask(args: {
 }
 
 async function bootstrapAfterOnboarding(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
   model: string,
@@ -482,6 +484,11 @@ async function bootstrapAfterOnboarding(
 
   await insertRhythmsAndWorkouts(admin, userID, block.id, generated.rhythms, "generated");
   await markCurrentWorkout(admin, userID, block.id, start);
+  if (requestBody.healthSnapshot) {
+    await persistFitnessEvidence(admin, userID, block.id, requestBody.healthSnapshot);
+    await createInitialGoalTargets(admin, userID, block, requestBody.healthSnapshot);
+    await evaluateGoalTargets(admin, userID, block, requestBody.healthSnapshot);
+  }
   const event = await createPlanEvent(admin, {
     userID,
     activeBlockID: block.id,
@@ -500,7 +507,7 @@ async function bootstrapAfterOnboarding(
 }
 
 async function syncHealthKitAndReconcile(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
 ) {
@@ -516,6 +523,7 @@ async function syncHealthKitAndReconcile(
         source_timezone: timezone,
       }),
     );
+    await persistFitnessEvidence(admin, userID, block.id, requestBody.healthSnapshot);
   }
 
   let synced = 0;
@@ -566,6 +574,7 @@ async function syncHealthKitAndReconcile(
         eventType: "actual_matched",
         payload: { actual, confidence: match.confidence },
       });
+      await createWorkoutDebriefRequest(admin, userID, block.id, match.workout.id, upserted.id);
       matched += 1;
     } else {
       const inserted = await insertDetectedWorkout(admin, userID, block.id, actual);
@@ -582,6 +591,7 @@ async function syncHealthKitAndReconcile(
         eventType: "extra_workout_detected",
         payload: { actual },
       });
+      await createWorkoutDebriefRequest(admin, userID, block.id, inserted.id, upserted.id);
       detectedEvents.push({ eventID: event.id, plannedWorkoutID: inserted.id, actual });
       detected += 1;
     }
@@ -611,12 +621,16 @@ async function syncHealthKitAndReconcile(
   }
 
   await markCurrentWorkout(admin, userID, block.id, new Date());
+  if (requestBody.healthSnapshot) {
+    await createInitialGoalTargets(admin, userID, block, requestBody.healthSnapshot);
+    await evaluateGoalTargets(admin, userID, block, requestBody.healthSnapshot);
+  }
 
   return { userID, eventID: event.id, synced, matched, detected };
 }
 
 async function refreshPlanWindow(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
   model: string,
@@ -626,7 +640,7 @@ async function refreshPlanWindow(
 }
 
 async function refreshPlanWindowForUser(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   windowStart: string | undefined,
   model: string,
@@ -733,7 +747,7 @@ async function refreshPlanWindowForUser(
 }
 
 async function recordPlanEdit(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
 ) {
@@ -813,7 +827,7 @@ async function recordPlanEdit(
 }
 
 async function recommendWorkoutReplacements(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
   model: string,
@@ -895,7 +909,7 @@ async function recommendWorkoutReplacements(
 }
 
 async function replaceWorkout(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
 ) {
@@ -969,7 +983,7 @@ async function replaceWorkout(
 }
 
 async function applyReplanProposal(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
 ) {
@@ -1014,7 +1028,7 @@ async function applyReplanProposal(
 }
 
 async function checkInToWorkout(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
 ) {
@@ -1095,7 +1109,7 @@ async function checkInToWorkout(
   };
 }
 
-async function scheduledRefreshDueWindows(admin: ReturnType<typeof createClient>, model: string) {
+async function scheduledRefreshDueWindows(admin: SupabaseAdminClient, model: string) {
   const blocks = await list(
     admin
       .from("active_fitness_blocks")
@@ -1103,7 +1117,7 @@ async function scheduledRefreshDueWindows(admin: ReturnType<typeof createClient>
       .eq("status", "active"),
   );
 
-  const dueBlocks = blocks.filter((block) => isSundayEveningInTimezone(block.timezone || "UTC"));
+  const dueBlocks = blocks.filter((block: Record<string, any>) => isSundayEveningInTimezone(block.timezone || "UTC"));
   const refreshed: string[] = [];
   const failed: Array<{ userID: string; error: string }> = [];
 
@@ -1457,7 +1471,7 @@ function fallbackPhases(start: Date, targetDate: string | null): GeneratedPhase[
 }
 
 async function insertRhythmsAndWorkouts(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   activeBlockID: string,
   rhythms: GeneratedRhythm[],
@@ -1515,7 +1529,7 @@ async function insertRhythmsAndWorkouts(
 }
 
 async function markCurrentWorkout(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   activeBlockID: string,
   now: Date,
@@ -1547,7 +1561,7 @@ async function markCurrentWorkout(
   }
 }
 
-async function archiveActiveBlocks(admin: ReturnType<typeof createClient>, userID: string) {
+async function archiveActiveBlocks(admin: SupabaseAdminClient, userID: string) {
   await throwOnError(
     admin
       .from("active_fitness_blocks")
@@ -1557,7 +1571,7 @@ async function archiveActiveBlocks(admin: ReturnType<typeof createClient>, userI
   );
 }
 
-async function loadActiveBlock(admin: ReturnType<typeof createClient>, userID: string) {
+async function loadActiveBlock(admin: SupabaseAdminClient, userID: string) {
   return single(
     admin
       .from("active_fitness_blocks")
@@ -1570,7 +1584,7 @@ async function loadActiveBlock(admin: ReturnType<typeof createClient>, userID: s
 }
 
 async function loadPlannedWorkout(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   activeBlockID: string,
   plannedWorkoutID: string,
@@ -1588,7 +1602,7 @@ async function loadPlannedWorkout(
 }
 
 async function findWorkoutMatch(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   activeBlockID: string,
   actual: ActualWorkoutInput,
@@ -1617,7 +1631,7 @@ async function findWorkoutMatch(
 }
 
 async function insertDetectedWorkout(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   activeBlockID: string,
   actual: ActualWorkoutInput,
@@ -1654,8 +1668,560 @@ async function insertDetectedWorkout(
   );
 }
 
+async function persistFitnessEvidence(
+  admin: SupabaseAdminClient,
+  userID: string,
+  activeBlockID: string,
+  snapshot: Record<string, any>,
+) {
+  const profile = snapshot.fitnessHistory ?? snapshot.fitness_history;
+  if (!profile) {
+    return;
+  }
+
+  const generatedAt = snapshotGeneratedAt(snapshot);
+  const insights = Array.isArray(profile.insightCandidates ?? profile.insight_candidates)
+    ? profile.insightCandidates ?? profile.insight_candidates
+    : [];
+
+  if (insights.length > 0) {
+    await throwOnError(
+      admin.from("fitness_history_insights").upsert(
+        insights.map((insight: Record<string, any>) => ({
+          user_id: userID,
+          active_block_id: activeBlockID,
+          insight_key: insight.key,
+          category: insight.category ?? "general",
+          title: insight.title ?? "Fitness insight",
+          summary: insight.summary ?? "",
+          evidence_json: insight.evidence ?? {},
+          source: "healthkit",
+          confidence: insight.confidence ?? "medium",
+          updated_at: new Date().toISOString(),
+        })),
+        { onConflict: "user_id,insight_key" },
+      ),
+    );
+  }
+
+  const observations = fitnessMetricObservations(userID, activeBlockID, snapshot, profile, generatedAt);
+  if (observations.length > 0) {
+    await throwOnError(admin.from("fitness_metric_observations").insert(observations));
+  }
+}
+
+function fitnessMetricObservations(
+  userID: string,
+  activeBlockID: string,
+  snapshot: Record<string, any>,
+  profile: Record<string, any>,
+  observedAt: string,
+) {
+  const rows: Array<Record<string, unknown>> = [];
+  const push = (
+    metricKey: string,
+    metricLabel: string,
+    metricCategory: string,
+    value: unknown,
+    unit: string | null,
+    dimensions: Record<string, unknown> = {},
+    evidence: Record<string, unknown> = {},
+  ) => {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return;
+    }
+
+    rows.push({
+      user_id: userID,
+      active_block_id: activeBlockID,
+      source: "healthkit",
+      metric_key: metricKey,
+      metric_label: metricLabel,
+      metric_category: metricCategory,
+      value,
+      unit,
+      observed_end: observedAt,
+      dimensions_json: dimensions,
+      evidence_json: evidence,
+      confidence: "high",
+    });
+  };
+
+  const loadWindows = profile.load?.windows ?? [];
+  for (const window of loadWindows) {
+    push(`training_minutes_${window.window}`, `Training minutes ${window.window}`, "volume", window.totalMinutes, "min", { window: window.window });
+    push(`training_workouts_${window.window}`, `Workouts ${window.window}`, "consistency", window.workouts, "count", { window: window.window });
+    push(`training_distance_${window.window}_km`, `Training distance ${window.window}`, "volume", window.totalDistanceKilometers, "km", { window: window.window });
+  }
+
+  push("cycling_distance_90d_km", "Cycling distance 90d", "volume", snapshot.activity?.cyclingDistance90DaysKilometers, "km", { modality: "cycling", window: "90d" });
+  push("walking_running_distance_28d_km", "Walking/running distance 28d", "volume", snapshot.activity?.walkingRunningDistance28DaysKilometers, "km", { modality: "walking_running", window: "28d" });
+  push("steps_7d_avg", "Average steps 7d", "activity_floor", snapshot.activity?.averageSteps7Days, "steps/day", { window: "7d" });
+  push("active_energy_7d_kcal", "Active energy 7d", "activity_floor", snapshot.activity?.activeEnergy7DaysKilocalories, "kcal", { window: "7d" });
+  push("body_mass_latest_kg", "Body mass latest", "body", snapshot.body?.bodyMassKilograms, "kg");
+  push("body_mass_28d_avg_kg", "Body mass 28d average", "body", snapshot.body?.bodyMass28DayAverageKilograms, "kg", { window: "28d" });
+  push("body_fat_latest_percentage", "Body fat latest", "body", snapshot.body?.bodyFatPercentage, "%");
+  push("body_fat_28d_avg_percentage", "Body fat 28d average", "body", snapshot.body?.bodyFat28DayAveragePercentage, "%", { window: "28d" });
+  push("vo2_max_latest", "VO2 max latest", "recovery", snapshot.recovery?.vo2MaxLatest, "mL/kg/min");
+  push("active_weeks", "Active training weeks", "consistency", profile.consistency?.activeWeeks, "weeks");
+  push("longest_active_week_streak", "Longest active week streak", "consistency", profile.consistency?.longestActiveWeekStreak, "weeks");
+  push("strength_workouts_90d", "Strength workouts 90d", "balance", profile.strengthContinuity?.strengthWorkouts90Days, "count", { modality: "strength", window: "90d" });
+  push("strength_minutes_90d", "Strength minutes 90d", "balance", profile.strengthContinuity?.strengthMinutes90Days, "min", { modality: "strength", window: "90d" });
+
+  const bestEfforts = profile.performance?.bestDistanceEfforts ?? [];
+  for (const effort of bestEfforts) {
+    push(
+      `${effort.modality}_best_${String(effort.distanceBucketKilometers).replace(".", "_")}k_kph`,
+      `${titleCase(effort.modality)} best ${effort.distanceBucketKilometers} km speed`,
+      "performance",
+      effort.averageSpeedKilometersPerHour,
+      "km/h",
+      { modality: effort.modality, distanceBucketKilometers: effort.distanceBucketKilometers },
+      effort,
+    );
+  }
+
+  return rows;
+}
+
+async function createInitialGoalTargets(
+  admin: SupabaseAdminClient,
+  userID: string,
+  block: Record<string, any>,
+  snapshot: Record<string, any>,
+) {
+  const existing = await list(
+    admin
+      .from("fitness_goal_targets")
+      .select("id")
+      .eq("user_id", userID)
+      .eq("active_block_id", block.id)
+      .limit(1),
+  );
+  if (existing.length > 0) {
+    return;
+  }
+
+  const targets = buildInitialGoalTargets(userID, block, snapshot);
+  if (targets.length === 0) {
+    return;
+  }
+
+  await throwOnError(admin.from("fitness_goal_targets").insert(targets));
+  await createPlanEvent(admin, {
+    userID,
+    activeBlockID: block.id,
+    eventType: "goal_targets_created",
+    payload: { count: targets.length, source: "healthkit_snapshot" },
+  });
+}
+
+function buildInitialGoalTargets(userID: string, block: Record<string, any>, snapshot: Record<string, any>) {
+  const text = `${block.goal_text ?? ""} ${block.title ?? ""}`.toLowerCase();
+  const startDate = block.start_date ?? isoDate(new Date());
+  const targetDate = block.target_date ?? null;
+  const profile = snapshot.fitnessHistory ?? snapshot.fitness_history ?? {};
+  const isBodyGoal = /weight|kg|kilo|fat|lean|body/.test(text);
+  const isCyclingGoal = /cycle|cycling|bike|ride|climb/.test(text);
+  const isRunningGoal = /run|running|5k|10k|marathon|pace/.test(text);
+  const isConsistencyGoal = block.kind === "consistency" || /consistent|routine|habit|streak/.test(text);
+
+  let primaryMetric = "training_minutes_28d";
+  let primaryCategory = "volume";
+  let direction: "increase" | "decrease" | "maintain" | "complete" | "review" = "increase";
+  let unit = "min";
+  let baseline = metricValueFor(snapshot, primaryMetric);
+  let target: number | null = typeof baseline === "number" ? Math.max(120, Math.round(baseline * 1.1)) : null;
+
+  if (isBodyGoal && /fat/.test(text)) {
+    primaryMetric = "body_fat_28d_avg_percentage";
+    primaryCategory = "body";
+    direction = "decrease";
+    unit = "%";
+    baseline = metricValueFor(snapshot, primaryMetric) ?? metricValueFor(snapshot, "body_fat_latest_percentage");
+    const delta = extractFirstNumber(text);
+    target = typeof baseline === "number" && delta ? Math.max(0, baseline - delta) : null;
+  } else if (isBodyGoal) {
+    primaryMetric = "body_mass_28d_avg_kg";
+    primaryCategory = "body";
+    direction = "decrease";
+    unit = "kg";
+    baseline = metricValueFor(snapshot, primaryMetric) ?? metricValueFor(snapshot, "body_mass_latest_kg");
+    const delta = extractFirstNumber(text);
+    target = typeof baseline === "number" && delta ? Math.max(0, baseline - delta) : null;
+  } else if (isCyclingGoal) {
+    primaryMetric = "cycling_distance_90d_km";
+    primaryCategory = "volume";
+    direction = "increase";
+    unit = "km";
+    baseline = metricValueFor(snapshot, primaryMetric);
+    target = typeof baseline === "number" ? Math.max(100, Math.round(baseline * 1.1)) : null;
+  } else if (isRunningGoal) {
+    primaryMetric = "walking_running_distance_28d_km";
+    primaryCategory = "volume";
+    direction = "increase";
+    unit = "km";
+    baseline = metricValueFor(snapshot, primaryMetric);
+    target = typeof baseline === "number" ? Math.max(20, Math.round(baseline * 1.1)) : null;
+  } else if (isConsistencyGoal) {
+    primaryMetric = "training_workouts_28d";
+    primaryCategory = "consistency";
+    direction = "maintain";
+    unit = "count";
+    baseline = metricValueFor(snapshot, primaryMetric);
+    target = typeof baseline === "number" ? Math.max(8, Math.round(baseline)) : 8;
+  }
+
+  const rows: Array<Record<string, unknown>> = [
+    goalTargetRow({
+      userID,
+      blockID: block.id,
+      kind: "primary",
+      title: block.goal_text || block.title || "Active block goal",
+      description: "Primary goal HAYF tracks against your active block.",
+      metricKey: primaryMetric,
+      metricCategory: primaryCategory,
+      direction,
+      baselineValue: baseline,
+      targetValue: target,
+      unit,
+      startDate,
+      targetDate,
+      rule: { source: "initial_healthkit_profile", profileLabel: profile.trainingIdentity?.label ?? null },
+    }),
+  ];
+
+  const training7d = metricValueFor(snapshot, "training_minutes_7d");
+  rows.push(goalTargetRow({
+    userID,
+    blockID: block.id,
+    kind: "sub_goal",
+    title: "Build weekly training volume",
+    description: "Keep the week moving without making the active block brittle.",
+    metricKey: "training_minutes_7d",
+    metricCategory: "volume",
+    direction: "maintain",
+    baselineValue: training7d,
+    targetValue: typeof training7d === "number" ? Math.max(90, Math.round(training7d * 0.9)) : 90,
+    unit: "min",
+    startDate,
+    targetDate,
+    rule: { window: "7d" },
+  }));
+
+  const strength90 = metricValueFor(snapshot, "strength_workouts_90d");
+  rows.push(goalTargetRow({
+    userID,
+    blockID: block.id,
+    kind: "sub_goal",
+    title: "Keep strength in the mix",
+    description: "Protect strength continuity while the block moves forward.",
+    metricKey: "strength_workouts_90d",
+    metricCategory: "balance",
+    direction: "maintain",
+    baselineValue: strength90,
+    targetValue: typeof strength90 === "number" ? Math.max(4, Math.round(strength90 * 0.8)) : 4,
+    unit: "count",
+    startDate,
+    targetDate,
+    rule: { modality: "strength", window: "90d" },
+  }));
+
+  const steps = metricValueFor(snapshot, "steps_7d_avg");
+  rows.push(goalTargetRow({
+    userID,
+    blockID: block.id,
+    kind: "sub_goal",
+    title: "Protect the activity floor",
+    description: "Watch whether non-workout movement stays alive.",
+    metricKey: "steps_7d_avg",
+    metricCategory: "activity_floor",
+    direction: "maintain",
+    baselineValue: steps,
+    targetValue: typeof steps === "number" ? Math.round(steps * 0.85) : null,
+    unit: "steps/day",
+    startDate,
+    targetDate,
+    rule: { window: "7d" },
+  }));
+
+  return rows;
+}
+
+function goalTargetRow(args: {
+  userID: string;
+  blockID: string;
+  kind: "primary" | "sub_goal";
+  title: string;
+  description: string;
+  metricKey: string;
+  metricCategory: string;
+  direction: "increase" | "decrease" | "maintain" | "complete" | "review";
+  baselineValue?: number | null;
+  targetValue?: number | null;
+  unit?: string | null;
+  startDate: string;
+  targetDate?: string | null;
+  rule: Record<string, unknown>;
+}) {
+  return {
+    user_id: args.userID,
+    active_block_id: args.blockID,
+    target_kind: args.kind,
+    title: args.title,
+    description: args.description,
+    metric_key: args.metricKey,
+    metric_category: args.metricCategory,
+    direction: args.direction,
+    baseline_value: typeof args.baselineValue === "number" ? args.baselineValue : null,
+    target_value: typeof args.targetValue === "number" ? args.targetValue : null,
+    unit: args.unit ?? null,
+    start_date: args.startDate,
+    target_date: args.targetDate ?? null,
+    evaluation_rule_json: args.rule,
+    source: "planning_engine",
+    status: "needs_review",
+  };
+}
+
+async function evaluateGoalTargets(
+  admin: SupabaseAdminClient,
+  userID: string,
+  block: Record<string, any>,
+  snapshot: Record<string, any>,
+) {
+  const targets = await list(
+    admin
+      .from("fitness_goal_targets")
+      .select()
+      .eq("user_id", userID)
+      .eq("active_block_id", block.id)
+      .order("created_at", { ascending: true }),
+  );
+  if (targets.length === 0) {
+    return;
+  }
+
+  let achievedPrimary = false;
+  let reviewPrimary = false;
+  const evaluations: Array<Record<string, unknown>> = [];
+  for (const target of targets) {
+    const currentValue = target.metric_key ? metricValueFor(snapshot, target.metric_key) : null;
+    const evaluation = evaluateGoalTarget(target, currentValue);
+    evaluations.push({
+      user_id: userID,
+      active_block_id: block.id,
+      goal_target_id: target.id,
+      status: evaluation.status,
+      current_value: typeof currentValue === "number" ? currentValue : null,
+      target_value: target.target_value,
+      unit: target.unit,
+      progress_ratio: evaluation.progressRatio,
+      evidence_json: evaluation.evidence,
+      message: evaluation.message,
+      confidence: evaluation.confidence,
+    });
+
+    if (target.status !== evaluation.status) {
+      await createPlanEvent(admin, {
+        userID,
+        activeBlockID: block.id,
+        eventType: "goal_status_changed",
+        payload: { goalTargetID: target.id, from: target.status, to: evaluation.status, title: target.title },
+      });
+    }
+
+    if (target.target_kind === "primary" && evaluation.status === "achieved") {
+      achievedPrimary = true;
+      await createPlanEvent(admin, {
+        userID,
+        activeBlockID: block.id,
+        eventType: "goal_achieved",
+        payload: { goalTargetID: target.id, title: target.title, currentValue, targetValue: target.target_value },
+      });
+    }
+
+    if (target.target_kind === "primary" && evaluation.status === "needs_review") {
+      reviewPrimary = true;
+    }
+
+    await throwOnError(
+      admin
+        .from("fitness_goal_targets")
+        .update({ status: evaluation.status })
+        .eq("id", target.id)
+        .eq("user_id", userID),
+    );
+  }
+
+  await throwOnError(admin.from("fitness_goal_evaluations").insert(evaluations));
+  await createPlanEvent(admin, {
+    userID,
+    activeBlockID: block.id,
+    eventType: "goal_progress_evaluated",
+    payload: { count: evaluations.length, generatedAt: snapshotGeneratedAt(snapshot) },
+  });
+
+  if (achievedPrimary) {
+    await createGoalReviewProposal(admin, userID, block.id, "Primary goal achieved. Review whether to maintain, extend, or start a new block.");
+  } else if (reviewPrimary) {
+    await createPlanEvent(admin, {
+      userID,
+      activeBlockID: block.id,
+      eventType: "goal_review_needed",
+      payload: { reason: "primary_goal_not_measurable" },
+    });
+    await createGoalReviewProposal(admin, userID, block.id, "Primary goal needs review because HAYF does not have enough measurable evidence yet.");
+  }
+}
+
+function evaluateGoalTarget(target: Record<string, any>, currentValue: number | null | undefined) {
+  if (typeof currentValue !== "number" || Number.isNaN(currentValue)) {
+    return {
+      status: "needs_review",
+      progressRatio: null,
+      confidence: "low",
+      message: "HAYF does not have enough data to evaluate this target yet.",
+      evidence: { reason: "missing_metric", metricKey: target.metric_key },
+    };
+  }
+
+  const targetValue = typeof target.target_value === "number" ? target.target_value : null;
+  const baseline = typeof target.baseline_value === "number" ? target.baseline_value : null;
+  if (target.direction === "review" || targetValue === null) {
+    return {
+      status: "needs_review",
+      progressRatio: null,
+      confidence: "medium",
+      message: "This target is useful context, but needs a clearer measurable rule.",
+      evidence: { currentValue },
+    };
+  }
+
+  if (target.direction === "maintain") {
+    const status = currentValue >= targetValue ? "on_track" : "lagging";
+    return {
+      status,
+      progressRatio: targetValue > 0 ? Number((currentValue / targetValue).toFixed(2)) : null,
+      confidence: "medium",
+      message: status === "on_track" ? "This support target is holding." : "This support target is below its current threshold.",
+      evidence: { currentValue, targetValue },
+    };
+  }
+
+  const denominator = baseline !== null ? Math.abs(targetValue - baseline) : Math.abs(targetValue);
+  const moved = target.direction === "decrease"
+    ? (baseline ?? targetValue) - currentValue
+    : currentValue - (baseline ?? 0);
+  const progressRatio = denominator > 0 ? Math.max(0, Math.min(1.5, moved / denominator)) : null;
+  const achieved = target.direction === "decrease" ? currentValue <= targetValue : currentValue >= targetValue;
+  const expected = expectedProgressRatio(target.start_date, target.target_date);
+  const status = achieved ? "achieved" : progressRatio !== null && progressRatio >= expected * 0.65 ? "on_track" : "lagging";
+
+  return {
+    status,
+    progressRatio: progressRatio !== null ? Number(progressRatio.toFixed(2)) : null,
+    confidence: "medium",
+    message: achieved ? "Target reached." : status === "on_track" ? "Progress is broadly on track." : "Progress is behind the current block pace.",
+    evidence: { currentValue, targetValue, baseline, expectedProgressRatio: expected },
+  };
+}
+
+function metricValueFor(snapshot: Record<string, any>, metricKey: string): number | null {
+  const profile = snapshot.fitnessHistory ?? snapshot.fitness_history ?? {};
+  const loadWindow = (window: string, field: string) =>
+    (profile.load?.windows ?? []).find((item: Record<string, any>) => item.window === window)?.[field];
+
+  const values: Record<string, unknown> = {
+    training_minutes_7d: loadWindow("7d", "totalMinutes"),
+    training_minutes_28d: loadWindow("28d", "totalMinutes"),
+    training_minutes_90d: loadWindow("90d", "totalMinutes"),
+    training_workouts_7d: loadWindow("7d", "workouts"),
+    training_workouts_28d: loadWindow("28d", "workouts"),
+    training_workouts_90d: loadWindow("90d", "workouts"),
+    cycling_distance_90d_km: snapshot.activity?.cyclingDistance90DaysKilometers,
+    walking_running_distance_28d_km: snapshot.activity?.walkingRunningDistance28DaysKilometers,
+    steps_7d_avg: snapshot.activity?.averageSteps7Days,
+    active_energy_7d_kcal: snapshot.activity?.activeEnergy7DaysKilocalories,
+    body_mass_latest_kg: snapshot.body?.bodyMassKilograms,
+    body_mass_28d_avg_kg: snapshot.body?.bodyMass28DayAverageKilograms,
+    body_fat_latest_percentage: snapshot.body?.bodyFatPercentage,
+    body_fat_28d_avg_percentage: snapshot.body?.bodyFat28DayAveragePercentage,
+    vo2_max_latest: snapshot.recovery?.vo2MaxLatest,
+    active_weeks: profile.consistency?.activeWeeks,
+    longest_active_week_streak: profile.consistency?.longestActiveWeekStreak,
+    strength_workouts_90d: profile.strengthContinuity?.strengthWorkouts90Days,
+    strength_minutes_90d: profile.strengthContinuity?.strengthMinutes90Days,
+  };
+
+  const value = values[metricKey];
+  return typeof value === "number" && !Number.isNaN(value) ? value : null;
+}
+
+async function createWorkoutDebriefRequest(
+  admin: SupabaseAdminClient,
+  userID: string,
+  activeBlockID: string,
+  plannedWorkoutID: string | null,
+  actualWorkoutID: string | null,
+) {
+  if (!actualWorkoutID) {
+    return;
+  }
+
+  await throwOnError(
+    admin.from("workout_debrief_requests").upsert(
+      {
+        user_id: userID,
+        active_block_id: activeBlockID,
+        planned_workout_id: plannedWorkoutID,
+        actual_workout_id: actualWorkoutID,
+        status: "needed",
+        prompt_reason: "completed_workout_detected",
+      },
+      { onConflict: "user_id,actual_workout_id" },
+    ),
+  );
+  await createPlanEvent(admin, {
+    userID,
+    activeBlockID,
+    plannedWorkoutID,
+    eventType: "workout_debrief_requested",
+    payload: { actualWorkoutID },
+  });
+}
+
+async function createGoalReviewProposal(
+  admin: SupabaseAdminClient,
+  userID: string,
+  activeBlockID: string,
+  reason: string,
+) {
+  const pending = await list(
+    admin
+      .from("replan_proposals")
+      .select("id,reason,status")
+      .eq("user_id", userID)
+      .eq("active_block_id", activeBlockID)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(10),
+  );
+  if (pending.some((proposal: Record<string, any>) => String(proposal.reason ?? "").includes("goal"))) {
+    return;
+  }
+
+  await createReplanProposal(admin, {
+    userID,
+    activeBlockID,
+    reason,
+    mutations: [],
+    metadata: { type: "goal_review" },
+  });
+}
+
 async function hasUsablePlanWindow(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   userID: string,
   activeBlockID: string,
   window: { start: string; end: string },
@@ -1675,13 +2241,13 @@ async function hasUsablePlanWindow(
     return false;
   }
 
-  const dates = workouts.map((workout) => workout.scheduled_date).sort();
+  const dates = workouts.map((workout: Record<string, any>) => workout.scheduled_date).sort();
   const lastWorkoutDate = dates[dates.length - 1];
   return lastWorkoutDate >= isoDate(addDays(parseDateOnly(window.end) ?? new Date(), -1));
 }
 
 async function createPlanEvent(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   args: {
     userID: string;
     activeBlockID?: string | null;
@@ -1707,7 +2273,7 @@ async function createPlanEvent(
 }
 
 async function createReplanProposal(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   args: {
     userID: string;
     activeBlockID?: string | null;
@@ -1743,7 +2309,7 @@ async function createReplanProposal(
   return proposal;
 }
 
-async function applyProposalMutations(admin: ReturnType<typeof createClient>, userID: string, proposal: Record<string, any>) {
+async function applyProposalMutations(admin: SupabaseAdminClient, userID: string, proposal: Record<string, any>) {
   const mutations = Array.isArray(proposal.proposed_mutations_json) ? proposal.proposed_mutations_json : [];
   for (const mutation of mutations) {
     if (mutation.type === "update_workout" && mutation.workout_id && mutation.fields) {
@@ -1782,7 +2348,7 @@ function validateRequest(value: PlanningAIRequest | null): asserts value is Plan
 }
 
 async function insertTrace(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   trace: {
     userID: string | null;
     task: PlanningTask;
@@ -1828,6 +2394,7 @@ function summarizeSnapshot(snapshot: Record<string, unknown> | null | undefined)
   return {
     generatedAt: snapshot.generatedAt ?? snapshot.generated_at ?? null,
     workoutLedger: snapshot.workoutLedger ? "present" : null,
+    fitnessHistory: snapshot.fitnessHistory ? "present" : null,
     recovery: snapshot.recovery ? "present" : null,
     activity: snapshot.activity ? "present" : null,
   };
@@ -1962,6 +2529,23 @@ function checkInSuggestsAdjustment(requestBody: PlanningAIRequest) {
   if (typeof energy === "number" && energy <= 0.25) return true;
   const text = requestBody.textContext?.toLowerCase() ?? "";
   return ["tired", "exhausted", "sick", "pain", "stressed", "don’t feel", "don't feel"].some((term) => text.includes(term));
+}
+
+function expectedProgressRatio(startDate: string | null | undefined, targetDate: string | null | undefined) {
+  const start = parseDateOnly(startDate);
+  const target = parseDateOnly(targetDate);
+  if (!start || !target) {
+    return 0.5;
+  }
+
+  const totalDays = Math.max(1, daysBetween(start, target));
+  const elapsedDays = Math.max(0, daysBetween(start, new Date()));
+  return Math.max(0.1, Math.min(1, elapsedDays / totalDays));
+}
+
+function extractFirstNumber(value: string) {
+  const match = value.match(/(\d+(?:[.,]\d+)?)/);
+  return match ? Number(match[1].replace(",", ".")) : null;
 }
 
 function snapshotGeneratedAt(snapshot: Record<string, unknown>) {

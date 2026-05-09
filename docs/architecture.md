@@ -60,6 +60,7 @@ Supabase is a good fit for:
 - app-generated recommendation history
 - user feedback on recommendations
 - optional daily or session-level derived summaries
+- source-agnostic fitness evidence, goal targets, goal evaluations, and workout feedback summaries
 - coaching conversation records
 - row-level security and admin tooling
 
@@ -117,6 +118,22 @@ Avoid storing these remotely at first:
 - exact location trails
 - any health data you do not actively use in recommendations
 
+## Fitness evidence architecture
+
+The planning and profile systems now share one evidence layer instead of creating sport-specific one-off calculations. HealthKit is the first source, but the model is intentionally source-agnostic so manual gym logging, workout debrief feedback, and future external sources can feed the same pipeline.
+
+Remote evidence should be compact and labelled:
+
+- `fitness_metric_observations`: numeric or categorical facts with metric keys, units, source labels, windows, and confidence
+- `fitness_history_insights`: coach-readable patterns such as training identity, seasonality, consistency, active streaks, and body metric availability
+- `fitness_goal_targets`: the primary active-block goal plus supporting sub-goals
+- `fitness_goal_evaluations`: append-only goal status checks such as on track, lagging, achieved, or needs review
+- `workout_debrief_requests` and `workout_feedback`: the feedback loop after completed workouts
+
+This keeps the AI layer grounded without requiring it to inspect raw samples. It also avoids rebuilding the engine every time a new goal appears, because new features can query labelled evidence by domain, modality, time window, and source.
+
+The user-facing home for this context will be Profile > Fitness Profile. That screen should summarize what HAYF knows and why it matters, while deeper planning actions remain in Plan, Today, workout detail, and coach chat.
+
 ## Suggested evolution path
 
 ### Phase 1
@@ -168,6 +185,8 @@ So design around `context packets` and `derived features`, not bulk storage.
 For the personal-first v1, the HealthKit read scope should be broad: workouts, routes, sleep, daily movement, recovery signals, heart/cardio signals, body metrics, mindful sessions, relevant event categories, and available nutrition logs. The app should turn these into compact derived features before recommendation, rather than sending raw HealthKit samples to the AI layer.
 
 The current implementation has a deterministic feature builder in `HealthKitManager.fetchFeatureSnapshot()`. It builds workout-ledger windows, activity baselines, recovery/body summaries, nutrition summaries, and notes about missing data. Onboarding uses that feature snapshot when generating the first rhythm, and the authenticated home screen exposes `HealthDebugView` for requesting access, rebuilding features, inspecting the JSON payload, and copying it while debugging in Xcode.
+
+The feature builder now also produces a `fitnessHistory` profile for longer-term context: training identity, modality mix, consistency, seasonality, load windows, generic performance proxies, strength continuity, recovery/body context, activity floor, and insight candidates.
 
 ## Recommendation
 

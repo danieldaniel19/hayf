@@ -21,6 +21,7 @@ struct HealthFeatureSnapshot: Codable {
     let generatedAt: Date
     let importWindow: String
     let workoutLedger: WorkoutLedgerSummary
+    let fitnessHistory: FitnessHistoryProfile
     let activity: ActivityFeatureSummary
     let recovery: RecoveryFeatureSummary
     let body: BodyFeatureSummary
@@ -159,7 +160,9 @@ struct RecoveryFeatureSummary: Codable {
 struct BodyFeatureSummary: Codable {
     let heightCentimeters: Double?
     let bodyMassKilograms: Double?
+    let bodyMass28DayAverageKilograms: Double?
     let bodyFatPercentage: Double?
+    let bodyFat28DayAveragePercentage: Double?
     let leanBodyMassKilograms: Double?
     let waistCircumferenceCentimeters: Double?
 }
@@ -174,6 +177,142 @@ struct NutritionFeatureSummary: Codable {
     let averageSugar28DaysGrams: Double?
     let averageFiber28DaysGrams: Double?
     let averageWater28DaysLiters: Double?
+}
+
+struct FitnessHistoryProfile: Codable {
+    let lookbackYears: Int
+    let totalWorkouts: Int
+    let trainingIdentity: FitnessTrainingIdentitySummary
+    let consistency: FitnessConsistencySummary
+    let seasonality: FitnessSeasonalitySummary
+    let load: FitnessLoadSummary
+    let performance: FitnessPerformanceProfile
+    let strengthContinuity: FitnessStrengthContinuitySummary
+    let recoveryContext: FitnessRecoveryContextSummary
+    let bodyTrend: FitnessBodyTrendSummary
+    let activityFloor: FitnessActivityFloorSummary
+    let insightCandidates: [FitnessHistoryInsightCandidate]
+}
+
+struct FitnessTrainingIdentitySummary: Codable {
+    let label: String
+    let modalityMix: [FitnessModalityMixSummary]
+    let dominantModalities: [String]
+}
+
+struct FitnessModalityMixSummary: Codable, Identifiable {
+    var id: String { modality }
+    let modality: String
+    let workouts: Int
+    let totalMinutes: Double
+    let totalDistanceKilometers: Double?
+    let shareOfMinutes: Double
+    let lastWorkoutDate: Date?
+}
+
+struct FitnessConsistencySummary: Codable {
+    let weeksAnalyzed: Int
+    let activeWeeks: Int
+    let averageWorkoutsPerActiveWeek: Double?
+    let averageMinutesPerActiveWeek: Double?
+    let longestActiveWeekStreak: Int
+    let longestGapDays: Int?
+}
+
+struct FitnessSeasonalitySummary: Codable {
+    let strongestMonth: FitnessMonthlyActivitySummary?
+    let strongestSeason: FitnessSeasonActivitySummary?
+    let summerVsWinterMinutesRatio: Double?
+    let monthlyActivity: [FitnessMonthlyActivitySummary]
+    let seasonalActivity: [FitnessSeasonActivitySummary]
+}
+
+struct FitnessMonthlyActivitySummary: Codable, Identifiable {
+    var id: Int { month }
+    let month: Int
+    let label: String
+    let workouts: Int
+    let totalMinutes: Double
+    let totalDistanceKilometers: Double?
+}
+
+struct FitnessSeasonActivitySummary: Codable, Identifiable {
+    var id: String { season }
+    let season: String
+    let workouts: Int
+    let totalMinutes: Double
+    let totalDistanceKilometers: Double?
+}
+
+struct FitnessLoadSummary: Codable {
+    let windows: [WorkoutWindowSummary]
+    let currentVsNinetyDayMinutesRatio: Double?
+    let currentVsAllTimeMinutesRatio: Double?
+}
+
+struct FitnessPerformanceProfile: Codable {
+    let bestDistanceEfforts: [FitnessBestDistanceEffort]
+    let longestWorkoutsByModality: [FitnessLongestWorkoutSummary]
+}
+
+struct FitnessBestDistanceEffort: Codable, Identifiable {
+    var id: String { "\(modality)-\(distanceBucketKilometers)" }
+    let modality: String
+    let distanceBucketKilometers: Double
+    let workoutDate: Date
+    let workoutDistanceKilometers: Double
+    let averageSpeedKilometersPerHour: Double
+    let paceSecondsPerKilometer: Double
+}
+
+struct FitnessLongestWorkoutSummary: Codable, Identifiable {
+    var id: String { modality }
+    let modality: String
+    let workoutDate: Date
+    let durationMinutes: Double
+    let distanceKilometers: Double?
+}
+
+struct FitnessStrengthContinuitySummary: Codable {
+    let strengthWorkouts28Days: Int
+    let strengthWorkouts90Days: Int
+    let strengthMinutes90Days: Double
+    let daysSinceLastStrength: Int?
+    let strengthShareOfMinutes90Days: Double?
+}
+
+struct FitnessRecoveryContextSummary: Codable {
+    let sleepHoursLastNight: Double?
+    let averageSleepHours14Days: Double?
+    let restingHeartRate14DayAverageBPM: Double?
+    let hrv14DayAverageMS: Double?
+    let vo2MaxLatest: Double?
+}
+
+struct FitnessBodyTrendSummary: Codable {
+    let bodyMassLatestKilograms: Double?
+    let bodyMass28DayAverageKilograms: Double?
+    let bodyFatLatestPercentage: Double?
+    let bodyFat28DayAveragePercentage: Double?
+    let waistCircumferenceCentimeters: Double?
+}
+
+struct FitnessActivityFloorSummary: Codable {
+    let averageSteps7Days: Double?
+    let averageSteps28Days: Double?
+    let activeEnergy7DaysKilocalories: Double?
+    let exerciseMinutes7Days: Double?
+    let walkingRunningDistance28DaysKilometers: Double?
+}
+
+struct FitnessHistoryInsightCandidate: Codable, Identifiable {
+    var id: String { key }
+    let key: String
+    let category: String
+    let title: String
+    let summary: String
+    let confidence: String
+    let evidence: [String: String]
 }
 
 final class HealthKitManager {
@@ -300,7 +439,9 @@ final class HealthKitManager {
         async let oxygenSaturation = fetchLatestQuantity(identifier: .oxygenSaturation, unit: .percent())
         async let height = fetchLatestQuantity(identifier: .height, unit: .meterUnit(with: .centi))
         async let bodyMass = fetchLatestQuantity(identifier: .bodyMass, unit: .gramUnit(with: .kilo))
+        async let bodyMass28 = fetchAverageQuantity(identifier: .bodyMass, unit: .gramUnit(with: .kilo), days: 28)
         async let bodyFat = fetchLatestQuantity(identifier: .bodyFatPercentage, unit: .percent())
+        async let bodyFat28 = fetchAverageQuantity(identifier: .bodyFatPercentage, unit: .percent(), days: 28)
         async let leanBodyMass = fetchLatestQuantity(identifier: .leanBodyMass, unit: .gramUnit(with: .kilo))
         async let waist = fetchLatestQuantity(identifier: .waistCircumference, unit: .meterUnit(with: .centi))
         async let nutrition = fetchNutritionSummary(days: 28)
@@ -327,11 +468,21 @@ final class HealthKitManager {
         let body = try await BodyFeatureSummary(
             heightCentimeters: height.flatMap(\.value),
             bodyMassKilograms: bodyMass.flatMap(\.value),
+            bodyMass28DayAverageKilograms: bodyMass28,
             bodyFatPercentage: bodyFat.flatMap(\.value).map { $0 * 100 },
+            bodyFat28DayAveragePercentage: bodyFat28.map { $0 * 100 },
             leanBodyMassKilograms: leanBodyMass.flatMap(\.value),
             waistCircumferenceCentimeters: waist.flatMap(\.value)
         )
         let nutritionSummary = try await nutrition
+        let fitnessHistory = buildFitnessHistoryProfile(
+            workouts: workoutSamples,
+            workoutLedger: workoutLedger,
+            activity: activity,
+            recovery: recovery,
+            body: body,
+            lookbackYears: 6
+        )
         let notes = buildSnapshotNotes(
             workouts: workoutSamples,
             nutrition: nutritionSummary,
@@ -344,6 +495,7 @@ final class HealthKitManager {
             generatedAt: Date(),
             importWindow: "Last 6 years, plus latest available body/recovery/nutrition samples",
             workoutLedger: workoutLedger,
+            fitnessHistory: fitnessHistory,
             activity: activity,
             recovery: recovery,
             body: body,
@@ -460,6 +612,391 @@ final class HealthKitManager {
         )
     }
 
+    private func buildFitnessHistoryProfile(
+        workouts: [HKWorkout],
+        workoutLedger: WorkoutLedgerSummary,
+        activity: ActivityFeatureSummary,
+        recovery: RecoveryFeatureSummary,
+        body: BodyFeatureSummary,
+        lookbackYears: Int
+    ) -> FitnessHistoryProfile {
+        let trainingIdentity = buildTrainingIdentity(from: workouts)
+        let consistency = buildConsistencySummary(from: workouts, lookbackYears: lookbackYears)
+        let seasonality = buildSeasonalitySummary(from: workouts)
+        let load = buildLoadSummary(from: workoutLedger)
+        let performance = buildPerformanceProfile(from: workouts)
+        let strengthContinuity = buildStrengthContinuity(from: workouts)
+        let recoveryContext = FitnessRecoveryContextSummary(
+            sleepHoursLastNight: recovery.sleepHoursLastNight,
+            averageSleepHours14Days: recovery.averageSleepHours14Days,
+            restingHeartRate14DayAverageBPM: recovery.restingHeartRate14DayAverageBPM,
+            hrv14DayAverageMS: recovery.hrv14DayAverageMS,
+            vo2MaxLatest: recovery.vo2MaxLatest
+        )
+        let bodyTrend = FitnessBodyTrendSummary(
+            bodyMassLatestKilograms: body.bodyMassKilograms,
+            bodyMass28DayAverageKilograms: body.bodyMass28DayAverageKilograms,
+            bodyFatLatestPercentage: body.bodyFatPercentage,
+            bodyFat28DayAveragePercentage: body.bodyFat28DayAveragePercentage,
+            waistCircumferenceCentimeters: body.waistCircumferenceCentimeters
+        )
+        let activityFloor = FitnessActivityFloorSummary(
+            averageSteps7Days: activity.averageSteps7Days,
+            averageSteps28Days: activity.averageSteps28Days,
+            activeEnergy7DaysKilocalories: activity.activeEnergy7DaysKilocalories,
+            exerciseMinutes7Days: activity.exerciseMinutes7Days,
+            walkingRunningDistance28DaysKilometers: activity.walkingRunningDistance28DaysKilometers
+        )
+        let insights = buildInsightCandidates(
+            trainingIdentity: trainingIdentity,
+            consistency: consistency,
+            seasonality: seasonality,
+            performance: performance,
+            strengthContinuity: strengthContinuity,
+            bodyTrend: bodyTrend
+        )
+
+        return FitnessHistoryProfile(
+            lookbackYears: lookbackYears,
+            totalWorkouts: workouts.count,
+            trainingIdentity: trainingIdentity,
+            consistency: consistency,
+            seasonality: seasonality,
+            load: load,
+            performance: performance,
+            strengthContinuity: strengthContinuity,
+            recoveryContext: recoveryContext,
+            bodyTrend: bodyTrend,
+            activityFloor: activityFloor,
+            insightCandidates: insights
+        )
+    }
+
+    private func buildTrainingIdentity(from workouts: [HKWorkout]) -> FitnessTrainingIdentitySummary {
+        let totalMinutes = workouts.reduce(0) { $0 + $1.duration / 60 }
+        let modalityMix = Dictionary(grouping: workouts, by: { normalizedModality(for: $0) })
+            .map { modality, workouts in
+                let sorted = workouts.sorted { $0.startDate > $1.startDate }
+                let minutes = workouts.reduce(0) { $0 + $1.duration / 60 }
+                let distance = workouts.compactMap(distanceKilometers).reduce(0, +)
+                return FitnessModalityMixSummary(
+                    modality: modality,
+                    workouts: workouts.count,
+                    totalMinutes: minutes,
+                    totalDistanceKilometers: distance > 0 ? distance : nil,
+                    shareOfMinutes: totalMinutes > 0 ? minutes / totalMinutes : 0,
+                    lastWorkoutDate: sorted.first?.startDate
+                )
+            }
+            .sorted { $0.totalMinutes > $1.totalMinutes }
+
+        let dominant = modalityMix.prefix(3).map(\.modality)
+        let label: String
+        if dominant.contains("strength") && dominant.contains(where: { ["cycling", "running", "walking", "hiit"].contains($0) }) {
+            label = "Hybrid athlete"
+        } else if dominant.first == "strength" {
+            label = "Strength-led"
+        } else if dominant.first == "cycling" || dominant.first == "running" {
+            label = "Endurance-led"
+        } else if workouts.isEmpty {
+            label = "Not enough workout history"
+        } else {
+            label = "Mixed training"
+        }
+
+        return FitnessTrainingIdentitySummary(
+            label: label,
+            modalityMix: modalityMix,
+            dominantModalities: dominant
+        )
+    }
+
+    private func buildConsistencySummary(from workouts: [HKWorkout], lookbackYears: Int) -> FitnessConsistencySummary {
+        let calendar = Calendar.current
+        let now = Date()
+        let start = calendar.date(byAdding: .year, value: -lookbackYears, to: now) ?? now
+        let weeksAnalyzed = max(1, calendar.dateComponents([.weekOfYear], from: start, to: now).weekOfYear ?? lookbackYears * 52)
+        let grouped = Dictionary(grouping: workouts) { workout in
+            calendar.dateInterval(of: .weekOfYear, for: workout.startDate)?.start ?? workout.startDate
+        }
+        let activeWeeks = grouped.count
+        let activeWeekWorkoutCounts = grouped.values.map(\.count)
+        let activeWeekMinutes = grouped.values.map { weekWorkouts in
+            weekWorkouts.reduce(0) { $0 + $1.duration / 60 }
+        }
+        let sortedWeeks = grouped.keys.sorted()
+        var longestStreak = sortedWeeks.isEmpty ? 0 : 1
+        var currentStreak = sortedWeeks.isEmpty ? 0 : 1
+        for index in sortedWeeks.indices.dropFirst() {
+            let previous = sortedWeeks[sortedWeeks.index(before: index)]
+            let current = sortedWeeks[index]
+            let days = calendar.dateComponents([.day], from: previous, to: current).day ?? 0
+            if days <= 8 {
+                currentStreak += 1
+                longestStreak = max(longestStreak, currentStreak)
+            } else {
+                currentStreak = 1
+            }
+        }
+
+        let sortedDates = workouts.map(\.startDate).sorted()
+        let gaps = zip(sortedDates, sortedDates.dropFirst()).map { previous, next in
+            calendar.dateComponents([.day], from: previous, to: next).day ?? 0
+        }
+
+        return FitnessConsistencySummary(
+            weeksAnalyzed: weeksAnalyzed,
+            activeWeeks: activeWeeks,
+            averageWorkoutsPerActiveWeek: activeWeekWorkoutCounts.isEmpty ? nil : Double(activeWeekWorkoutCounts.reduce(0, +)) / Double(activeWeekWorkoutCounts.count),
+            averageMinutesPerActiveWeek: activeWeekMinutes.isEmpty ? nil : activeWeekMinutes.reduce(0, +) / Double(activeWeekMinutes.count),
+            longestActiveWeekStreak: longestStreak,
+            longestGapDays: gaps.max()
+        )
+    }
+
+    private func buildSeasonalitySummary(from workouts: [HKWorkout]) -> FitnessSeasonalitySummary {
+        let calendar = Calendar.current
+        let monthFormatter = DateFormatter()
+        monthFormatter.locale = Locale(identifier: "en_US_POSIX")
+        monthFormatter.dateFormat = "MMM"
+
+        let monthly = Dictionary(grouping: workouts) { calendar.component(.month, from: $0.startDate) }
+            .map { month, workouts in
+                let date = calendar.date(from: DateComponents(month: month, day: 1)) ?? Date()
+                let distance = workouts.compactMap(distanceKilometers).reduce(0, +)
+                return FitnessMonthlyActivitySummary(
+                    month: month,
+                    label: monthFormatter.string(from: date),
+                    workouts: workouts.count,
+                    totalMinutes: workouts.reduce(0) { $0 + $1.duration / 60 },
+                    totalDistanceKilometers: distance > 0 ? distance : nil
+                )
+            }
+            .sorted { $0.month < $1.month }
+
+        let seasonal = Dictionary(grouping: workouts) { seasonLabel(for: calendar.component(.month, from: $0.startDate)) }
+            .map { season, workouts in
+                let distance = workouts.compactMap(distanceKilometers).reduce(0, +)
+                return FitnessSeasonActivitySummary(
+                    season: season,
+                    workouts: workouts.count,
+                    totalMinutes: workouts.reduce(0) { $0 + $1.duration / 60 },
+                    totalDistanceKilometers: distance > 0 ? distance : nil
+                )
+            }
+            .sorted { $0.totalMinutes > $1.totalMinutes }
+
+        let summerMinutes = seasonal.first { $0.season == "summer" }?.totalMinutes
+        let winterMinutes = seasonal.first { $0.season == "winter" }?.totalMinutes
+        let ratio: Double?
+        if let summerMinutes, let winterMinutes, winterMinutes > 0 {
+            ratio = summerMinutes / winterMinutes
+        } else {
+            ratio = nil
+        }
+
+        return FitnessSeasonalitySummary(
+            strongestMonth: monthly.max { $0.totalMinutes < $1.totalMinutes },
+            strongestSeason: seasonal.max { $0.totalMinutes < $1.totalMinutes },
+            summerVsWinterMinutesRatio: ratio,
+            monthlyActivity: monthly,
+            seasonalActivity: seasonal
+        )
+    }
+
+    private func buildLoadSummary(from workoutLedger: WorkoutLedgerSummary) -> FitnessLoadSummary {
+        let sevenDayMinutes = workoutLedger.windows.first { $0.window == "7d" }?.totalMinutes
+        let ninetyDayMinutes = workoutLedger.windows.first { $0.window == "90d" }?.totalMinutes
+        let allMinutes = workoutLedger.windows.first { $0.window == "all" }?.totalMinutes
+
+        return FitnessLoadSummary(
+            windows: workoutLedger.windows,
+            currentVsNinetyDayMinutesRatio: ratio(sevenDayMinutes.map { $0 * 90 / 7 }, ninetyDayMinutes),
+            currentVsAllTimeMinutesRatio: ratio(sevenDayMinutes, allMinutes)
+        )
+    }
+
+    private func buildPerformanceProfile(from workouts: [HKWorkout]) -> FitnessPerformanceProfile {
+        let distanceBuckets = [5.0, 10.0, 20.0, 40.0, 80.0]
+        var bestEfforts: [FitnessBestDistanceEffort] = []
+        let distanceWorkouts = workouts.compactMap { workout -> (workout: HKWorkout, modality: String, distance: Double)? in
+            guard let distance = distanceKilometers(for: workout), distance > 0 else { return nil }
+            return (workout, normalizedModality(for: workout), distance)
+        }
+
+        let grouped = Dictionary(grouping: distanceWorkouts, by: { $0.modality })
+        for (modality, rows) in grouped {
+            for bucket in distanceBuckets {
+                let candidates = rows.filter { $0.distance >= bucket && $0.workout.duration > 0 }
+                guard let best = candidates.max(by: { lhs, rhs in
+                    (lhs.distance / (lhs.workout.duration / 3600)) < (rhs.distance / (rhs.workout.duration / 3600))
+                }) else {
+                    continue
+                }
+
+                let speed = best.distance / (best.workout.duration / 3600)
+                bestEfforts.append(
+                    FitnessBestDistanceEffort(
+                        modality: modality,
+                        distanceBucketKilometers: bucket,
+                        workoutDate: best.workout.startDate,
+                        workoutDistanceKilometers: best.distance,
+                        averageSpeedKilometersPerHour: speed,
+                        paceSecondsPerKilometer: best.workout.duration / max(best.distance, 0.1)
+                    )
+                )
+            }
+        }
+
+        let longest = grouped.compactMap { modality, rows -> FitnessLongestWorkoutSummary? in
+            guard let longest = rows.max(by: { $0.workout.duration < $1.workout.duration }) else { return nil }
+            return FitnessLongestWorkoutSummary(
+                modality: modality,
+                workoutDate: longest.workout.startDate,
+                durationMinutes: longest.workout.duration / 60,
+                distanceKilometers: longest.distance
+            )
+        }
+        .sorted { $0.durationMinutes > $1.durationMinutes }
+
+        return FitnessPerformanceProfile(
+            bestDistanceEfforts: bestEfforts.sorted {
+                if $0.modality == $1.modality {
+                    return $0.distanceBucketKilometers < $1.distanceBucketKilometers
+                }
+                return $0.modality < $1.modality
+            },
+            longestWorkoutsByModality: longest
+        )
+    }
+
+    private func buildStrengthContinuity(from workouts: [HKWorkout]) -> FitnessStrengthContinuitySummary {
+        let now = Date()
+        let calendar = Calendar.current
+        let strengthWorkouts = workouts.filter { normalizedModality(for: $0) == "strength" }
+        let ninetyDayWorkouts = workouts.filter { workout in
+            guard let start = calendar.date(byAdding: .day, value: -90, to: now) else { return false }
+            return workout.startDate >= start
+        }
+        let strength90 = ninetyDayWorkouts.filter { normalizedModality(for: $0) == "strength" }
+        let total90Minutes = ninetyDayWorkouts.reduce(0) { $0 + $1.duration / 60 }
+        let strength90Minutes = strength90.reduce(0) { $0 + $1.duration / 60 }
+        let lastStrength = strengthWorkouts.map(\.startDate).max()
+
+        return FitnessStrengthContinuitySummary(
+            strengthWorkouts28Days: workoutsInLast(days: 28, workouts: strengthWorkouts),
+            strengthWorkouts90Days: strength90.count,
+            strengthMinutes90Days: strength90Minutes,
+            daysSinceLastStrength: lastStrength.map { calendar.dateComponents([.day], from: $0, to: now).day ?? 0 },
+            strengthShareOfMinutes90Days: total90Minutes > 0 ? strength90Minutes / total90Minutes : nil
+        )
+    }
+
+    private func buildInsightCandidates(
+        trainingIdentity: FitnessTrainingIdentitySummary,
+        consistency: FitnessConsistencySummary,
+        seasonality: FitnessSeasonalitySummary,
+        performance: FitnessPerformanceProfile,
+        strengthContinuity: FitnessStrengthContinuitySummary,
+        bodyTrend: FitnessBodyTrendSummary
+    ) -> [FitnessHistoryInsightCandidate] {
+        var insights: [FitnessHistoryInsightCandidate] = []
+
+        if !trainingIdentity.dominantModalities.isEmpty {
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "training_identity",
+                    category: "identity",
+                    title: trainingIdentity.label,
+                    summary: "Your history is led by \(trainingIdentity.dominantModalities.prefix(3).joined(separator: ", ")).",
+                    confidence: trainingIdentity.modalityMix.count >= 2 ? "high" : "medium",
+                    evidence: ["dominantModalities": trainingIdentity.dominantModalities.joined(separator: ", ")]
+                )
+            )
+        }
+
+        if consistency.longestActiveWeekStreak >= 4 {
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "best_consistency_streak",
+                    category: "consistency",
+                    title: "Best consistency block",
+                    summary: "Your longest active training streak is \(consistency.longestActiveWeekStreak) weeks.",
+                    confidence: "high",
+                    evidence: ["longestActiveWeekStreak": "\(consistency.longestActiveWeekStreak)"]
+                )
+            )
+        }
+
+        if let ratio = seasonality.summerVsWinterMinutesRatio, ratio >= 1.2 {
+            let percent = Int(((ratio - 1) * 100).rounded())
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "summer_activity_pattern",
+                    category: "seasonality",
+                    title: "Summer activity lift",
+                    summary: "Your summer training minutes are about \(percent)% higher than winter.",
+                    confidence: "medium",
+                    evidence: ["summerVsWinterMinutesRatio": String(format: "%.2f", ratio)]
+                )
+            )
+        }
+
+        if let strongestMonth = seasonality.strongestMonth, strongestMonth.totalMinutes > 0 {
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "strongest_month",
+                    category: "seasonality",
+                    title: "Strongest month pattern",
+                    summary: "\(strongestMonth.label) is your strongest historical training month by minutes.",
+                    confidence: "medium",
+                    evidence: ["month": strongestMonth.label, "totalMinutes": String(format: "%.0f", strongestMonth.totalMinutes)]
+                )
+            )
+        }
+
+        if let longest = performance.longestWorkoutsByModality.first {
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "longest_workout",
+                    category: "performance",
+                    title: "Longest session marker",
+                    summary: "Your longest \(longest.modality) session is \(Int(longest.durationMinutes.rounded())) minutes.",
+                    confidence: "high",
+                    evidence: ["modality": longest.modality, "durationMinutes": String(format: "%.0f", longest.durationMinutes)]
+                )
+            )
+        }
+
+        if strengthContinuity.strengthWorkouts90Days > 0 {
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "strength_anchor",
+                    category: "balance",
+                    title: "Strength anchor",
+                    summary: "You logged \(strengthContinuity.strengthWorkouts90Days) strength sessions in the last 90 days.",
+                    confidence: "high",
+                    evidence: ["strengthWorkouts90Days": "\(strengthContinuity.strengthWorkouts90Days)"]
+                )
+            )
+        }
+
+        if bodyTrend.bodyMassLatestKilograms != nil || bodyTrend.bodyFatLatestPercentage != nil {
+            insights.append(
+                FitnessHistoryInsightCandidate(
+                    key: "body_metrics_available",
+                    category: "body",
+                    title: "Body trend available",
+                    summary: "HealthKit has body metrics HAYF can use cautiously for body-composition goals.",
+                    confidence: "medium",
+                    evidence: ["hasBodyMass": "\(bodyTrend.bodyMassLatestKilograms != nil)", "hasBodyFat": "\(bodyTrend.bodyFatLatestPercentage != nil)"]
+                )
+            )
+        }
+
+        return insights
+    }
+
     private func workoutWindowSummary(label: String, days: Int?, workouts: [HKWorkout]) -> WorkoutWindowSummary {
         let now = Date()
         let filtered: [HKWorkout]
@@ -510,6 +1047,55 @@ final class HealthKitManager {
 
     private func energyKilocalories(for workout: HKWorkout) -> Double? {
         workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()).nonZero
+    }
+
+    private func normalizedModality(for workout: HKWorkout) -> String {
+        switch workout.workoutActivityType {
+        case .cycling, .handCycling:
+            return "cycling"
+        case .running:
+            return "running"
+        case .walking, .hiking:
+            return "walking"
+        case .traditionalStrengthTraining, .functionalStrengthTraining, .coreTraining:
+            return "strength"
+        case .highIntensityIntervalTraining, .mixedMetabolicCardioTraining, .mixedCardio, .crossTraining:
+            return "hiit"
+        case .yoga, .pilates, .flexibility, .preparationAndRecovery:
+            return "mobility"
+        case .swimming:
+            return "swimming"
+        case .tennis, .soccer, .basketball, .pickleball, .squash, .racquetball:
+            return "sport"
+        default:
+            return workout.workoutActivityType.displayName.lowercased().replacingOccurrences(of: " ", with: "_")
+        }
+    }
+
+    private func seasonLabel(for month: Int) -> String {
+        switch month {
+        case 12, 1, 2:
+            return "winter"
+        case 3, 4, 5:
+            return "spring"
+        case 6, 7, 8:
+            return "summer"
+        default:
+            return "autumn"
+        }
+    }
+
+    private func ratio(_ numerator: Double?, _ denominator: Double?) -> Double? {
+        guard let numerator, let denominator, denominator > 0 else { return nil }
+        return numerator / denominator
+    }
+
+    private func workoutsInLast(days: Int, workouts: [HKWorkout]) -> Int {
+        guard let start = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else {
+            return 0
+        }
+
+        return workouts.filter { $0.startDate >= start }.count
     }
 
     private func fetchSleepHoursLastNight() async throws -> Double? {

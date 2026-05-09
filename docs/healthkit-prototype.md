@@ -47,6 +47,8 @@ The app asks for read-only access to:
 
 This validates the HealthKit path for long training history, daily movement, recovery, cardio fitness, body context, and available nutrition context without turning Supabase into a raw HealthKit warehouse.
 
+The current feature builder also creates a broader `fitnessHistory` profile. It converts long-running HealthKit history into reusable, labelled context such as training identity, modality mix, consistency, seasonality, load windows, strength continuity, body trends, and insight candidates. This profile is designed for planning, onboarding goal suggestions, the future Profile > Fitness Profile screen, and coach conversations.
+
 ## V1 HealthKit permission scope
 
 The onboarding Health permission ask is intentionally broad for the personal-first build. HAYF should request read-only access to the data that can improve fitness decisions, then perform deterministic filtering and feature extraction locally.
@@ -78,6 +80,7 @@ Implementation notes:
 - Use derived features in recommendations, not raw HealthKit dumps. Example: workout-ledger windows, `averageSteps7Days`, `sleepHoursLastNight`, `restingHeartRate14DayAverageBPM`, `vo2MaxLatest`, `bodyMassKilograms`, and nutrition averages with days logged.
 - Do not send raw HealthKit samples to Supabase Edge Functions or AI calls.
 - Do not request write permissions, clinical records, reproductive health, medications, or symptom categories in the current fitness build.
+- Keep calculations generic where possible. Cycling and running can have specific helpers, but the foundation should support any future goal by storing labelled observations, insights, and evaluations rather than hard-coding every feature around one modality.
 
 Suggested user-facing permission framing:
 
@@ -109,7 +112,21 @@ After running on a real iPhone and granting access, the prototype should show:
 - HealthKit is available
 - authorization request completes successfully
 - deterministic feature summaries from HealthKit appear in the Health Debug screen
+- fitness history highlights appear in the Health Debug screen for QA
 - the feature JSON can be copied for Xcode/backend debugging
+
+## Sync and feedback collection constraint
+
+For V1, HAYF should use app-open HealthKit sync as the feedback trigger baseline. When the user opens the app, HAYF rebuilds the derived snapshot, reconciles recent actual workouts against the plan, and creates `workout_debrief_requests` for completed matched or detected workouts.
+
+This avoids depending on HealthKit background delivery before the product flow is proven. Background observers can come later, but they are harder to reason about because delivery is not guaranteed to be immediate, app execution time is limited, and the user can change Health permissions outside the app.
+
+The V1 behavior should be:
+
+- sync when the app opens or returns active
+- detect completed workouts since the last sync window
+- ask for workout feedback in Today or workout detail when there is a pending debrief request
+- store feedback as HAYF-owned data that enriches the Fitness Profile and future plan evaluations
 
 ## What to build next after this
 

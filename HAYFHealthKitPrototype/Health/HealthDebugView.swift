@@ -136,6 +136,30 @@ struct HealthDebugView: View {
                         }
                     }
 
+                    Section("Fitness history") {
+                        LabeledContent("Identity", value: snapshot.fitnessHistory.trainingIdentity.label)
+                        LabeledContent("Active weeks", value: "\(snapshot.fitnessHistory.consistency.activeWeeks)")
+                        LabeledContent("Best streak", value: "\(snapshot.fitnessHistory.consistency.longestActiveWeekStreak) weeks")
+
+                        if let strongestMonth = snapshot.fitnessHistory.seasonality.strongestMonth {
+                            LabeledContent("Strongest month", value: strongestMonth.label)
+                        }
+
+                        if let ratio = snapshot.fitnessHistory.seasonality.summerVsWinterMinutesRatio {
+                            DebugMetricRow("Summer/winter", ratio, suffix: "x")
+                        }
+
+                        ForEach(snapshot.fitnessHistory.insightCandidates.prefix(5)) { insight in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(insight.title)
+                                    .font(.system(size: 15, weight: .semibold))
+                                Text(insight.summary)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
                     Section("Activity") {
                         DebugMetricRow("Steps 7d avg", snapshot.activity.averageSteps7Days, suffix: "")
                         DebugMetricRow("Steps 28d avg", snapshot.activity.averageSteps28Days, suffix: "")

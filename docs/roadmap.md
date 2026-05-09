@@ -55,6 +55,10 @@ Examples:
 
 This is the bridge between raw HealthKit data and AI coaching.
 
+Current status: the feature builder now produces both short-window coaching features and a longer-term `fitnessHistory` profile. The longer-term profile captures training identity, consistency, seasonality, load, body trends, strength continuity, activity floor, and insight candidates.
+
+The feature model should remain broad. Sport-specific metrics are allowed when they are valuable, but the durable foundation is labelled observations and insights that can support new goals without rebuilding the engine for every modality.
+
 ## Stage 4: Recommendation engine v0
 
 Goal: generate a plain-language workout suggestion without AI first.
@@ -119,6 +123,40 @@ Track signals like:
 - how did it feel afterward?
 - did they skip it?
 - what recommendation types get accepted most often?
+
+Current V1 decision: use app-open HealthKit sync as the first trigger for feedback collection. When a completed workout is detected or matched, create a debrief request that Today or workout detail can surface. HealthKit background observer delivery can be added later after the basic feedback loop is useful.
+
+The learning loop should merge three sources over time:
+
+- HealthKit-derived activity, recovery, body, and performance observations
+- manual logs, especially gym/strength sessions that HealthKit may not describe well enough
+- HAYF workout feedback, including whether the session felt right, too easy, painful, or worth repeating
+
+Together these feed the Fitness Profile and goal tracker rather than a standalone analytics dashboard.
+
+## Fitness Profile And Goal Evidence
+
+The Profile tab will eventually include a `Fitness Profile` section. This is the user-facing home for what HAYF knows about the user's training history, not a dense dashboard.
+
+The Fitness Profile should show highlights such as:
+
+- training identity, for example cycling-led and strength-supported
+- consistency and streaks
+- seasonality, for example higher summer activity than winter
+- strongest historical periods
+- body metric availability for goal checks
+- active goal and sub-goal status
+
+Active blocks should support a primary goal plus sub-goals. Examples:
+
+- primary: get better at cycling or lose 2 kg
+- sub-goal: build weekly training volume
+- sub-goal: protect strength exposure
+- sub-goal: protect the activity floor
+
+Goal status language should stay compact and actionable: on track, lagging, achieved, or needs review. When HealthKit or future HAYF data shows the goal was achieved early, the app should create a review moment: update the current goal, set a new goal, or continue.
+
+Onboarding Flow C, "help me pick a goal", should run HealthKit consent and feature extraction before goal suggestions. The app should use existing evidence to suggest realistic goals instead of asking the AI to invent them from text alone.
 
 ## Later product versions
 
