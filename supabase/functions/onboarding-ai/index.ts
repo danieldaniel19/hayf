@@ -2,7 +2,6 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 type OnboardingTask =
   | "generate_summary"
-  | "generate_first_rhythm"
   | "generate_goal_candidates"
   | "generate_blended_candidate";
 
@@ -38,31 +37,6 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
       },
       coachNote: { type: "string" },
       realismNote: { type: "string" },
-    },
-  },
-  generate_first_rhythm: {
-    type: "object",
-    additionalProperties: false,
-    required: ["copy", "focusLabel", "focusValue", "reasonValue", "rows", "coachNote"],
-    properties: {
-      copy: { type: "string" },
-      focusLabel: { type: "string" },
-      focusValue: { type: "string" },
-      reasonValue: { type: "string" },
-      rows: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["day", "workout", "duration"],
-          properties: {
-            day: { type: "string" },
-            workout: { type: "string" },
-            duration: { type: "string" },
-          },
-        },
-      },
-      coachNote: { type: "string" },
     },
   },
   generate_goal_candidates: {
@@ -212,8 +186,6 @@ function taskRules(task: OnboardingTask) {
   switch (task) {
     case "generate_summary":
       return "Return 5-7 rows using SF Symbol names already familiar to iOS, plus optional coachNote and realismNote strings. Use an empty string when no realism note is needed.";
-    case "generate_first_rhythm":
-      return "Return a starter weekly rhythm with 3-5 rows. Use derived healthSnapshot only as a gentle adjustment signal when present.";
     case "generate_goal_candidates":
       return "Return exactly three distinct goal candidates. Keep ids URL-safe, titles concrete, and tracking fields short.";
     case "generate_blended_candidate":
@@ -256,7 +228,7 @@ function compactTraceRequest(requestBody: OnboardingAIRequest) {
 }
 
 async function insertTrace(
-  admin: ReturnType<typeof createClient>,
+  admin: any,
   trace: {
     userID: string;
     task: OnboardingTask;

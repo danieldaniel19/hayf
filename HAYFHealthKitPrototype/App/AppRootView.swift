@@ -8,6 +8,7 @@ struct AppRootView: View {
     @State private var createdProfilePendingFinish: StoredAccountProfile?
     @State private var updatedProfilePendingFinish: StoredAccountProfile?
     @State private var isRestartingAccountCreation = false
+    @State private var shouldPresentActiveBlockOnPlanLanding = false
 
     var body: some View {
         Group {
@@ -31,11 +32,17 @@ struct AppRootView: View {
                             }
                         )
                     } else if shouldShowOnboarding(for: accountProfile) {
-                        OnboardingFlowView(onboardingProfileStore: onboardingProfileStore) {}
+                        OnboardingFlowView(onboardingProfileStore: onboardingProfileStore) {
+                            shouldPresentActiveBlockOnPlanLanding = true
+                        }
                     } else {
                         AuthenticatedHomeView(
                             userEmail: authViewModel.userEmail,
                             displayName: accountProfile.name,
+                            presentActiveBlockOnFirstPlanLoad: shouldPresentActiveBlockOnPlanLanding,
+                            onDidPresentActiveBlockOnFirstPlanLoad: {
+                                shouldPresentActiveBlockOnPlanLanding = false
+                            },
                             restartAccountCreation: {
                                 updatedProfilePendingFinish = nil
                                 isRestartingAccountCreation = true
@@ -90,6 +97,7 @@ struct AppRootView: View {
                 createdProfilePendingFinish = nil
                 updatedProfilePendingFinish = nil
                 isRestartingAccountCreation = false
+                shouldPresentActiveBlockOnPlanLanding = false
             }
         }
     }
@@ -104,6 +112,7 @@ struct AppRootView: View {
         createdProfilePendingFinish = nil
         updatedProfilePendingFinish = nil
         isRestartingAccountCreation = false
+        shouldPresentActiveBlockOnPlanLanding = false
         authViewModel.signOut()
     }
 }

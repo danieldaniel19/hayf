@@ -15,9 +15,8 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 - Store completed onboarding in `public.onboarding_profiles`.
 - Store every AI attempt in `public.onboarding_ai_generations`, including failures.
 - Keep raw HealthKit samples on device.
-- Send only deterministic HealthKit feature snapshot fields when generating the first rhythm.
 - Keep local deterministic mock output as fallback so onboarding can complete if AI fails.
-- Keep the final setup preview app-owned: goal paths may show a starter program and phases, but the Edge Function only generates the bounded first rhythm and summary content.
+- Keep onboarding AI focused on intake summaries and goal-candidate shaping. Training rhythms are generated later by the planning engine from the active block and plan context.
 - Let tester restart onboarding by deleting the signed-in user's `onboarding_profiles` row.
 
 ## Files
@@ -53,23 +52,6 @@ Expected output:
 - `coachNote`: short coach readback
 - `realismNote`: empty string when not needed; useful for concrete goals
 
-### `generate_first_rhythm`
-
-Used by all branches after HealthKit permission screen.
-
-Expected output:
-
-- `copy`
-- `focusLabel`
-- `focusValue`
-- `reasonValue`
-- `rows`: 3-5 rhythm rows
-- `coachNote`
-
-This task may receive `healthSnapshot`, but only as derived features.
-
-The app can present this output as the first weekly rhythm inside a larger local setup preview. For concrete or goal-discovery onboarding, that preview includes a starter program and high-level phases derived from the existing draft context. The backend should not generate a full long-term calendar in this task.
-
 ### `generate_goal_candidates`
 
 Used only by the "Help me find a goal" branch.
@@ -94,7 +76,6 @@ Expected output:
 AI calls:
 
 - `generate_summary`
-- `generate_first_rhythm`
 
 Primary context:
 
@@ -106,14 +87,12 @@ Primary context:
 - blockers and blocker note
 - support style
 - bad-day floor
-- optional deterministic HealthKit feature snapshot for first rhythm
 
 ### I Have A Specific Goal
 
 AI calls:
 
 - `generate_summary`
-- `generate_first_rhythm`
 
 Primary context:
 
@@ -129,7 +108,6 @@ Primary context:
 - blockers
 - support style
 - bad-day floor
-- optional deterministic HealthKit feature snapshot for first rhythm
 
 ### Help Me Find A Goal
 
@@ -138,7 +116,6 @@ AI calls:
 - `generate_goal_candidates`
 - optional `generate_blended_candidate`
 - `generate_summary`
-- `generate_first_rhythm`
 
 Primary context:
 

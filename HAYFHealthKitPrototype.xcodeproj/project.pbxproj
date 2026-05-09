@@ -28,6 +28,8 @@
 		A000001300000000000001 /* HealthDebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000028000000000000001 /* HealthDebugView.swift */; };
 		B00000010000000000000001 /* HealthSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000001 /* HealthSyncService.swift */; };
 		B00000020000000000000001 /* PlanningAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000120000000000000001 /* PlanningAIProvider.swift */; };
+		B00000030000000000000001 /* PlanDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000130000000000000001 /* PlanDataStore.swift */; };
+		B00000040000000000000001 /* PlanScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000140000000000000001 /* PlanScreenView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -54,6 +56,8 @@
 		A0000028000000000000001 /* HealthDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDebugView.swift; sourceTree = "<group>"; };
 		B00000110000000000000001 /* HealthSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthSyncService.swift; sourceTree = "<group>"; };
 		B00000120000000000000001 /* PlanningAIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanningAIProvider.swift; sourceTree = "<group>"; };
+		B00000130000000000000001 /* PlanDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanDataStore.swift; sourceTree = "<group>"; };
+		B00000140000000000000001 /* PlanScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanScreenView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -166,6 +170,8 @@
 			isa = PBXGroup;
 			children = (
 				B00000120000000000000001 /* PlanningAIProvider.swift */,
+				B00000130000000000000001 /* PlanDataStore.swift */,
+				B00000140000000000000001 /* PlanScreenView.swift */,
 			);
 			path = Planning;
 			sourceTree = "<group>";
@@ -271,6 +277,8 @@
 				A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */,
 				A000001300000000000001 /* HealthDebugView.swift in Sources */,
 				B00000020000000000000001 /* PlanningAIProvider.swift in Sources */,
+				B00000030000000000000001 /* PlanDataStore.swift in Sources */,
+				B00000040000000000000001 /* PlanScreenView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -56,6 +56,34 @@ struct PlanningAIProvider {
         )
     }
 
+    func recommendWorkoutReplacements(
+        plannedWorkoutID: UUID,
+        textContext: String? = nil
+    ) async throws -> PlanningReplacementOutput {
+        let response: PlanningReplacementFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .recommendWorkoutReplacements,
+                plannedWorkoutID: plannedWorkoutID,
+                textContext: textContext
+            )
+        )
+
+        return response.output
+    }
+
+    func replaceWorkout(
+        plannedWorkoutID: UUID,
+        candidate: PlanningReplacementCandidate
+    ) async throws -> PlanningFunctionResponse {
+        try await invoke(
+            PlanningFunctionRequest(
+                task: .replaceWorkout,
+                plannedWorkoutID: plannedWorkoutID,
+                replacementCandidate: candidate
+            )
+        )
+    }
+
     func applyReplanProposal(
         proposalID: UUID,
         decision: PlanningProposalDecision
@@ -87,10 +115,49 @@ struct PlanningAIProvider {
     }
 
     private func invoke(_ request: PlanningFunctionRequest) async throws -> PlanningFunctionResponse {
-        try await supabase.functions.invoke(
-            "planning-ai",
-            options: FunctionInvokeOptions(body: request)
-        )
+        do {
+            return try await supabase.functions.invoke(
+                "planning-ai",
+                options: FunctionInvokeOptions(body: request)
+            )
+        } catch {
+            throw Self.readableFunctionError(error)
+        }
+    }
+
+    private func invokeTyped<Response: Decodable>(_ request: PlanningFunctionRequest) async throws -> Response {
+        do {
+            return try await supabase.functions.invoke(
+                "planning-ai",
+                options: FunctionInvokeOptions(body: request)
+            )
+        } catch {
+            throw Self.readableFunctionError(error)
+        }
+    }
+
+    private static func readableFunctionError(_ error: Error) -> Error {
+        guard case let FunctionsError.httpError(code, data) = error else {
+            return error
+        }
+
+        let message: String
+        if
+            let payload = try? JSONDecoder().decode(PlanningFunctionErrorPayload.self, from: data),
+            let errorMessage = payload.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !errorMessage.isEmpty
+        {
+            message = errorMessage
+        } else if
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !body.isEmpty
+        {
+            message = body
+        } else {
+            message = "Edge Function returned a non-2xx status code: \(code)"
+        }
+
+        return PlanningFunctionError(statusCode: code, message: message)
     }
 
     private static let dateOnlyFormatter: DateFormatter = {
@@ -116,6 +183,42 @@ struct PlanningSyncWindow: Codable {
 struct PlanningMoodInput: Codable {
     let energy: Double?
     let mood: Double?
+}
+
+struct PlanningReplacementOutput: Decodable {
+    let workoutID: UUID
+    let candidates: [PlanningReplacementCandidate]
+
+    enum CodingKeys: String, CodingKey {
+        case workoutID = "workoutID"
+        case candidates
+    }
+}
+
+struct PlanningReplacementCandidate: Codable, Identifiable {
+    let id: String
+    let title: String
+    let activityType: String
+    let durationMinutes: Int
+    let intensityLabel: String
+    let purpose: String
+    let prescription: JSONValue
+    let fuelingSummary: String
+    let rationale: String
+    let weeklyImpact: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case activityType
+        case durationMinutes
+        case intensityLabel
+        case purpose
+        case prescription
+        case fuelingSummary
+        case rationale
+        case weeklyImpact
+    }
 }
 
 enum PlanningProposalDecision: String, Codable {
@@ -164,11 +267,32 @@ struct PlanningFunctionResponse: Decodable {
     let output: JSONValue
 }
 
+struct PlanningFunctionError: LocalizedError {
+    let statusCode: Int
+    let message: String
+
+    var errorDescription: String? {
+        "Planning engine error \(statusCode): \(message)"
+    }
+}
+
+private struct PlanningFunctionErrorPayload: Decodable {
+    let error: String?
+}
+
+private struct PlanningReplacementFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningReplacementOutput
+}
+
 enum PlanningAITask: String, Codable {
     case bootstrapAfterOnboarding = "bootstrap_after_onboarding"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"
     case refreshPlanWindow = "refresh_plan_window"
     case recordPlanEdit = "record_plan_edit"
+    case recommendWorkoutReplacements = "recommend_workout_replacements"
+    case replaceWorkout = "replace_workout"
     case applyReplanProposal = "apply_replan_proposal"
     case checkInToWorkout = "check_in_to_workout"
     case scheduledRefreshDueWindows = "scheduled_refresh_due_windows"
@@ -186,6 +310,7 @@ private struct PlanningFunctionRequest: Encodable {
     let proposalID: UUID?
     let decision: PlanningProposalDecision?
     let plannedWorkoutID: UUID?
+    let replacementCandidate: PlanningReplacementCandidate?
     let mood: PlanningMoodInput?
     let textContext: String?
     let currentDerivedSnapshot: HealthFeatureSnapshot?
@@ -202,6 +327,7 @@ private struct PlanningFunctionRequest: Encodable {
         proposalID: UUID? = nil,
         decision: PlanningProposalDecision? = nil,
         plannedWorkoutID: UUID? = nil,
+        replacementCandidate: PlanningReplacementCandidate? = nil,
         mood: PlanningMoodInput? = nil,
         textContext: String? = nil,
         currentDerivedSnapshot: HealthFeatureSnapshot? = nil
@@ -217,6 +343,7 @@ private struct PlanningFunctionRequest: Encodable {
         self.proposalID = proposalID
         self.decision = decision
         self.plannedWorkoutID = plannedWorkoutID
+        self.replacementCandidate = replacementCandidate
         self.mood = mood
         self.textContext = textContext
         self.currentDerivedSnapshot = currentDerivedSnapshot
@@ -234,6 +361,7 @@ private struct PlanningFunctionRequest: Encodable {
         case proposalID = "proposal_id"
         case decision
         case plannedWorkoutID = "planned_workout_id"
+        case replacementCandidate = "replacement_candidate"
         case mood
         case textContext
         case currentDerivedSnapshot = "current_derived_snapshot"
@@ -252,6 +380,7 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(proposalID?.uuidString.lowercased(), forKey: .proposalID)
         try container.encodeIfPresent(decision, forKey: .decision)
         try container.encodeIfPresent(plannedWorkoutID?.uuidString.lowercased(), forKey: .plannedWorkoutID)
+        try container.encodeIfPresent(replacementCandidate, forKey: .replacementCandidate)
         try container.encodeIfPresent(mood, forKey: .mood)
         let trimmedTextContext = textContext?.trimmingCharacters(in: .whitespacesAndNewlines)
         try container.encodeIfPresent(trimmedTextContext?.isEmpty == false ? trimmedTextContext : nil, forKey: .textContext)

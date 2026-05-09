@@ -8,7 +8,6 @@ struct OnboardingFlowView: View {
     @State private var draft = ConsistencyOnboardingDraft()
     @State private var selectedIntent: OnboardingIntent?
     @State private var summaryOutput: OnboardingSummaryOutput?
-    @State private var rhythmOutput: OnboardingRhythmOutput?
     @State private var goalCandidates: [GoalCandidate] = []
     @State private var selectedGoalCandidateID: String?
     @State private var editingGoalText = ""
@@ -58,8 +57,6 @@ struct OnboardingFlowView: View {
                 await refreshHealthState()
             case .generatingSummary:
                 await generateSummary()
-            case .generatingRhythm:
-                await generateFirstRhythm()
             case .generatingCandidates:
                 await generateGoalCandidates()
             case .generatingBlend:
@@ -154,10 +151,6 @@ struct OnboardingFlowView: View {
             summaryScreen
         case .health:
             healthScreen
-        case .generatingRhythm:
-            loadingScreen(title: "Building your first rhythm.", copy: "HAYF is matching the plan to your goal, constraints, and bad-day floor.")
-        case .firstRhythm:
-            setupPreviewScreen
         }
     }
 
@@ -679,77 +672,6 @@ struct OnboardingFlowView: View {
                     .foregroundStyle(healthRequestState.isError ? HAYFColor.error : HAYFColor.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
-
-    private var setupPreviewScreen: some View {
-        let preview = currentSetupPreview
-
-        return VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                eyebrow: preview.eyebrow,
-                title: preview.title,
-                copy: preview.copy
-            )
-
-            VStack(spacing: 10) {
-                ForEach(preview.overviewRows) { row in
-                    SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
-                }
-            }
-
-            if !preview.phases.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("PROGRAM PHASES")
-                        .font(.system(size: 10, weight: .medium))
-                        .kerning(1.2)
-                        .foregroundStyle(HAYFColor.secondary)
-
-                    ForEach(Array(preview.phases.enumerated()), id: \.element.id) { index, phase in
-                        ProgramPhaseRow(number: index + 1, phase: phase)
-                    }
-                }
-                .padding(18)
-                .background(HAYFColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(HAYFColor.border, lineWidth: 1)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
-                Text(preview.rhythmHeading)
-                    .font(.system(size: 10, weight: .medium))
-                    .kerning(1.2)
-                    .foregroundStyle(HAYFColor.secondary)
-
-                ForEach(currentRhythm.rows) { row in
-                    RhythmPreviewRow(day: row.day, workout: row.workout, duration: row.duration)
-                }
-            }
-            .padding(18)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
-
-            if !preview.watchRows.isEmpty {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("WHAT HAYF WILL WATCH")
-                        .font(.system(size: 10, weight: .medium))
-                        .kerning(1.2)
-                        .foregroundStyle(HAYFColor.secondary)
-
-                    ForEach(preview.watchRows) { row in
-                        SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
-                    }
-                }
-            }
-
-            CoachNote(text: preview.coachNote)
 
             if let completionErrorMessage {
                 Text(completionErrorMessage)
@@ -825,30 +747,24 @@ struct OnboardingFlowView: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
                 .buttonStyle(.plain)
-            } else if step == .firstRhythm {
-                Button("Edit setup") {
-                    step = .summary
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .buttonStyle(.plain)
             }
         }
     }
 
     private var primaryButtonTitle: String {
         switch step {
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingRhythm:
+        case .generatingSummary, .generatingCandidates, .generatingBlend:
             return "Working"
         case .summary:
             return "Looks right"
         case .health:
+            if isCompleting {
+                return "Finishing"
+            }
             if healthRequestState == .connected || healthRequestState == .unavailable {
-                return "Continue"
+                return "Finish onboarding"
             }
             return "Connect Apple Health"
-        case .firstRhythm:
-            return currentSetupPreview.primaryButtonTitle
         case .blendPreview:
             return "Use blended goal"
         case .editCandidate:
@@ -894,7 +810,7 @@ struct OnboardingFlowView: View {
             return draft.supportStyle != nil
         case .floor:
             return draft.badDayFloor != nil
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingRhythm:
+        case .generatingSummary, .generatingCandidates, .generatingBlend:
             return false
         default:
             return true
@@ -966,14 +882,12 @@ struct OnboardingFlowView: View {
             step = .health
         case .health:
             if healthRequestState == .connected || healthRequestState == .unavailable {
-                step = .generatingRhythm
+                completeOnboarding()
             } else {
                 requestHealthAccess()
             }
-        case .generatingCandidates, .generatingBlend, .generatingRhythm:
+        case .generatingCandidates, .generatingBlend:
             break
-        case .firstRhythm:
-            completeOnboarding()
         }
     }
 
@@ -1027,10 +941,6 @@ struct OnboardingFlowView: View {
             step = .floor
         case .health:
             step = .summary
-        case .generatingRhythm:
-            step = .health
-        case .firstRhythm:
-            step = .health
         }
     }
 
@@ -1047,10 +957,6 @@ struct OnboardingFlowView: View {
     }
 
     private var progressLabel: String {
-        if step == .firstRhythm {
-            return "Ready"
-        }
-
         if step.isGenerating {
             return "Building"
         }
@@ -1076,14 +982,6 @@ struct OnboardingFlowView: View {
         summaryOutput ?? MockOnboardingAIProvider.fallbackSummary(intent: currentIntent, draft: draft)
     }
 
-    private var currentRhythm: OnboardingRhythmOutput {
-        rhythmOutput ?? MockOnboardingAIProvider.fallbackRhythm(intent: currentIntent, draft: draft)
-    }
-
-    private var currentSetupPreview: OnboardingSetupPreview {
-        OnboardingSetupPreview(intent: currentIntent, draft: draft, rhythm: currentRhythm)
-    }
-
     private var summaryEditStep: OnboardingStep {
         switch currentIntent {
         case .stayConsistent:
@@ -1097,7 +995,6 @@ struct OnboardingFlowView: View {
 
     private func resetGeneratedOutputs() {
         summaryOutput = nil
-        rhythmOutput = nil
         goalCandidates = []
         selectedGoalCandidateID = nil
         editingGoalText = ""
@@ -1138,12 +1035,6 @@ struct OnboardingFlowView: View {
         step = .summary
     }
 
-    private func generateFirstRhythm() async {
-        let output = await aiProvider.generateFirstRhythm(intent: currentIntent, draft: draft, healthSnapshot: await compactHealthSnapshot())
-        rhythmOutput = output.isValid ? output : MockOnboardingAIProvider.fallbackRhythm(intent: currentIntent, draft: draft)
-        step = .firstRhythm
-    }
-
     private func generateGoalCandidates() async {
         let candidates = await aiProvider.generateGoalCandidates(draft: draft)
         goalCandidates = candidates.count == 3 ? candidates : MockOnboardingAIProvider.fallbackGoalCandidates(for: draft)
@@ -1180,7 +1071,7 @@ struct OnboardingFlowView: View {
             do {
                 try await healthKitManager.requestReadAuthorization()
                 healthRequestState = .connected
-                step = .generatingRhythm
+                completeOnboarding()
             } catch HealthKitError.healthDataUnavailable {
                 healthRequestState = .unavailable
             } catch {
@@ -1203,7 +1094,6 @@ struct OnboardingFlowView: View {
                     intent: currentIntent,
                     draft: draft,
                     summary: currentSummary,
-                    rhythm: currentRhythm,
                     healthRequestState: healthRequestState
                 )
                 _ = try await planningAIProvider.bootstrapAfterOnboarding(
@@ -1234,149 +1124,6 @@ struct OnboardingFlowView: View {
     }
 }
 
-private struct OnboardingSetupPreview {
-    let eyebrow: String
-    let title: String
-    let copy: String
-    let overviewRows: [SummaryItem]
-    let phases: [ProgramPhasePreview]
-    let rhythmHeading: String
-    let watchRows: [SummaryItem]
-    let coachNote: String
-    let primaryButtonTitle: String
-
-    init(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, rhythm: OnboardingRhythmOutput) {
-        switch intent {
-        case .stayConsistent:
-            eyebrow = "SETUP COMPLETE"
-            title = "Your rolling rhythm\nis ready."
-            copy = "No fixed program yet. HAYF will run this as a 4-week rhythm, then adjust based on what you actually do."
-            overviewRows = [
-                SummaryItem(systemImage: "target", label: "Intent", value: "Stay consistent"),
-                SummaryItem(systemImage: "calendar", label: "Review", value: "4-week check-in"),
-                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
-                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
-            ]
-            phases = []
-            rhythmHeading = "FIRST WEEKLY RHYTHM"
-            watchRows = [
-                SummaryItem(systemImage: "checkmark.circle", label: "Adherence", value: "Did the rhythm actually happen?"),
-                SummaryItem(systemImage: "exclamationmark.triangle", label: "Friction", value: draft.blockerSummary),
-                SummaryItem(systemImage: "circle.lefthalf.filled", label: "Balance", value: "Strength, cardio, mobility, and recovery")
-            ]
-            coachNote = rhythm.coachNote
-            primaryButtonTitle = "Start with this rhythm"
-        case .concreteGoal:
-            let horizon = Self.goalHorizon(for: draft)
-            eyebrow = "ACTIVE BLOCK"
-            title = "Your starter program\nis ready."
-            copy = "HAYF will treat this as a \(horizon) block. The phases show the arc; the rhythm is what starts this week."
-            overviewRows = [
-                SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary),
-                SummaryItem(systemImage: "calendar", label: "Horizon", value: horizon),
-                SummaryItem(systemImage: "arrow.left.arrow.right", label: "Protect", value: draft.prioritySummary),
-                SummaryItem(systemImage: "timer", label: "Week one", value: draft.rhythmSummary)
-            ]
-            phases = [
-                ProgramPhasePreview(
-                    title: "Base",
-                    duration: "First third",
-                    description: "Make goal work repeatable around your schedule, support training, and bad-day floor."
-                ),
-                ProgramPhasePreview(
-                    title: "Build",
-                    duration: "Middle third",
-                    description: "Increase goal-specific work while keeping recovery and support sessions visible."
-                ),
-                ProgramPhasePreview(
-                    title: "Sharpen / review",
-                    duration: "Final third",
-                    description: "Protect the target, reduce noise, then adjust the next block from real progress."
-                )
-            ]
-            rhythmHeading = "FIRST WEEKLY RHYTHM"
-            watchRows = [
-                SummaryItem(systemImage: "target", label: "Progress", value: "Goal sessions and chosen markers"),
-                SummaryItem(systemImage: "heart", label: "Recovery", value: "Sleep, soreness, fatigue, and readiness"),
-                SummaryItem(systemImage: "checkmark.circle", label: "Adherence", value: "Whether the rhythm survives real weeks")
-            ]
-            coachNote = "This is not a full locked 12-week calendar. HAYF starts with the active block, keeps this week's rhythm concrete, and adapts the next rhythm from your data and feedback."
-            primaryButtonTitle = "Start this program"
-        case .findGoal:
-            let horizon = Self.discoveryHorizon(for: draft)
-            eyebrow = "ACTIVE BLOCK"
-            title = "Your starter program\nis ready."
-            copy = "HAYF will use the goal you chose as the active block, then keep the first week simple enough to validate."
-            overviewRows = [
-                SummaryItem(systemImage: "target", label: "Goal", value: draft.goalSummary),
-                SummaryItem(systemImage: "calendar", label: "Horizon", value: horizon),
-                SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
-                SummaryItem(systemImage: "timer", label: "Week one", value: draft.rhythmSummary)
-            ]
-            phases = [
-                ProgramPhasePreview(
-                    title: "Base",
-                    duration: "Start",
-                    description: "Turn the chosen goal into repeatable training signals without overloading the week."
-                ),
-                ProgramPhasePreview(
-                    title: "Build",
-                    duration: "Middle",
-                    description: "Nudge the rhythm toward the goal once HAYF sees adherence and recovery."
-                ),
-                ProgramPhasePreview(
-                    title: "Review",
-                    duration: "End",
-                    description: "Keep, sharpen, or replace the goal based on what felt useful in practice."
-                )
-            ]
-            rhythmHeading = "FIRST WEEKLY RHYTHM"
-            watchRows = [
-                SummaryItem(systemImage: "checkmark.circle", label: "Fit", value: "Does this goal still feel like you?"),
-                SummaryItem(systemImage: "exclamationmark.triangle", label: "Avoids", value: draft.avoidsSummary),
-                SummaryItem(systemImage: "heart", label: "Recovery", value: "Whether the block is motivating or too costly")
-            ]
-            coachNote = "The goal gives HAYF direction, but the first block is still a test. The rhythm starts now; the program sharpens after HAYF sees what you actually follow."
-            primaryButtonTitle = "Start this program"
-        }
-    }
-
-    private static func goalHorizon(for draft: ConsistencyOnboardingDraft) -> String {
-        switch draft.goalTimeline {
-        case .fourWeeks:
-            return "4-week goal block"
-        case .eightWeeks:
-            return "8-week goal block"
-        case .twelveWeeks:
-            return "12-week goal block"
-        case .specificDate:
-            return "Until \(draft.timelineSummary)"
-        case nil:
-            return "12-week starter block"
-        }
-    }
-
-    private static func discoveryHorizon(for draft: ConsistencyOnboardingDraft) -> String {
-        let goalTitle = draft.goalSummary.lowercased()
-        if goalTitle.contains("4-week") || goalTitle.contains("4 week") {
-            return "4-week starter block"
-        }
-
-        if goalTitle.contains("12-week") || goalTitle.contains("12 week") {
-            return "12-week starter block"
-        }
-
-        return "8-week starter block"
-    }
-}
-
-private struct ProgramPhasePreview: Identifiable {
-    var id: String { title }
-    let title: String
-    let duration: String
-    let description: String
-}
-
 private enum OnboardingStep: Equatable {
     case intent
     case goalBrief
@@ -1399,12 +1146,10 @@ private enum OnboardingStep: Equatable {
     case generatingSummary
     case summary
     case health
-    case generatingRhythm
-    case firstRhythm
 
     var isGenerating: Bool {
         switch self {
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingRhythm:
+        case .generatingSummary, .generatingCandidates, .generatingBlend:
             return true
         default:
             return false
@@ -1414,11 +1159,11 @@ private enum OnboardingStep: Equatable {
     static func totalSegments(for intent: OnboardingIntent) -> Int {
         switch intent {
         case .stayConsistent:
-            return 10
+            return 9
         case .concreteGoal:
-            return 11
+            return 10
         case .findGoal:
-            return 13
+            return 12
         }
     }
 
@@ -1434,8 +1179,7 @@ private enum OnboardingStep: Equatable {
             case .support: return 6
             case .floor, .generatingSummary: return 7
             case .summary: return 8
-            case .health, .generatingRhythm: return 9
-            case .firstRhythm: return 10
+            case .health: return 9
             default: return 1
             }
         case .concreteGoal:
@@ -1449,8 +1193,7 @@ private enum OnboardingStep: Equatable {
             case .support: return 7
             case .floor, .generatingSummary: return 8
             case .summary: return 9
-            case .health, .generatingRhythm: return 10
-            case .firstRhythm: return 11
+            case .health: return 10
             default: return 1
             }
         case .findGoal:
@@ -1466,8 +1209,7 @@ private enum OnboardingStep: Equatable {
             case .support: return 9
             case .floor, .generatingSummary: return 10
             case .summary: return 11
-            case .health, .generatingRhythm: return 12
-            case .firstRhythm: return 13
+            case .health: return 12
             default: return 1
             }
         }
@@ -1613,12 +1355,6 @@ private struct ConsistencyOnboardingDraft {
         summary(for: goalAvoidances.map(\.title), fallback: "No avoids set")
     }
 
-    var firstRhythmCoachNote: String {
-        let blockerText = blockerSummary == "Not set" ? "busy weeks" : blockerSummary.lowercased()
-        let floorText = badDayFloor?.shortTitle ?? "fallback"
-        return "Because \(blockerText) are your main risks, HAYF will protect your \(floorText) instead of letting the week go all-or-nothing."
-    }
-
     private func summary(for values: [String], fallback: String) -> String {
         let sortedValues = values.sorted()
         guard !sortedValues.isEmpty else { return fallback }
@@ -1637,14 +1373,12 @@ private struct ConsistencyOnboardingDraft {
 
 private protocol OnboardingAIProvider {
     func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput
-    func generateFirstRhythm(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, healthSnapshot: OnboardingAIHealthSnapshot?) async -> OnboardingRhythmOutput
     func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async -> [GoalCandidate]
     func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async -> GoalCandidate?
 }
 
 private enum OnboardingAITask: String, Codable {
     case generateSummary = "generate_summary"
-    case generateFirstRhythm = "generate_first_rhythm"
     case generateGoalCandidates = "generate_goal_candidates"
     case generateBlendedCandidate = "generate_blended_candidate"
 }
@@ -1751,10 +1485,6 @@ private struct OnboardingAISummaryFunctionResponse: Decodable {
     let output: OnboardingAISummaryPayload
 }
 
-private struct OnboardingAIRhythmFunctionResponse: Decodable {
-    let output: OnboardingAIRhythmPayload
-}
-
 private struct OnboardingAIGoalCandidatesFunctionResponse: Decodable {
     let output: OnboardingAIGoalCandidatesPayload
 }
@@ -1799,51 +1529,6 @@ private struct SummaryItemPayload: Codable {
     }
 }
 
-private struct OnboardingAIRhythmPayload: Codable {
-    let copy: String
-    let focusLabel: String
-    let focusValue: String
-    let reasonValue: String
-    let rows: [RhythmItemPayload]
-    let coachNote: String
-
-    init(rhythm: OnboardingRhythmOutput) {
-        copy = rhythm.copy
-        focusLabel = rhythm.focusLabel
-        focusValue = rhythm.focusValue
-        reasonValue = rhythm.reasonValue
-        rows = rhythm.rows.map(RhythmItemPayload.init(item:))
-        coachNote = rhythm.coachNote
-    }
-
-    func rhythmOutput() -> OnboardingRhythmOutput {
-        OnboardingRhythmOutput(
-            copy: copy,
-            focusLabel: focusLabel,
-            focusValue: focusValue,
-            reasonValue: reasonValue,
-            rows: rows.map { $0.rhythmItem() },
-            coachNote: coachNote
-        )
-    }
-}
-
-private struct RhythmItemPayload: Codable {
-    let day: String
-    let workout: String
-    let duration: String
-
-    init(item: RhythmItem) {
-        day = item.day
-        workout = item.workout
-        duration = item.duration
-    }
-
-    func rhythmItem() -> RhythmItem {
-        RhythmItem(day: day, workout: workout, duration: duration)
-    }
-}
-
 private struct OnboardingAIGoalCandidatesPayload: Codable {
     let candidates: [GoalCandidatePayload]
 }
@@ -1863,26 +1548,6 @@ private struct SummaryItem: Identifiable {
     let systemImage: String
     let label: String
     let value: String
-}
-
-private struct OnboardingRhythmOutput {
-    let copy: String
-    let focusLabel: String
-    let focusValue: String
-    let reasonValue: String
-    let rows: [RhythmItem]
-    let coachNote: String
-
-    var isValid: Bool {
-        !copy.trimmed.isEmpty && !rows.isEmpty && !coachNote.trimmed.isEmpty
-    }
-}
-
-private struct RhythmItem: Identifiable {
-    let id = UUID()
-    let day: String
-    let workout: String
-    let duration: String
 }
 
 private struct GoalCandidate: Identifiable, Equatable {
@@ -1907,20 +1572,6 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
             return response.output.summaryOutput()
         } catch {
             return MockOnboardingAIProvider.fallbackSummary(intent: intent, draft: draft)
-        }
-    }
-
-    func generateFirstRhythm(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, healthSnapshot: OnboardingAIHealthSnapshot?) async -> OnboardingRhythmOutput {
-        do {
-            let request = OnboardingAIFunctionRequest(
-                task: .generateFirstRhythm,
-                context: OnboardingAICompactContext(intent: intent, draft: draft, healthSnapshot: healthSnapshot),
-                candidates: nil
-            )
-            let response: OnboardingAIRhythmFunctionResponse = try await invoke(request)
-            return response.output.rhythmOutput()
-        } catch {
-            return MockOnboardingAIProvider.fallbackRhythm(intent: intent, draft: draft)
         }
     }
 
@@ -1964,11 +1615,6 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
     func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput {
         await mockDelay()
         return Self.fallbackSummary(intent: intent, draft: draft)
-    }
-
-    func generateFirstRhythm(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, healthSnapshot: OnboardingAIHealthSnapshot?) async -> OnboardingRhythmOutput {
-        await mockDelay()
-        return Self.fallbackRhythm(intent: intent, draft: draft)
     }
 
     func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async -> [GoalCandidate] {
@@ -2028,59 +1674,6 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
                 ],
                 coachNote: "The selected goal gives HAYF direction without turning the setup into a rigid performance project.",
                 realismNote: nil
-            )
-        }
-    }
-
-    static func fallbackRhythm(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) -> OnboardingRhythmOutput {
-        let duration = draft.sessionLength?.previewDuration ?? "45 min"
-
-        switch intent {
-        case .stayConsistent:
-            return OnboardingRhythmOutput(
-                copy: "HAYF will keep this flexible and adapt day by day.",
-                focusLabel: "Intent",
-                focusValue: "Stay consistent and balanced",
-                reasonValue: draft.motivationSummary,
-                rows: [
-                    RhythmItem(day: "Day 1", workout: "Strength", duration: duration),
-                    RhythmItem(day: "Day 2", workout: "Easy cardio or sport", duration: "30-45 min"),
-                    RhythmItem(day: "Day 3", workout: "Mobility + conditioning", duration: "20-40 min")
-                ],
-                coachNote: draft.firstRhythmCoachNote
-            )
-        case .concreteGoal:
-            let isRunningGoal = containsAny(draft.goalBrief, values: ["half", "marathon", "run", "5k", "10k"])
-            return OnboardingRhythmOutput(
-                copy: "HAYF will keep the goal visible without letting it crowd out recovery.",
-                focusLabel: "Goal",
-                focusValue: concreteGoalTitle(from: draft),
-                reasonValue: draft.prioritySummary,
-                rows: isRunningGoal ? [
-                    RhythmItem(day: "Day 1", workout: "Goal run: steady aerobic build", duration: duration),
-                    RhythmItem(day: "Day 2", workout: "Strength maintenance", duration: "30-45 min"),
-                    RhythmItem(day: "Day 3", workout: "Quality run or progression", duration: duration),
-                    RhythmItem(day: "Day 4", workout: "Long easy run", duration: "60+ min")
-                ] : [
-                    RhythmItem(day: "Day 1", workout: "Goal practice", duration: duration),
-                    RhythmItem(day: "Day 2", workout: "Support strength", duration: "30-45 min"),
-                    RhythmItem(day: "Day 3", workout: "Conditioning + mobility", duration: "30-45 min")
-                ],
-                coachNote: "If the week compresses, HAYF will protect the goal-specific session and your bad-day floor before adding extra volume."
-            )
-        case .findGoal:
-            return OnboardingRhythmOutput(
-                copy: "HAYF will start with a light goal rhythm and adjust once real training data comes in.",
-                focusLabel: "Goal",
-                focusValue: draft.goalSummary,
-                reasonValue: draft.directionSummary,
-                rows: [
-                    RhythmItem(day: "Day 1", workout: "Goal session", duration: duration),
-                    RhythmItem(day: "Day 2", workout: "Strength or skill support", duration: "30-45 min"),
-                    RhythmItem(day: "Day 3", workout: "Easy aerobic base", duration: "30-45 min"),
-                    RhythmItem(day: "Optional", workout: draft.badDayFloor?.title ?? "Bad-day floor", duration: "10-20 min")
-                ],
-                coachNote: "This gives you something to work toward without making every week pass/fail."
             )
         }
     }
@@ -3130,72 +2723,6 @@ private struct HealthUseRow: View {
     }
 }
 
-private struct ProgramPhaseRow: View {
-    let number: Int
-    let phase: ProgramPhasePreview
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Text("\(number)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(HAYFColor.primary)
-                .clipShape(Circle())
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(phase.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-
-                    Text(phase.duration)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(HAYFColor.muted)
-                }
-
-                Text(phase.description)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-private struct RhythmPreviewRow: View {
-    let day: String
-    let workout: String
-    let duration: String
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Text(day)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .frame(width: 54, alignment: .leading)
-
-            Rectangle()
-                .fill(HAYFColor.orange)
-                .frame(width: 2, height: 20)
-
-            Text(workout)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(HAYFColor.secondary)
-
-            Spacer()
-
-            Text(duration)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(HAYFColor.secondary)
-        }
-    }
-}
-
 private struct CoachNote: View {
     var systemImage = "sparkle"
     let text: String
@@ -3329,7 +2856,6 @@ private struct CompletedOnboardingProfileRequest: Encodable {
     let intent: String
     let selectedAnswers: OnboardingAICompactContext
     let generatedSummary: OnboardingAISummaryPayload
-    let firstRhythm: OnboardingAIRhythmPayload
     let healthPermissionState: String
     let completedAt: String
 
@@ -3338,7 +2864,6 @@ private struct CompletedOnboardingProfileRequest: Encodable {
         case intent
         case selectedAnswers = "selected_answers"
         case generatedSummary = "generated_summary"
-        case firstRhythm = "first_rhythm"
         case healthPermissionState = "health_permission_state"
         case completedAt = "completed_at"
     }
@@ -3370,7 +2895,6 @@ final class OnboardingProfileStore: ObservableObject {
         intent: OnboardingIntent,
         draft: ConsistencyOnboardingDraft,
         summary: OnboardingSummaryOutput,
-        rhythm: OnboardingRhythmOutput,
         healthRequestState: HealthRequestState
     ) async throws -> StoredOnboardingProfile {
         let user = try await supabase.auth.session.user
@@ -3379,7 +2903,6 @@ final class OnboardingProfileStore: ObservableObject {
             intent: intent.rawValue,
             selectedAnswers: OnboardingAICompactContext(intent: intent, draft: draft),
             generatedSummary: OnboardingAISummaryPayload(summary: summary),
-            firstRhythm: OnboardingAIRhythmPayload(rhythm: rhythm),
             healthPermissionState: healthRequestState.storageValue,
             completedAt: completedAtFormatter.string(from: Date())
         )

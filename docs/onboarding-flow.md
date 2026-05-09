@@ -224,7 +224,6 @@ The first backend implementation is scaffolded in:
 - `intent text`
 - `selected_answers jsonb`
 - `generated_summary jsonb`
-- `first_rhythm jsonb`
 - `health_permission_state text`
 - `completed_at timestamptz`
 - `created_at timestamptz`
@@ -251,13 +250,12 @@ No client RLS policies are added for the trace table. The Edge Function writes t
 `onboarding-ai` is an authenticated Supabase Edge Function. It supports the current iOS provider task surface:
 
 - `generate_summary`
-- `generate_first_rhythm`
 - `generate_goal_candidates`
 - `generate_blended_candidate`
 
 The function uses the OpenAI Responses API with strict JSON schemas. It reads `OPENAI_API_KEY` and `OPENAI_MODEL` from Supabase secrets, defaulting the model to `gpt-5-mini` when `OPENAI_MODEL` is unset.
 
-The iOS app sends compact onboarding context only: intent, selected options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, bad-day floor, and a deterministic HealthKit feature snapshot for first rhythm when available. It does not send raw HealthKit samples.
+The iOS app sends compact onboarding context only: intent, selected options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, and bad-day floor. It does not send raw HealthKit samples.
 
 ## Completion And Restart Behavior
 
