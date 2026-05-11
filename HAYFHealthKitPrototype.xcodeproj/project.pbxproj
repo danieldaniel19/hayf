@@ -30,6 +30,8 @@
 		B00000020000000000000001 /* PlanningAIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000120000000000000001 /* PlanningAIProvider.swift */; };
 		B00000030000000000000001 /* PlanDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000130000000000000001 /* PlanDataStore.swift */; };
 		B00000040000000000000001 /* PlanScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000140000000000000001 /* PlanScreenView.swift */; };
+		C00000010000000000000001 /* ProfileDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000001 /* ProfileDataStore.swift */; };
+		C00000020000000000000001 /* ProfileScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000120000000000000001 /* ProfileScreenView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +60,8 @@
 		B00000120000000000000001 /* PlanningAIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanningAIProvider.swift; sourceTree = "<group>"; };
 		B00000130000000000000001 /* PlanDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanDataStore.swift; sourceTree = "<group>"; };
 		B00000140000000000000001 /* PlanScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanScreenView.swift; sourceTree = "<group>"; };
+		C00000110000000000000001 /* ProfileDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDataStore.swift; sourceTree = "<group>"; };
+		C00000120000000000000001 /* ProfileScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileScreenView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +94,7 @@
 				A00000380000000000000001 /* DesignSystem */,
 				A00000390000000000000001 /* Health */,
 				B000003B000000000000001 /* Planning */,
+				C000003C000000000000001 /* Profile */,
 				A000003A000000000000001 /* Onboarding */,
 				A00000140000000000000001 /* Assets.xcassets */,
 				A00000350000000000000001 /* Preview Content */,
@@ -174,6 +179,15 @@
 				B00000140000000000000001 /* PlanScreenView.swift */,
 			);
 			path = Planning;
+			sourceTree = "<group>";
+		};
+		C000003C000000000000001 /* Profile */ = {
+			isa = PBXGroup;
+			children = (
+				C00000110000000000000001 /* ProfileDataStore.swift */,
+				C00000120000000000000001 /* ProfileScreenView.swift */,
+			);
+			path = Profile;
 			sourceTree = "<group>";
 		};
 		A000003A000000000000001 /* Onboarding */ = {
@@ -279,6 +293,8 @@
 				B00000020000000000000001 /* PlanningAIProvider.swift in Sources */,
 				B00000030000000000000001 /* PlanDataStore.swift in Sources */,
 				B00000040000000000000001 /* PlanScreenView.swift in Sources */,
+				C00000010000000000000001 /* ProfileDataStore.swift in Sources */,
+				C00000020000000000000001 /* ProfileScreenView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -383,7 +383,7 @@ async function handleTask(args: {
     case "bootstrap_after_onboarding":
       return bootstrapAfterOnboarding(admin, userID!, requestBody, model);
     case "sync_healthkit_and_reconcile":
-      return syncHealthKitAndReconcile(admin, userID!, requestBody);
+      return syncHealthKitAndReconcile(admin, userID!, requestBody, model);
     case "refresh_plan_window":
       return refreshPlanWindow(admin, userID!, requestBody, model, "user");
     case "record_plan_edit":
@@ -510,6 +510,7 @@ async function syncHealthKitAndReconcile(
   admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
+  model: string,
 ) {
   const block = await loadActiveBlock(admin, userID);
   const timezone = requestBody.deviceTimezone || block.timezone || "UTC";
@@ -597,11 +598,20 @@ async function syncHealthKitAndReconcile(
     }
   }
 
+  const missedWorkouts = await markMissedWorkouts(admin, userID, block.id, requestBody.syncWindow?.endDate);
+
   const event = await createPlanEvent(admin, {
     userID,
     activeBlockID: block.id,
     eventType: "actual_synced",
-    payload: { synced, matched, detected, syncWindow: requestBody.syncWindow ?? null },
+    payload: {
+      synced,
+      matched,
+      detected,
+      missed: missedWorkouts.length,
+      missedWorkoutIDs: missedWorkouts.map((workout: Record<string, any>) => workout.id),
+      syncWindow: requestBody.syncWindow ?? null,
+    },
   });
 
   if (detectedEvents.length > 0) {
@@ -620,13 +630,26 @@ async function syncHealthKitAndReconcile(
     });
   }
 
-  await markCurrentWorkout(admin, userID, block.id, new Date());
+  let refreshOutput: Record<string, unknown> | null = null;
+  if (missedWorkouts.length > 0) {
+    refreshOutput = await refreshPlanWindowForUser(
+      admin,
+      userID,
+      requestBody.syncWindow?.endDate,
+      model,
+      "user",
+      true,
+    );
+  } else {
+    await markCurrentWorkout(admin, userID, block.id, new Date());
+  }
+
   if (requestBody.healthSnapshot) {
     await createInitialGoalTargets(admin, userID, block, requestBody.healthSnapshot);
     await evaluateGoalTargets(admin, userID, block, requestBody.healthSnapshot);
   }
 
-  return { userID, eventID: event.id, synced, matched, detected };
+  return { userID, eventID: event.id, synced, matched, detected, missed: missedWorkouts.length, refreshOutput };
 }
 
 async function refreshPlanWindow(
@@ -645,11 +668,12 @@ async function refreshPlanWindowForUser(
   windowStart: string | undefined,
   model: string,
   trigger: "user" | "scheduled",
+  force = false,
 ) {
   const block = await loadActiveBlock(admin, userID);
   const start = parseDateOnly(windowStart) ?? new Date();
   const window = twoWeekWindow(start);
-  if (trigger === "user" && await hasUsablePlanWindow(admin, userID, block.id, window)) {
+  if (!force && trigger === "user" && await hasUsablePlanWindow(admin, userID, block.id, window)) {
     const event = await createPlanEvent(admin, {
       userID,
       activeBlockID: block.id,
@@ -693,7 +717,7 @@ async function refreshPlanWindowForUser(
       .order("created_at", { ascending: false })
       .limit(10),
   );
-  const context = { block, latestSnapshot, events, proposals, windowStart: isoDate(start), trigger };
+  const context = { block, latestSnapshot, events, proposals, windowStart: isoDate(start), trigger, force };
   const healthDataFreshness = healthFreshness(latestSnapshot);
 
   let generated: GeneratedPlan;
@@ -727,7 +751,7 @@ async function refreshPlanWindowForUser(
       .in("source", ["generated", "replanned"]),
   );
 
-  await insertRhythmsAndWorkouts(admin, userID, block.id, generated.rhythms, "replanned");
+  await insertRhythmsAndWorkouts(admin, userID, block.id, generated.rhythms, "replanned", isoDate(start));
   await markCurrentWorkout(admin, userID, block.id, start);
   const event = await createPlanEvent(admin, {
     userID,
@@ -1476,6 +1500,7 @@ async function insertRhythmsAndWorkouts(
   activeBlockID: string,
   rhythms: GeneratedRhythm[],
   source: "generated" | "replanned",
+  minScheduledDate?: string,
 ) {
   for (const rhythm of rhythms) {
     const savedRhythm = await single(
@@ -1501,13 +1526,17 @@ async function insertRhythmsAndWorkouts(
       "Could not upsert weekly rhythm",
     );
 
-    if (rhythm.workouts.length === 0) {
+    const workouts = minScheduledDate
+      ? rhythm.workouts.filter((workout) => workout.scheduledDate >= minScheduledDate)
+      : rhythm.workouts;
+
+    if (workouts.length === 0) {
       continue;
     }
 
     await throwOnError(
       admin.from("planned_workouts").insert(
-        rhythm.workouts.map((workout) => ({
+        workouts.map((workout) => ({
           active_block_id: activeBlockID,
           weekly_rhythm_id: savedRhythm.id,
           user_id: userID,
@@ -1559,6 +1588,27 @@ async function markCurrentWorkout(
   if (next?.status === "planned") {
     await throwOnError(admin.from("planned_workouts").update({ status: "current" }).eq("id", next.id));
   }
+}
+
+async function markMissedWorkouts(
+  admin: SupabaseAdminClient,
+  userID: string,
+  activeBlockID: string,
+  syncEndDate?: string,
+) {
+  const cutoff = parseDateOnly(syncEndDate) ?? new Date();
+  const cutoffDate = isoDate(cutoff);
+  return list(
+    admin
+      .from("planned_workouts")
+      .update({ status: "missed" })
+      .eq("user_id", userID)
+      .eq("active_block_id", activeBlockID)
+      .lt("scheduled_date", cutoffDate)
+      .in("status", ["planned", "current", "checked_in", "adjusted"])
+      .in("source", ["generated", "replanned", "user_moved", "checkin_adjusted"])
+      .select("id, scheduled_date, title"),
+  );
 }
 
 async function archiveActiveBlocks(admin: SupabaseAdminClient, userID: string) {

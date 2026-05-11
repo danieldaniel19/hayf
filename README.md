@@ -72,6 +72,7 @@ The prototype has proved the first important hypothesis: HAYF can authenticate a
 - `docs/onboarding-flow.md`: adaptive onboarding flow and branch design
 - `docs/onboarding-ai-backend.md`: onboarding AI backend, prompt surface, context shape, deployment, and QA notes
 - `docs/healthkit-prototype.md`: HealthKit prototype notes
+- `docs/information-architecture.md`: source of truth for screen ownership, goal/block terminology, and Profile vs Plan responsibilities
 - `docs/architecture.md`: early architecture recommendation
 - `docs/roadmap.md`: beginner-first product and build roadmap
 

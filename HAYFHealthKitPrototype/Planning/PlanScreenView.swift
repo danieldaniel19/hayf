@@ -38,12 +38,17 @@ struct PlanScreenView: View {
                             phases: store.phases,
                             weeklyRhythms: store.weeklyRhythms,
                             workouts: store.workouts,
+                            goalTargets: store.goalTargets,
+                            goalEvaluations: store.goalEvaluations,
                             errorMessage: store.errorMessage,
                             showActiveBlockDetail: {
                                 selectedDetail = .activeBlock
                             },
                             showPhaseDetail: { item in
                                 selectedDetail = .phase(item)
+                            },
+                            showTargetDetail: { target in
+                                selectedDetail = .target(target)
                             },
                             moveWorkout: { workout, date, sequenceOrder in
                                 Task { await moveWorkout(workout, to: date, sequenceOrder: sequenceOrder) }
@@ -87,7 +92,8 @@ struct PlanScreenView: View {
                 block: store.activeBlock,
                 phases: store.phases,
                 weeklyRhythms: store.weeklyRhythms,
-                workouts: store.workouts
+                workouts: store.workouts,
+                goalEvaluations: store.goalEvaluations
             )
             .presentationDetents(detail.detents)
             .presentationDragIndicator(.visible)
@@ -185,9 +191,12 @@ private struct PlanContentView: View {
     let phases: [PlanFitnessBlockPhase]
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
+    let goalTargets: [PlanGoalTarget]
+    let goalEvaluations: [PlanGoalEvaluation]
     let errorMessage: String?
     let showActiveBlockDetail: () -> Void
     let showPhaseDetail: (PlanRoadmapItem) -> Void
+    let showTargetDetail: (PlanGoalTarget) -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
@@ -209,6 +218,12 @@ private struct PlanContentView: View {
                         workouts: workouts,
                         showActiveBlockDetail: showActiveBlockDetail,
                         showPhaseDetail: showPhaseDetail
+                    )
+
+                    PlanTrainingTargetsCard(
+                        targets: goalTargets,
+                        evaluations: goalEvaluations,
+                        showTargetDetail: showTargetDetail
                     )
 
                     PlanCoachNote(text: coachNote)
@@ -420,6 +435,158 @@ private struct PlanCoachNote: View {
     }
 }
 
+private struct PlanTrainingTargetsCard: View {
+    let targets: [PlanGoalTarget]
+    let evaluations: [PlanGoalEvaluation]
+    let showTargetDetail: (PlanGoalTarget) -> Void
+
+    private var visibleTargets: [PlanGoalTarget] {
+        let primary = targets.filter { $0.targetKind == .primary }
+        let supporting = targets.filter { $0.targetKind == .subGoal }
+        return Array((primary + supporting).prefix(4))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Training targets")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text("What HAYF is watching for this block.")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+            }
+
+            if visibleTargets.isEmpty {
+                PlanTargetsEmptyView()
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(visibleTargets) { target in
+                        PlanTrainingTargetRow(
+                            target: target,
+                            evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
+                            openDetail: { showTargetDetail(target) }
+                        )
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct PlanTargetsEmptyView: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "target")
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Targets will appear after the next sync.")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text("HAYF needs enough recent evidence before it can show useful short-term targets.")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct PlanTrainingTargetRow: View {
+    let target: PlanGoalTarget
+    let evaluation: PlanGoalEvaluation?
+    let openDetail: () -> Void
+
+    private var status: PlanGoalStatus {
+        evaluation?.status ?? target.status
+    }
+
+    var body: some View {
+        Button(action: openDetail) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: PlanTargetDisplay.iconName(for: target))
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(HAYFColor.primary)
+                    .frame(width: 38, height: 44)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(target.title)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+
+                        Spacer(minLength: 8)
+
+                        Text(status.displayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(PlanTargetDisplay.statusColor(for: status))
+                            .lineLimit(1)
+                    }
+
+                    HStack(alignment: .center, spacing: 10) {
+                        PlanTargetProgressBar(progress: PlanTargetDisplay.progress(for: target, evaluation: evaluation))
+
+                        Text(PlanTargetDisplay.valueLine(for: target, evaluation: evaluation))
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(HAYFColor.muted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .background(HAYFColor.neutral)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(target.title) target details")
+    }
+}
+
+private struct PlanTargetProgressBar: View {
+    let progress: Double?
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(HAYFColor.borderStrong)
+
+                Capsule()
+                    .fill(HAYFColor.orange)
+                    .frame(width: proxy.size.width * CGFloat(min(max(progress ?? 0, 0), 1)))
+                    .opacity(progress == nil ? 0 : 1)
+            }
+        }
+        .frame(height: 3)
+        .frame(maxWidth: .infinity)
+    }
+}
+
 private struct PlanWorkoutsPanel: View {
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
@@ -434,36 +601,32 @@ private struct PlanWorkoutsPanel: View {
                 .foregroundStyle(HAYFColor.primary)
 
             VStack(alignment: .leading, spacing: 0) {
-                if workouts.isEmpty {
-                    PlanNoWorkoutsView()
-                } else {
-                    PlanWeekSection(
-                        title: "THIS WEEK",
-                        rhythm: rhythm(for: .current),
-                        groups: groups(for: .current),
-                        allWorkouts: workouts,
-                        moveWorkout: moveWorkout,
-                        deleteWorkout: deleteWorkout,
-                        replaceWorkout: replaceWorkout
-                    )
+                PlanWeekSection(
+                    title: "THIS WEEK",
+                    rhythm: rhythm(for: .current),
+                    groups: groups(for: .current),
+                    allWorkouts: workouts,
+                    moveWorkout: moveWorkout,
+                    deleteWorkout: deleteWorkout,
+                    replaceWorkout: replaceWorkout
+                )
 
-                    Divider()
-                        .background(HAYFColor.borderStrong)
-                        .padding(.vertical, 14)
+                Divider()
+                    .background(HAYFColor.borderStrong)
+                    .padding(.vertical, 14)
 
-                    PlanWeekSection(
-                        title: "NEXT WEEK",
-                        rhythm: rhythm(for: .next),
-                        groups: groups(for: .next),
-                        allWorkouts: workouts,
-                        moveWorkout: moveWorkout,
-                        deleteWorkout: deleteWorkout,
-                        replaceWorkout: replaceWorkout
-                    )
+                PlanWeekSection(
+                    title: "NEXT WEEK",
+                    rhythm: rhythm(for: .next),
+                    groups: groups(for: .next),
+                    allWorkouts: workouts,
+                    moveWorkout: moveWorkout,
+                    deleteWorkout: deleteWorkout,
+                    replaceWorkout: replaceWorkout
+                )
 
-                    PlanLegend()
-                        .padding(.top, 18)
-                }
+                PlanLegend()
+                    .padding(.top, 18)
             }
             .padding(18)
             .background(HAYFColor.surface)
@@ -483,7 +646,7 @@ private struct PlanWorkoutsPanel: View {
         let filtered = workouts.filter { PlanDate.bucket(for: $0.scheduledDate) == week }
         let grouped = Dictionary(grouping: filtered, by: \.scheduledDate)
 
-        return grouped.keys.sorted().map { date in
+        return PlanDate.weekDates(for: week).map { date in
             PlanWorkoutDayGroup(date: date, workouts: grouped[date] ?? [])
         }
     }
@@ -515,22 +678,15 @@ private struct PlanWeekSection: View {
                 }
             }
 
-            if groups.isEmpty {
-                Text("No sessions planned.")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
-                    .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(groups) { group in
-                        PlanWorkoutDayRow(
-                            group: group,
-                            allWorkouts: allWorkouts,
-                            moveWorkout: moveWorkout,
-                            deleteWorkout: deleteWorkout,
-                            replaceWorkout: replaceWorkout
-                        )
-                    }
+            VStack(spacing: 10) {
+                ForEach(groups) { group in
+                    PlanWorkoutDayRow(
+                        group: group,
+                        allWorkouts: allWorkouts,
+                        moveWorkout: moveWorkout,
+                        deleteWorkout: deleteWorkout,
+                        replaceWorkout: replaceWorkout
+                    )
                 }
             }
         }
@@ -559,12 +715,16 @@ private struct PlanWorkoutDayRow: View {
             .padding(.top, 14)
 
             VStack(spacing: 8) {
-                ForEach(group.workouts) { workout in
-                    PlanWorkoutCard(
-                        workout: workout,
-                        deleteWorkout: { deleteWorkout(workout) },
-                        replaceWorkout: { replaceWorkout(workout) }
-                    )
+                if group.workouts.isEmpty {
+                    PlanEmptyDayDropZone()
+                } else {
+                    ForEach(group.workouts) { workout in
+                        PlanWorkoutCard(
+                            workout: workout,
+                            deleteWorkout: { deleteWorkout(workout) },
+                            replaceWorkout: { replaceWorkout(workout) }
+                        )
+                    }
                 }
             }
             .dropDestination(for: String.self) { items, _ in
@@ -576,6 +736,37 @@ private struct PlanWorkoutDayRow: View {
                 moveWorkout(workout, group.date, group.workouts.count + 1)
                 return true
             }
+        }
+    }
+}
+
+private struct PlanEmptyDayDropZone: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HAYFColor.muted)
+                .frame(width: 24, height: 24)
+                .background(HAYFColor.surface)
+                .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                }
+
+            Text("Open day")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(HAYFColor.muted)
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 58)
+        .background(HAYFColor.neutral)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.border, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
         }
     }
 }
@@ -787,6 +978,7 @@ private struct PlanLegend: View {
             PlanLegendItem(kind: .planned, label: "Planned")
             PlanLegendItem(kind: .current, label: "Current")
             PlanLegendItem(kind: .adjusted, label: "Adjusted")
+            PlanLegendItem(kind: .missed, label: "Missed")
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
@@ -1069,6 +1261,7 @@ private struct ReplacementCandidateCard: View {
 private enum PlanDetailSheet: Identifiable {
     case activeBlock
     case phase(PlanRoadmapItem)
+    case target(PlanGoalTarget)
 
     var id: String {
         switch self {
@@ -1076,6 +1269,8 @@ private enum PlanDetailSheet: Identifiable {
             return "active-block"
         case let .phase(item):
             return "phase-\(item.id)"
+        case let .target(target):
+            return "target-\(target.id.uuidString)"
         }
     }
 
@@ -1083,7 +1278,7 @@ private enum PlanDetailSheet: Identifiable {
         switch self {
         case .activeBlock:
             return [.medium, .large]
-        case .phase:
+        case .phase, .target:
             return [.medium]
         }
     }
@@ -1095,6 +1290,7 @@ private struct PlanDetailSheetView: View {
     let phases: [PlanFitnessBlockPhase]
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
+    let goalEvaluations: [PlanGoalEvaluation]
 
     @Environment(\.dismiss) private var dismiss
 
@@ -1122,6 +1318,12 @@ private struct PlanDetailSheetView: View {
                         dismiss: { dismiss() }
                     )
                 }
+            case let .target(target):
+                TargetDetailSheet(
+                    target: target,
+                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: goalEvaluations),
+                    dismiss: { dismiss() }
+                )
             }
         }
     }
@@ -1219,6 +1421,70 @@ private struct PhaseDetailSheet: View {
             PlanPhaseContextRow(items: items, selectedItem: item)
 
             Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 20)
+    }
+}
+
+private struct TargetDetailSheet: View {
+    let target: PlanGoalTarget
+    let evaluation: PlanGoalEvaluation?
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            SheetHeader(
+                overline: "TRAINING TARGET",
+                title: target.title,
+                dismiss: dismiss
+            )
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    DetailChip(text: PlanTargetDisplay.kindLabel(for: target))
+                    DetailChip(text: PlanTargetDisplay.status(for: target, evaluation: evaluation).displayName)
+                    DetailChip(text: PlanTargetDisplay.categoryLabel(for: target))
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 18) {
+                DetailSection(
+                    title: "Current status",
+                    text: PlanTargetDisplay.statusText(for: target, evaluation: evaluation)
+                )
+
+                DetailSection(
+                    title: "Why HAYF is watching it",
+                    text: PlanTargetDisplay.whyWatchedText(for: target)
+                )
+
+                DetailSection(
+                    title: "How it affects the plan",
+                    text: PlanTargetDisplay.planImpactText(for: target)
+                )
+
+                DetailSection(
+                    title: "Evidence",
+                    text: PlanTargetDisplay.evidenceText(for: evaluation)
+                )
+            }
+
+            Spacer(minLength: 0)
+
+            Button(action: {}) {
+                Text("Ask coach about this")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+                    .background(HAYFColor.primary.opacity(0.55))
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(true)
+            .accessibilityLabel("Ask coach about this coming soon")
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)
@@ -1624,6 +1890,217 @@ private enum PlanDisplay {
     }
 }
 
+private enum PlanTargetDisplay {
+    static func latestEvaluation(
+        for target: PlanGoalTarget,
+        in evaluations: [PlanGoalEvaluation]
+    ) -> PlanGoalEvaluation? {
+        evaluations.first { $0.goalTargetID == target.id }
+    }
+
+    static func status(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> PlanGoalStatus {
+        evaluation?.status ?? target.status
+    }
+
+    static func statusColor(for status: PlanGoalStatus) -> Color {
+        switch status {
+        case .onTrack, .achieved:
+            return HAYFColor.primary
+        case .lagging:
+            return HAYFColor.error
+        case .needsReview:
+            return HAYFColor.orange
+        }
+    }
+
+    static func iconName(for target: PlanGoalTarget) -> String {
+        let text = "\(target.metricKey ?? "") \(target.metricCategory ?? "") \(target.title)".lowercased()
+
+        if text.contains("body") || text.contains("weight") || text.contains("fat") {
+            return "scalemass"
+        } else if text.contains("run") {
+            return "figure.run"
+        } else if text.contains("cycle") || text.contains("cycling") || text.contains("bike") {
+            return "bicycle"
+        } else if text.contains("strength") || text.contains("upper") {
+            return "dumbbell"
+        } else if text.contains("step") || text.contains("activity") {
+            return "figure.walk"
+        } else if text.contains("consistency") || text.contains("workout") {
+            return "calendar"
+        } else {
+            return "target"
+        }
+    }
+
+    static func progress(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> Double? {
+        if let progress = evaluation?.progressRatio {
+            return min(max(progress, 0), 1)
+        }
+
+        guard let current = evaluation?.currentValue,
+              let targetValue = target.targetValue else {
+            return nil
+        }
+
+        if target.direction == "decrease",
+           let baseline = target.baselineValue {
+            let denominator = abs(targetValue - baseline)
+            guard denominator > 0 else { return nil }
+            return min(max((baseline - current) / denominator, 0), 1)
+        }
+
+        guard targetValue > 0 else { return nil }
+        return min(max(current / targetValue, 0), 1)
+    }
+
+    static func valueLine(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
+        let unit = target.unit ?? evaluation?.unit ?? ""
+        let current = evaluation?.currentValue
+        let targetValue = evaluation?.targetValue ?? target.targetValue
+
+        if let current, let targetValue {
+            if target.direction == "decrease" {
+                return "\(formatted(current)) → \(formatted(targetValue))\(unitSuffix(unit))"
+            }
+
+            return "\(formatted(current)) / \(formatted(targetValue))\(unitSuffix(unit))"
+        }
+
+        if let baseline = target.baselineValue, let targetValue {
+            return "\(formatted(baseline)) → \(formatted(targetValue))\(unitSuffix(unit))"
+        }
+
+        if let targetValue {
+            return "Target \(formatted(targetValue))\(unitSuffix(unit))"
+        }
+
+        return "Needs more data"
+    }
+
+    static func statusText(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
+        let value = valueLine(for: target, evaluation: evaluation)
+
+        guard let evaluation else {
+            return "HAYF has created this target and will evaluate it after the next sync. Current target: \(value)."
+        }
+
+        if evaluation.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Latest check: \(value)."
+        }
+
+        return "\(evaluation.message) Latest check: \(value)."
+    }
+
+    static func whyWatchedText(for target: PlanGoalTarget) -> String {
+        if let description = target.description?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !description.isEmpty {
+            return description
+        }
+
+        switch target.metricCategory {
+        case "body":
+            return "This is tied to the body-composition outcome for the current block."
+        case "volume":
+            return "This keeps training exposure high enough to move the block without guessing from workouts alone."
+        case "balance":
+            return "This protects the support work that keeps the block from becoming one-dimensional."
+        case "activity_floor":
+            return "This helps HAYF notice whether movement outside workouts is supporting the plan."
+        case "consistency":
+            return "This keeps the block focused on repeatable training, not one perfect week."
+        default:
+            return "This target gives HAYF a measurable signal for the current block."
+        }
+    }
+
+    static func planImpactText(for target: PlanGoalTarget) -> String {
+        switch target.metricCategory {
+        case "body":
+            return "HAYF should keep the plan steady and use this trend cautiously, alongside training, recovery, and feedback."
+        case "volume":
+            return "If this slips, HAYF may protect easy aerobic work or reduce lower-priority sessions before changing the whole block."
+        case "balance":
+            return "If this slips, HAYF should keep strength exposure alive even when the week gets compressed."
+        case "activity_floor":
+            return "If this drops, HAYF may bias toward low-friction movement before adding intensity."
+        case "consistency":
+            return "If this slips, HAYF should repair the week around a smaller minimum rather than restart the plan."
+        default:
+            return "This target helps HAYF decide whether the weekly rhythm should hold, soften, or adjust."
+        }
+    }
+
+    static func evidenceText(for evaluation: PlanGoalEvaluation?) -> String {
+        guard let evaluation else {
+            return "No evaluation has been recorded yet."
+        }
+
+        let date = displayDate(from: evaluation.evaluatedAt)
+        return "Last checked \(date). Confidence: \(evaluation.confidence)."
+    }
+
+    static func kindLabel(for target: PlanGoalTarget) -> String {
+        switch target.targetKind {
+        case .primary:
+            return "Primary"
+        case .subGoal:
+            return "Support"
+        }
+    }
+
+    static func categoryLabel(for target: PlanGoalTarget) -> String {
+        guard let category = target.metricCategory?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !category.isEmpty else {
+            return "Target"
+        }
+
+        return category
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+
+    private static func formatted(_ value: Double) -> String {
+        if abs(value) >= 100 {
+            return "\(Int(value.rounded()))"
+        }
+
+        if value.rounded() == value {
+            return "\(Int(value))"
+        }
+
+        return String(format: "%.1f", value)
+    }
+
+    private static func unitSuffix(_ unit: String) -> String {
+        let trimmed = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if trimmed == "%" {
+            return "%"
+        }
+
+        return " \(trimmed)"
+    }
+
+    private static func displayDate(from value: String) -> String {
+        if let date = isoDateFormatter.date(from: value) {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "MMM d"
+            return formatter.string(from: date)
+        }
+
+        if value.count >= 10 {
+            return String(value.prefix(10))
+        }
+
+        return "recently"
+    }
+
+    private static let isoDateFormatter = ISO8601DateFormatter()
+}
+
 private enum PlanDate {
     static func date(from string: String?) -> Date? {
         guard let string else { return nil }
@@ -1649,6 +2126,30 @@ private enum PlanDate {
             return .next
         } else {
             return .outside
+        }
+    }
+
+    static func weekDates(for bucket: PlanWeekBucket) -> [String] {
+        let calendar = PlanCalendar.iso
+        let now = Date()
+        let currentStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
+
+        let weekStart: Date
+        switch bucket {
+        case .current:
+            weekStart = currentStart
+        case .next:
+            weekStart = calendar.date(byAdding: .weekOfYear, value: 1, to: currentStart) ?? currentStart
+        case .outside:
+            return []
+        }
+
+        return (0..<7).compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: weekStart) else {
+                return nil
+            }
+
+            return PlanCalendar.dateFormatter.string(from: date)
         }
     }
 

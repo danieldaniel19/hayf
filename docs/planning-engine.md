@@ -14,6 +14,8 @@ The planning engine turns completed onboarding into the app's durable fitness pl
 
 This is the foundation for the Home workout card, the Plan screen, check-in flow, workout-detail screens, and later calendar/coach integrations.
 
+For product/navigation ownership and current terminology, see `docs/information-architecture.md`. In short: `active_fitness_blocks` is the canonical active block concept; Plan is the execution home; Profile is the durable user and fitness context home.
+
 ## Product Rules Captured
 
 - HAYF is not locked to a three-month plan.

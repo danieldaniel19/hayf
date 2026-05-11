@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AuthenticatedHomeView: View {
     let userEmail: String?
-    let displayName: String?
+    let accountProfile: StoredAccountProfile
     let presentActiveBlockOnFirstPlanLoad: Bool
     let onDidPresentActiveBlockOnFirstPlanLoad: () -> Void
     let restartAccountCreation: () -> Void
@@ -33,9 +33,10 @@ struct AuthenticatedHomeView: View {
                 }
                 .tag(AuthenticatedTab.plan)
 
-            ProfileView(
+            ProfileScreenView(
+                accountProfile: accountProfile,
                 userEmail: userEmail,
-                displayName: displayName,
+                openSettings: restartAccountCreation,
                 signOut: signOut
             )
             .tabItem {
@@ -88,54 +89,6 @@ private struct TodayGhostView: View {
             message: "The daily recommendation card will live here soon.",
             systemImage: "house"
         )
-    }
-}
-
-private struct ProfileView: View {
-    let userEmail: String?
-    let displayName: String?
-    let signOut: () -> Void
-
-    var body: some View {
-        ZStack {
-            HAYFColor.neutral
-                .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 28) {
-                HAYFLogo(markSize: 34, textSize: 30, spacing: 10)
-
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(displayName ?? "Profile")
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundStyle(HAYFColor.primary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-
-                    if let userEmail {
-                        Text(userEmail)
-                            .font(.system(size: 17, weight: .regular))
-                            .foregroundStyle(HAYFColor.muted)
-                    }
-                }
-
-                Spacer()
-
-                Button(action: signOut) {
-                    Text("Sign out")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 54)
-                        .background(HAYFColor.primary)
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 30)
-            .padding(.top, 28)
-            .padding(.bottom, 28)
-            .frame(maxWidth: 520)
-        }
     }
 }
 
@@ -263,7 +216,14 @@ private struct DevEntryButton: View {
 #Preview {
     AuthenticatedHomeView(
         userEmail: "you@example.com",
-        displayName: "Daniel",
+        accountProfile: StoredAccountProfile(
+            id: UUID(),
+            name: "Daniel",
+            birthdate: "1990-01-01",
+            mainCity: "Lisbon",
+            profilePhotoPath: nil,
+            profilePhotoURL: nil
+        ),
         presentActiveBlockOnFirstPlanLoad: false,
         onDidPresentActiveBlockOnFirstPlanLoad: {},
         restartAccountCreation: {},

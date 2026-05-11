@@ -38,7 +38,7 @@ struct AppRootView: View {
                     } else {
                         AuthenticatedHomeView(
                             userEmail: authViewModel.userEmail,
-                            displayName: accountProfile.name,
+                            accountProfile: accountProfile,
                             presentActiveBlockOnFirstPlanLoad: shouldPresentActiveBlockOnPlanLanding,
                             onDidPresentActiveBlockOnFirstPlanLoad: {
                                 shouldPresentActiveBlockOnPlanLanding = false

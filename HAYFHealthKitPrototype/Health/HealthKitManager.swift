@@ -553,6 +553,11 @@ final class HealthKitManager {
                 sortDescriptors: [sortDescriptor]
             ) { _, samples, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1118,6 +1123,11 @@ final class HealthKitManager {
         let samples: [HKCategorySample] = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[HKCategorySample], Error>) in
             let query = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sortDescriptor]) { _, samples, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1219,6 +1229,11 @@ final class HealthKitManager {
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(sampleType: workoutType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: 0)
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1256,6 +1271,11 @@ final class HealthKitManager {
 
             query.initialResultsHandler = { _, results, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1307,6 +1327,11 @@ final class HealthKitManager {
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKStatisticsQuery(quantityType: quantityType, quantitySamplePredicate: predicate, options: options) { _, statistics, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1391,6 +1416,11 @@ final class HealthKitManager {
 
             query.initialResultsHandler = { _, results, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1423,6 +1453,11 @@ final class HealthKitManager {
         return try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(sampleType: quantityType, predicate: nil, limit: 1, sortDescriptors: [sortDescriptor]) { _, samples, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1444,6 +1479,11 @@ final class HealthKitManager {
         try await withCheckedThrowingContinuation { continuation in
             let query = HKSampleQuery(sampleType: sampleType, predicate: predicate, limit: limit, sortDescriptors: sortDescriptors) { _, samples, error in
                 if let error {
+                    if Self.isNoDataError(error) {
+                        continuation.resume(returning: [])
+                        return
+                    }
+
                     continuation.resume(throwing: error)
                     return
                 }
@@ -1453,6 +1493,11 @@ final class HealthKitManager {
 
             healthStore.execute(query)
         }
+    }
+
+    private static func isNoDataError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == HKErrorDomain && nsError.code == HKError.Code.errorNoData.rawValue
     }
 
     private func buildSnapshotNotes(workouts: [HKWorkout], nutrition: NutritionFeatureSummary, sleep14: Double?) -> [String] {
