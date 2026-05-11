@@ -235,7 +235,17 @@ Plan should read:
 - optional `fitness_block_phases` for goal-block roadmap display
 - `plan_events` and `replan_proposals` for repair/proposal states
 
-Plan drag/drop and delete must call `PlanningAIProvider.recordPlanEdit`, not directly mutate planning rows.
+Plan edit actions must go through the planning engine, not directly mutate planning rows. Move and delete call `PlanningAIProvider.recordPlanEdit`; replacement calls the audited replacement endpoint and returns the same coach-review outcome shape.
+
+Audited Plan edit UX:
+
+- Planned workout cards expose explicit swipe actions for replace, move, and delete.
+- Plan does not use drag/drop for workout movement. Move enters a target-selection state, and whole day rows become tappable destinations.
+- Submitted edits show a blocking coach-analysis overlay while HAYF audits the resulting week.
+- The visible plan changes only after the backend returns and Plan reloads.
+- If the edit is low risk, the user edit stands with no extra prompt.
+- If the edit creates meaningful risk, the existing coach-review sheet opens with one consolidated replan proposal.
+- Replacement keeps the user's chosen replacement as the new fact; any repair proposal must adapt around it, not revert it.
 
 Check-in should call `PlanningAIProvider.checkInToWorkout`.
 

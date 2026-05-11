@@ -11,6 +11,7 @@ final class PlanDataStore: ObservableObject {
     @Published private(set) var goalEvaluations: [PlanGoalEvaluation] = []
     @Published private(set) var historyInsights: [FitnessHistoryInsight] = []
     @Published private(set) var debriefRequests: [WorkoutDebriefRequest] = []
+    @Published private(set) var pendingReplanProposals: [PlanReplanProposal] = []
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
@@ -40,6 +41,7 @@ final class PlanDataStore: ObservableObject {
                 goalEvaluations = []
                 historyInsights = []
                 debriefRequests = []
+                pendingReplanProposals = []
                 return
             }
 
@@ -50,6 +52,7 @@ final class PlanDataStore: ObservableObject {
             async let goalEvaluations = fetchGoalEvaluations(for: block.id)
             async let historyInsights = fetchHistoryInsights(for: block.id)
             async let debriefRequests = fetchDebriefRequests(for: block.id)
+            async let pendingReplanProposals = fetchPendingReplanProposals(for: block.id)
 
             activeBlock = block
             self.phases = try await phases
@@ -59,6 +62,7 @@ final class PlanDataStore: ObservableObject {
             self.goalEvaluations = try await goalEvaluations
             self.historyInsights = try await historyInsights
             self.debriefRequests = try await debriefRequests
+            self.pendingReplanProposals = try await pendingReplanProposals
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -163,6 +167,20 @@ final class PlanDataStore: ObservableObject {
             .order("created_at", ascending: false)
             .execute()
             .value
+    }
+
+    private func fetchPendingReplanProposals(for blockID: UUID) async throws -> [PlanReplanProposal] {
+        let proposals: [PlanReplanProposal] = try await supabase
+            .from("replan_proposals")
+            .select("id, active_block_id, trigger_event_id, reason, proposed_mutations_json, status, created_at, updated_at")
+            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .eq("status", value: "pending")
+            .order("created_at", ascending: false)
+            .limit(10)
+            .execute()
+            .value
+
+        return Array(proposals.filter { $0.mutationCount > 0 }.prefix(1))
     }
 
     private func visibleWindow() -> DateInterval {
@@ -439,6 +457,36 @@ struct WorkoutDebriefRequest: Decodable, Identifiable {
         case status
         case promptReason = "prompt_reason"
         case createdAt = "created_at"
+    }
+}
+
+struct PlanReplanProposal: Decodable, Identifiable {
+    let id: UUID
+    let activeBlockID: UUID?
+    let triggerEventID: UUID?
+    let reason: String
+    let proposedMutations: JSONValue
+    let status: String
+    let createdAt: String
+    let updatedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case activeBlockID = "active_block_id"
+        case triggerEventID = "trigger_event_id"
+        case reason
+        case proposedMutations = "proposed_mutations_json"
+        case status
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    var mutationCount: Int {
+        if case let .array(values) = proposedMutations {
+            return values.count
+        }
+
+        return 0
     }
 }
 

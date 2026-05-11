@@ -47,13 +47,16 @@ struct PlanningAIProvider {
         )
     }
 
-    func recordPlanEdit(_ edit: PlanningPlanEdit) async throws -> PlanningFunctionResponse {
-        try await invoke(
+    func recordPlanEdit(_ edit: PlanningPlanEdit) async throws -> PlanningEditOutcome {
+        let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
                 task: .recordPlanEdit,
+                deviceTimezone: TimeZone.current.identifier,
                 edit: edit
             )
         )
+
+        return response.output
     }
 
     func recommendWorkoutReplacements(
@@ -74,14 +77,17 @@ struct PlanningAIProvider {
     func replaceWorkout(
         plannedWorkoutID: UUID,
         candidate: PlanningReplacementCandidate
-    ) async throws -> PlanningFunctionResponse {
-        try await invoke(
+    ) async throws -> PlanningEditOutcome {
+        let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
                 task: .replaceWorkout,
+                deviceTimezone: TimeZone.current.identifier,
                 plannedWorkoutID: plannedWorkoutID,
                 replacementCandidate: candidate
             )
         )
+
+        return response.output
     }
 
     func applyReplanProposal(
@@ -265,6 +271,30 @@ struct PlanningFunctionResponse: Decodable {
     let task: PlanningAITask
     let model: String
     let output: JSONValue
+}
+
+struct PlanningEditOutcome: Decodable {
+    let eventID: UUID?
+    let proposalID: UUID?
+    let reason: String?
+    let summary: String?
+    let mutationCount: Int?
+    let proposal: PlanReplanProposal?
+
+    enum CodingKeys: String, CodingKey {
+        case eventID
+        case proposalID
+        case reason
+        case summary
+        case mutationCount
+        case proposal
+    }
+}
+
+private struct PlanningEditOutcomeFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningEditOutcome
 }
 
 struct PlanningFunctionError: LocalizedError {

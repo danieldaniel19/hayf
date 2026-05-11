@@ -55,6 +55,12 @@ type PlanEditInput =
   | {
       type: "delete_workout";
       planned_workout_id: string;
+    }
+  | {
+      type: "replace_workout";
+      planned_workout_id: string;
+      replacement_workout_id: string;
+      scheduled_date: string;
     };
 
 type GeneratedPlan = {
@@ -119,6 +125,43 @@ type ReplacementCandidate = ReplacementCandidateInput & {
   id: string;
   rationale: string;
   weeklyImpact: string;
+};
+
+type TrainingDimension = "neuromuscular" | "endurance" | "recovery" | "skill";
+type TrainingLoad = "low" | "moderate" | "high";
+type TrainingImpact = "low" | "medium" | "high";
+
+type TrainingProfile = {
+  normalizedActivity: string;
+  dimensions: TrainingDimension[];
+  load: TrainingLoad;
+  impact: TrainingImpact;
+};
+
+type EditRiskKind = "compressed_recovery" | "cumulative_load" | "goal_drift" | "weekly_imbalance";
+
+type EditRisk = {
+  kind: EditRiskKind;
+  severity: "medium" | "high";
+  message: string;
+  affectedWorkoutIDs: string[];
+  dimensions: TrainingDimension[];
+  weekStartDate?: string;
+  expectedCount?: number;
+  actualCount?: number;
+  missingCount?: number;
+};
+
+type EditRepairPlan = {
+  reason: string;
+  summary: string;
+  risks: EditRisk[];
+  mutations: Array<Record<string, unknown>>;
+};
+
+type PlanEditRepairDraft = {
+  reason: string;
+  summary: string;
 };
 
 const corsHeaders = {
@@ -244,6 +287,16 @@ const planSchema: Record<string, unknown> = {
         },
       },
     },
+  },
+};
+
+const editRepairSchema: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reason", "summary"],
+  properties: {
+    reason: { type: "string" },
+    summary: { type: "string" },
   },
 };
 
@@ -387,11 +440,11 @@ async function handleTask(args: {
     case "refresh_plan_window":
       return refreshPlanWindow(admin, userID!, requestBody, model, "user");
     case "record_plan_edit":
-      return recordPlanEdit(admin, userID!, requestBody);
+      return recordPlanEdit(admin, userID!, requestBody, model);
     case "recommend_workout_replacements":
       return recommendWorkoutReplacements(admin, userID!, requestBody, model);
     case "replace_workout":
-      return replaceWorkout(admin, userID!, requestBody);
+      return replaceWorkout(admin, userID!, requestBody, model);
     case "apply_replan_proposal":
       return applyReplanProposal(admin, userID!, requestBody);
     case "check_in_to_workout":
@@ -774,6 +827,7 @@ async function recordPlanEdit(
   admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
+  model: string,
 ) {
   if (!requestBody.edit) {
     throw new Error("record_plan_edit requires edit");
@@ -792,6 +846,7 @@ async function recordPlanEdit(
     "Planned workout not found",
   );
 
+  let event: Record<string, any>;
   if (edit.type === "move_workout") {
     await throwOnError(
       admin
@@ -804,50 +859,751 @@ async function recordPlanEdit(
         })
         .eq("id", workout.id),
     );
-    const event = await createPlanEvent(admin, {
+    event = await createPlanEvent(admin, {
       userID,
       activeBlockID: block.id,
       plannedWorkoutID: workout.id,
       eventType: "workout_moved",
       payload: { from: workout.scheduled_date, to: edit.scheduled_date },
     });
-    const movedAcrossWeek = startOfWeek(parseDateOnly(workout.scheduled_date) ?? new Date()).getTime() !==
-      startOfWeek(parseDateOnly(edit.scheduled_date) ?? new Date()).getTime();
-    const proposal = movedAcrossWeek
-      ? await createReplanProposal(admin, {
-        userID,
-        activeBlockID: block.id,
-        triggerEventID: event.id,
-        reason: "A workout moved across weeks. Review whether the surrounding rhythm needs a repair.",
-        mutations: [],
-      })
-      : null;
-    await markCurrentWorkout(admin, userID, block.id, new Date());
-    return { userID, eventID: event.id, proposalID: proposal?.id ?? null };
+  } else if (edit.type === "delete_workout") {
+    await throwOnError(
+      admin
+        .from("planned_workouts")
+        .update({ status: "deleted", source: "user_deleted", version: (workout.version ?? 1) + 1 })
+        .eq("id", workout.id),
+    );
+    event = await createPlanEvent(admin, {
+      userID,
+      activeBlockID: block.id,
+      plannedWorkoutID: workout.id,
+      eventType: "workout_deleted",
+      payload: { deletedWorkout: workout },
+    });
+  } else {
+    throw new Error("record_plan_edit does not support replacement edits directly");
   }
 
-  await throwOnError(
-    admin
-      .from("planned_workouts")
-      .update({ status: "deleted", source: "user_deleted", version: (workout.version ?? 1) + 1 })
-      .eq("id", workout.id),
-  );
-  const event = await createPlanEvent(admin, {
-    userID,
-    activeBlockID: block.id,
-    plannedWorkoutID: workout.id,
-    eventType: "workout_deleted",
-    payload: { deletedWorkout: workout },
-  });
-  const proposal = await createReplanProposal(admin, {
-    userID,
-    activeBlockID: block.id,
-    triggerEventID: event.id,
-    reason: "A planned workout was deleted. Review whether the rest of the week should be repaired.",
-    mutations: [],
-  });
+  const repair = await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+  const proposal = repair
+    ? await createReplanProposal(admin, {
+      userID,
+      activeBlockID: block.id,
+      triggerEventID: event.id,
+      reason: repair.reason,
+      mutations: repair.mutations,
+      metadata: {
+        type: "plan_edit_repair",
+        summary: repair.summary,
+        risks: repair.risks.map((risk) => ({
+          kind: risk.kind,
+          severity: risk.severity,
+          dimensions: risk.dimensions,
+          affectedWorkoutIDs: risk.affectedWorkoutIDs,
+        })),
+      },
+    })
+    : null;
+  if (!proposal) {
+    await expirePendingReplanProposals(admin, userID, block.id);
+  }
   await markCurrentWorkout(admin, userID, block.id, new Date());
-  return { userID, eventID: event.id, proposalID: proposal.id };
+  return {
+    userID,
+    eventID: event.id,
+    proposalID: proposal?.id ?? null,
+    reason: repair?.reason ?? null,
+    summary: repair?.summary ?? null,
+    risks: repair?.risks ?? [],
+    mutationCount: repair?.mutations.length ?? 0,
+    proposal: proposal
+      ? {
+        id: proposal.id,
+        active_block_id: proposal.active_block_id,
+        trigger_event_id: proposal.trigger_event_id,
+        reason: proposal.reason,
+        proposed_mutations_json: proposal.proposed_mutations_json,
+        status: proposal.status,
+        created_at: proposal.created_at,
+        updated_at: proposal.updated_at,
+      }
+      : null,
+  };
+}
+
+async function buildPlanEditRepair(
+  admin: SupabaseAdminClient,
+  userID: string,
+  block: Record<string, any>,
+  editedWorkout: Record<string, any>,
+  edit: PlanEditInput,
+  model: string,
+  timezone: string,
+): Promise<EditRepairPlan | null> {
+  const affectedDates = [editedWorkout.scheduled_date];
+  if (edit.type === "move_workout" || edit.type === "replace_workout") affectedDates.push(edit.scheduled_date);
+  const parsedDates = affectedDates.map((date) => parseDateOnly(date)).filter(Boolean) as Date[];
+  const today = todayInTimezone(timezone);
+  const currentWeekStart = startOfWeek(today);
+  const affectedFirstWeek = startOfWeek(new Date(Math.min(...parsedDates.map((date) => date.getTime()))));
+  const affectedLastWeek = startOfWeek(new Date(Math.max(...parsedDates.map((date) => date.getTime()))));
+  const firstWeek = new Date(Math.min(currentWeekStart.getTime(), affectedFirstWeek.getTime()));
+  const lastWeek = new Date(Math.max(addDays(currentWeekStart, 7).getTime(), affectedLastWeek.getTime()));
+  const window = { start: isoDate(firstWeek), end: isoDate(addDays(lastWeek, 6)) };
+
+  const [workouts, rhythms, goalTargets] = await Promise.all([
+    list(
+      admin
+        .from("planned_workouts")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .gte("scheduled_date", window.start)
+        .lte("scheduled_date", window.end)
+        .in("status", ["planned", "current", "checked_in", "adjusted", "done"])
+        .order("scheduled_date", { ascending: true })
+        .order("sequence_order", { ascending: true }),
+    ),
+    list(
+      admin
+        .from("weekly_rhythms")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .eq("status", "active")
+        .gte("week_start_date", window.start)
+        .lte("week_start_date", window.end),
+    ),
+    list(
+      admin
+        .from("fitness_goal_targets")
+        .select("id,target_kind,title,description,metric_key,metric_category,evaluation_rule_json,status")
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .in("status", ["on_track", "lagging", "needs_review"]),
+    ),
+  ]);
+
+  const risks = detectPlanEditRisks({
+    block,
+    workouts,
+    rhythms,
+    goalTargets,
+    editedWorkout,
+    edit,
+    today,
+  });
+  if (risks.length === 0) return null;
+
+  const fallback = fallbackEditRepair({ block, workouts, rhythms, editedWorkout, edit, risks, today });
+  if (fallback.mutations.length === 0) return null;
+
+  let draft: PlanEditRepairDraft | null = null;
+  try {
+    draft = await runEditRepairDraft(
+      {
+        editedWorkout: compactWorkoutForRepair(editedWorkout),
+        edit,
+        risks,
+        fallback,
+        visibleWorkouts: workouts.map(compactWorkoutForRepair),
+      },
+      model,
+    );
+  } catch {
+    draft = null;
+  }
+
+  return {
+    ...fallback,
+    reason: draft?.reason?.trim() || fallback.reason,
+    summary: draft?.summary?.trim() || fallback.summary,
+  };
+}
+
+function detectPlanEditRisks(args: {
+  block: Record<string, any>;
+  workouts: Record<string, any>[];
+  rhythms: Record<string, any>[];
+  goalTargets: Record<string, any>[];
+  editedWorkout: Record<string, any>;
+  edit: PlanEditInput;
+  today: Date;
+}): EditRisk[] {
+  const { block, workouts, rhythms, goalTargets, editedWorkout, edit, today } = args;
+  const auditWorkouts = auditEligibleWorkouts(workouts, today);
+  const weekStarts = auditedWeekStarts(auditWorkouts, rhythms, editedWorkout, edit, today);
+  const risks: EditRisk[] = [];
+
+  for (const weekStart of weekStarts) {
+    const weekWorkouts = workoutsForWeek(auditWorkouts, weekStart);
+    const compressed = compressedRecoveryRisk(weekWorkouts);
+    if (compressed) {
+      compressed.weekStartDate = isoDate(weekStart);
+      risks.push(compressed);
+    }
+
+    const cumulative = cumulativeLoadRisk(weekWorkouts);
+    if (cumulative) {
+      cumulative.weekStartDate = isoDate(weekStart);
+      risks.push(cumulative);
+    }
+
+    const rhythm = rhythms.find((item) => item.week_start_date === isoDate(weekStart));
+    const targetCount = weeklyTargetCountRisk(weekWorkouts, rhythm, goalTargets, block, weekStart);
+    if (targetCount) risks.push(targetCount);
+
+    const goalDrift = goalDriftRisk(weekWorkouts, rhythm, editedWorkout, edit, weekStart);
+    if (goalDrift) risks.push(goalDrift);
+
+    const imbalance = weeklyImbalanceRisk(weekWorkouts, editedWorkout, edit, weekStart);
+    if (imbalance) risks.push(imbalance);
+  }
+
+  const seen = new Set<string>();
+  return risks.filter((risk) => {
+    const key = `${risk.kind}:${risk.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).sort(compareEditRisks).slice(0, 3);
+}
+
+function compareEditRisks(first: EditRisk, second: EditRisk) {
+  const severityDelta = riskSeverityScore(second) - riskSeverityScore(first);
+  if (severityDelta !== 0) return severityDelta;
+  return riskKindScore(second) - riskKindScore(first);
+}
+
+function riskSeverityScore(risk: EditRisk) {
+  return risk.severity === "high" ? 2 : 1;
+}
+
+function riskKindScore(risk: EditRisk) {
+  switch (risk.kind) {
+    case "weekly_imbalance":
+      return 4;
+    case "compressed_recovery":
+      return 3;
+    case "goal_drift":
+      return 2;
+    case "cumulative_load":
+      return 1;
+  }
+}
+
+function auditedWeekStarts(
+  workouts: Record<string, any>[],
+  rhythms: Record<string, any>[],
+  editedWorkout: Record<string, any>,
+  edit: PlanEditInput,
+  today: Date,
+) {
+  const starts = [startOfWeek(today), startOfWeek(addDays(today, 7)), startOfWeek(parseDateOnly(editedWorkout.scheduled_date) ?? today)];
+  if (edit.type === "move_workout") {
+    const movedStart = startOfWeek(parseDateOnly(edit.scheduled_date) ?? today);
+    if (!starts.some((date) => date.getTime() === movedStart.getTime())) starts.push(movedStart);
+  }
+  for (const workout of workouts) {
+    const weekStart = startOfWeek(parseDateOnly(workout.scheduled_date) ?? today);
+    if (!starts.some((date) => date.getTime() === weekStart.getTime())) starts.push(weekStart);
+  }
+  for (const rhythm of rhythms) {
+    const weekStart = startOfWeek(parseDateOnly(rhythm.week_start_date) ?? today);
+    if (!starts.some((date) => date.getTime() === weekStart.getTime())) starts.push(weekStart);
+  }
+  return starts;
+}
+
+function auditEligibleWorkouts(workouts: Record<string, any>[], today: Date) {
+  const todayISO = isoDate(today);
+  return workouts.filter((workout) => {
+    const scheduledDate = String(workout.scheduled_date ?? "");
+    if (!scheduledDate) return false;
+    if (scheduledDate < todayISO) {
+      return ["done", "checked_in", "adjusted"].includes(String(workout.status ?? ""));
+    }
+    return ["planned", "current", "checked_in", "adjusted", "done"].includes(String(workout.status ?? ""));
+  });
+}
+
+function canMutateWorkout(workout: Record<string, any>, today: Date) {
+  const scheduledDate = String(workout.scheduled_date ?? "");
+  if (!scheduledDate || scheduledDate < isoDate(today)) return false;
+  return !["done", "checked_in", "deleted", "superseded"].includes(String(workout.status ?? ""));
+}
+
+function compressedRecoveryRisk(workouts: Record<string, any>[]): EditRisk | null {
+  const profiled = workouts
+    .map((workout) => ({ workout, profile: trainingProfile(workout) }))
+    .filter((item) => item.profile.load !== "low" && !item.profile.dimensions.includes("recovery"));
+
+  for (let index = 0; index < profiled.length; index += 1) {
+    for (let otherIndex = index + 1; otherIndex < profiled.length; otherIndex += 1) {
+      const first = profiled[index];
+      const second = profiled[otherIndex];
+      const days = absoluteCalendarDaysBetween(parseDateOnly(first.workout.scheduled_date) ?? new Date(), parseDateOnly(second.workout.scheduled_date) ?? new Date());
+      const shared = first.profile.dimensions.filter((dimension) => second.profile.dimensions.includes(dimension) && dimension !== "recovery");
+      const highPair = first.profile.load === "high" && second.profile.load === "high";
+      const impactPair = first.profile.impact === "high" && second.profile.impact === "high";
+
+      if (shared.length > 0 && days <= (highPair ? 2 : 1)) {
+        return {
+          kind: "compressed_recovery",
+          severity: highPair ? "high" : "medium",
+          message: `This puts ${first.workout.title} and ${second.workout.title} too close for ${dimensionLabel(shared[0])} recovery.`,
+          affectedWorkoutIDs: [first.workout.id, second.workout.id],
+          dimensions: shared,
+        };
+      }
+
+      if (impactPair && days <= 1) {
+        return {
+          kind: "compressed_recovery",
+          severity: "high",
+          message: `This clusters two high-impact sessions within 24 hours.`,
+          affectedWorkoutIDs: [first.workout.id, second.workout.id],
+          dimensions: ["endurance"],
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function cumulativeLoadRisk(workouts: Record<string, any>[]): EditRisk | null {
+  const loaded = workouts
+    .map((workout) => ({ workout, profile: trainingProfile(workout), date: parseDateOnly(workout.scheduled_date) ?? new Date() }))
+    .filter((item) => item.profile.load !== "low" && !item.profile.dimensions.includes("recovery"));
+
+  for (const item of loaded) {
+    const clustered = loaded.filter((candidate) => {
+      const days = signedCalendarDaysBetween(item.date, candidate.date);
+      return days >= 0 && days <= 3;
+    });
+    const highCount = clustered.filter((candidate) => candidate.profile.load === "high").length;
+    if (clustered.length >= 3 && highCount >= 1) {
+      const dimensions = Array.from(new Set(clustered.flatMap((candidate) => candidate.profile.dimensions).filter((dimension) => dimension !== "recovery")));
+      return {
+        kind: "cumulative_load",
+        severity: highCount >= 2 ? "high" : "medium",
+        message: `This clusters ${clustered.length} meaningful sessions inside four days.`,
+        affectedWorkoutIDs: clustered.map((candidate) => candidate.workout.id),
+        dimensions: dimensions.length > 0 ? dimensions : ["endurance"],
+      };
+    }
+  }
+  return null;
+}
+
+function weeklyTargetCountRisk(
+  weekWorkouts: Record<string, any>[],
+  rhythm: Record<string, any> | undefined,
+  goalTargets: Record<string, any>[],
+  block: Record<string, any>,
+  weekStart: Date,
+): EditRisk | null {
+  const expected = expectedWeeklyDimensionCounts(rhythm, goalTargets, block);
+  if (Object.keys(expected).length === 0) return null;
+
+  const actual = actualWeeklyDimensionCounts(weekWorkouts);
+  const deficits = (Object.entries(expected) as Array<[TrainingDimension, number]>)
+    .filter(([, count]) => count > 0)
+    .map(([dimension, count]) => ({
+      dimension,
+      expected: count,
+      actual: actual[dimension] ?? 0,
+    }))
+    .filter((item) => item.actual < item.expected);
+
+  if (deficits.length === 0) return null;
+
+  const primary = deficits.sort((a, b) => (b.expected - b.actual) - (a.expected - a.actual))[0];
+  return {
+    kind: "weekly_imbalance",
+    severity: primary.actual === 0 ? "high" : "medium",
+    message: `This leaves the week at ${primary.actual}/${primary.expected} ${dimensionLabel(primary.dimension)} sessions.`,
+    affectedWorkoutIDs: weekWorkouts
+      .filter((workout) => trainingProfile(workout).dimensions.includes(primary.dimension))
+      .map((workout) => workout.id),
+    dimensions: [primary.dimension],
+    weekStartDate: isoDate(weekStart),
+    expectedCount: primary.expected,
+    actualCount: primary.actual,
+    missingCount: primary.expected - primary.actual,
+  };
+}
+
+function expectedWeeklyDimensionCounts(
+  rhythm: Record<string, any> | undefined,
+  goalTargets: Record<string, any>[],
+  block: Record<string, any>,
+): Partial<Record<TrainingDimension, number>> {
+  const expected: Partial<Record<TrainingDimension, number>> = {};
+  mergeExpectedCounts(expected, dimensionRequirementsFromText(rhythmIntentText(rhythm), true));
+  mergeExpectedCounts(expected, dimensionRequirementsFromText(blockIntentText(block), false));
+  mergeExpectedCounts(expected, dimensionRequirementsFromText(goalTargetIntentText(goalTargets), true));
+
+  return expected;
+}
+
+function mergeExpectedCounts(
+  target: Partial<Record<TrainingDimension, number>>,
+  source: Partial<Record<TrainingDimension, number>>,
+) {
+  for (const [dimension, count] of Object.entries(source) as Array<[TrainingDimension, number]>) {
+    target[dimension] = Math.max(target[dimension] ?? 0, count);
+  }
+}
+
+function dimensionRequirementsFromText(text: string, allowExplicitCounts: boolean): Partial<Record<TrainingDimension, number>> {
+  const lower = text.toLowerCase();
+  const expected: Partial<Record<TrainingDimension, number>> = {};
+  const strengthCount = allowExplicitCounts ? countBeforeTerms(lower, ["strength", "strengths", "lift", "lifts", "lifting", "gym", "boulder", "bouldering", "climb", "climbing"]) : 0;
+  const enduranceCount = allowExplicitCounts ? countBeforeTerms(lower, ["ride", "rides", "cycling", "run", "runs", "running", "swim", "swims", "swimming", "row", "rows", "hike", "hikes", "endurance", "cardio", "aerobic"]) : 0;
+  const recoveryCount = allowExplicitCounts ? countBeforeTerms(lower, ["recovery", "mobility", "yoga", "walk", "walks"]) : 0;
+
+  if (strengthCount || containsAny(lower, ["strength", "lift", "lifting", "gym", "boulder", "bouldering", "climb", "climbing"])) {
+    expected.neuromuscular = strengthCount || 1;
+  }
+  if (enduranceCount || containsAny(lower, ["ride", "cycling", "bike", "run", "swim", "row", "hike", "endurance", "cardio", "aerobic"])) {
+    expected.endurance = enduranceCount || 1;
+  }
+  if (recoveryCount || containsAny(lower, ["recovery", "mobility", "yoga", "easy walk"])) {
+    expected.recovery = recoveryCount || 1;
+  }
+
+  return expected;
+}
+
+function rhythmIntentText(rhythm: Record<string, any> | undefined) {
+  if (!rhythm) return "";
+  return [
+    rhythm.objective,
+    Array.isArray(rhythm.priority_order_json) ? rhythm.priority_order_json.join(" ") : "",
+    Array.isArray(rhythm.swap_rules_json) ? rhythm.swap_rules_json.join(" ") : "",
+  ].join(" ");
+}
+
+function blockIntentText(block: Record<string, any>) {
+  return [
+    block.title,
+    block.goal_text,
+    block.context_json ? JSON.stringify(block.context_json) : "",
+  ].join(" ");
+}
+
+function goalTargetIntentText(goalTargets: Record<string, any>[]) {
+  return goalTargets.map((target) => [
+    target.title,
+    target.description,
+    target.metric_key,
+    target.metric_category,
+    target.evaluation_rule_json ? JSON.stringify(target.evaluation_rule_json) : "",
+  ].join(" ")).join(" ");
+}
+
+function containsAny(text: string, terms: string[]) {
+  return terms.some((term) => text.includes(term));
+}
+
+function countBeforeTerms(text: string, terms: string[]) {
+  const numberWords: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+  let best = 0;
+
+  for (const term of terms) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const digitMatch = text.match(new RegExp(`(\\d+)\\s+${escaped}\\b`));
+    if (digitMatch) best = Math.max(best, Number(digitMatch[1]));
+
+    for (const [word, count] of Object.entries(numberWords)) {
+      if (new RegExp(`\\b${word}\\s+${escaped}\\b`).test(text)) {
+        best = Math.max(best, count);
+      }
+    }
+  }
+
+  return best;
+}
+
+function actualWeeklyDimensionCounts(workouts: Record<string, any>[]): Partial<Record<TrainingDimension, number>> {
+  const counts: Partial<Record<TrainingDimension, number>> = {};
+  for (const workout of workouts) {
+    const profile = trainingProfile(workout);
+    for (const dimension of profile.dimensions) {
+      counts[dimension] = (counts[dimension] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function goalDriftRisk(
+  weekWorkouts: Record<string, any>[],
+  rhythm: Record<string, any> | undefined,
+  editedWorkout: Record<string, any>,
+  edit: PlanEditInput,
+  weekStart: Date,
+): EditRisk | null {
+  const oldWeekStart = startOfWeek(parseDateOnly(editedWorkout.scheduled_date) ?? new Date());
+  const affectsOriginalWeek = oldWeekStart.getTime() === weekStart.getTime();
+  const movedOut = ((edit.type === "delete_workout" || edit.type === "replace_workout") && affectsOriginalWeek) ||
+    (edit.type === "move_workout" && oldWeekStart.getTime() === weekStart.getTime() && startOfWeek(parseDateOnly(edit.scheduled_date) ?? new Date()).getTime() !== weekStart.getTime());
+  if (!movedOut) return null;
+
+  const priorities = Array.isArray(rhythm?.priority_order_json) ? rhythm.priority_order_json.map((value: unknown) => String(value).toLowerCase()) : [];
+  const expectedCount = priorities.length || 0;
+  const activeCount = weekWorkouts.length;
+  const editedText = `${editedWorkout.title ?? ""} ${editedWorkout.purpose ?? ""}`.toLowerCase();
+  const wasPriority = priorities.some((priority: string) => editedText.includes(priority) || priority.includes(String(editedWorkout.title ?? "").toLowerCase()));
+  const wasKeySession = /key|anchor|quality|progress|long|target|priority/.test(editedText);
+
+  if ((expectedCount > 0 && activeCount < Math.max(2, Math.ceil(expectedCount * 0.75))) || wasPriority || wasKeySession) {
+    return {
+      kind: "goal_drift",
+      severity: wasPriority || activeCount < 2 ? "high" : "medium",
+      message: `This removes a planned ${editedWorkout.title} exposure from the week.`,
+      affectedWorkoutIDs: [editedWorkout.id],
+      dimensions: trainingProfile(editedWorkout).dimensions,
+    };
+  }
+  return null;
+}
+
+function weeklyImbalanceRisk(
+  weekWorkouts: Record<string, any>[],
+  editedWorkout: Record<string, any>,
+  edit: PlanEditInput,
+  weekStart: Date,
+): EditRisk | null {
+  const oldWeekStart = startOfWeek(parseDateOnly(editedWorkout.scheduled_date) ?? new Date());
+  const affectsOriginalWeek = oldWeekStart.getTime() === weekStart.getTime();
+  const movedOut = ((edit.type === "delete_workout" || edit.type === "replace_workout") && affectsOriginalWeek) ||
+    (edit.type === "move_workout" && oldWeekStart.getTime() === weekStart.getTime() && startOfWeek(parseDateOnly(edit.scheduled_date) ?? new Date()).getTime() !== weekStart.getTime());
+  if (!movedOut) return null;
+
+  const editedProfile = trainingProfile(editedWorkout);
+  const weekProfiles = weekWorkouts.map(trainingProfile);
+  const meaningfulLoadCount = weekProfiles.filter((profile) => profile.load !== "low" && !profile.dimensions.includes("recovery")).length;
+
+  for (const dimension of editedProfile.dimensions) {
+    const stillPresent = weekProfiles.some((profile) => profile.dimensions.includes(dimension));
+    if (stillPresent) continue;
+    if (dimension === "recovery" && meaningfulLoadCount < 2) continue;
+    if (dimension === "skill" && editedProfile.load === "low") continue;
+
+    return {
+      kind: "weekly_imbalance",
+      severity: dimension === "recovery" ? "medium" : "high",
+      message: `This leaves the week without ${dimensionLabel(dimension)} support.`,
+      affectedWorkoutIDs: [editedWorkout.id],
+      dimensions: [dimension],
+      weekStartDate: isoDate(weekStart),
+      expectedCount: 1,
+      actualCount: 0,
+      missingCount: 1,
+    };
+  }
+  return null;
+}
+
+function fallbackEditRepair(args: {
+  block: Record<string, any>;
+  workouts: Record<string, any>[];
+  rhythms: Record<string, any>[];
+  editedWorkout: Record<string, any>;
+  edit: PlanEditInput;
+  risks: EditRisk[];
+  today: Date;
+}): EditRepairPlan {
+  const { block, workouts, rhythms, editedWorkout, edit, risks, today } = args;
+  const mutations = buildRepairMutations(block, workouts, rhythms, editedWorkout, edit, risks, today);
+  const reason = risks[0]?.message || "This edit changes the balance of the week.";
+  const summary = mutations.length > 0
+    ? repairSummaryForMutation(mutations[0])
+    : "I recommend keeping the edit visible as a coach review item and watching the next plan refresh.";
+
+  return { reason, summary, risks, mutations };
+}
+
+function buildRepairMutations(
+  block: Record<string, any>,
+  workouts: Record<string, any>[],
+  rhythms: Record<string, any>[],
+  editedWorkout: Record<string, any>,
+  edit: PlanEditInput,
+  risks: EditRisk[],
+  today: Date,
+): Array<Record<string, unknown>> {
+  const mutations: Array<Record<string, unknown>> = [];
+  const oldWeekStart = startOfWeek(parseDateOnly(editedWorkout.scheduled_date) ?? new Date());
+  const createdSupport = new Set<string>();
+
+  for (const risk of risks.filter((item) => item.kind === "weekly_imbalance" && item.weekStartDate)) {
+    const weekStart = parseDateOnly(risk.weekStartDate) ?? oldWeekStart;
+    const rhythm = rhythms.find((item) => item.week_start_date === isoDate(weekStart));
+    const dimension = risk.dimensions[0] ?? trainingProfile(editedWorkout).dimensions[0] ?? "endurance";
+    const key = `${isoDate(weekStart)}:${dimension}`;
+    if (createdSupport.has(key)) continue;
+    createdSupport.add(key);
+
+    const mutableWeekWorkouts = workoutsForWeek(auditEligibleWorkouts(workouts, today), weekStart);
+    const neededCount = Math.max(1, Math.min(2, risk.missingCount ?? 1));
+    for (let index = 0; index < neededCount; index += 1) {
+      const openDate = findRepairDate(weekStart, mutableWeekWorkouts, today);
+      if (!openDate) break;
+
+      const mutation = createSupportWorkoutMutation({
+        block,
+        rhythm,
+        weekWorkouts: mutableWeekWorkouts,
+        openDate,
+        dimension,
+        sourceWorkout: editedWorkout,
+      });
+      mutations.push(mutation);
+      mutableWeekWorkouts.push({
+        id: `repair-${key}-${index}`,
+        ...(mutation.fields as Record<string, unknown>),
+      });
+    }
+  }
+
+  const affectedIDs = new Set(risks.flatMap((risk) => risk.affectedWorkoutIDs));
+  const candidate = workouts.find((workout) => affectedIDs.has(workout.id) && workout.id !== editedWorkout.id && canMutateWorkout(workout, today)) ??
+    workouts.find((workout) => affectedIDs.has(workout.id) && canMutateWorkout(workout, today));
+  if (!candidate) return mutations.slice(0, 3);
+
+  const weekStart = startOfWeek(parseDateOnly(candidate.scheduled_date) ?? oldWeekStart);
+  const weekWorkouts = workoutsForWeek(auditEligibleWorkouts(workouts, today), weekStart);
+  const openDate = findRepairDate(weekStart, weekWorkouts, today);
+  if (openDate) {
+    if (!mutations.some((mutation) => mutation.type === "update_workout" && mutation.workout_id === candidate.id)) {
+      mutations.push({
+        type: "update_workout",
+        workout_id: candidate.id,
+        fields: {
+          scheduled_date: openDate,
+          sequence_order: nextSequenceOrderForDate(weekWorkouts, openDate),
+          source: "replanned",
+        },
+      });
+    }
+    return mutations.slice(0, 3);
+  }
+
+  if (!mutations.some((mutation) => mutation.type === "update_workout" && mutation.workout_id === candidate.id)) {
+    mutations.push({
+      type: "update_workout",
+      workout_id: candidate.id,
+      fields: {
+        duration_minutes: Math.max(20, Math.round((candidate.duration_minutes ?? 30) * 0.75)),
+        intensity_label: "Low",
+        purpose: candidate.purpose || "Reduce load while preserving the weekly rhythm",
+        source: "replanned",
+        prescription_json: {
+          ...(candidate.prescription_json ?? {}),
+          adjustment: "Lower dose to reduce clustered weekly load after a plan edit.",
+        },
+      },
+    });
+  }
+
+  return mutations.slice(0, 3);
+}
+
+function createSupportWorkoutMutation(args: {
+  block: Record<string, any>;
+  rhythm: Record<string, any> | undefined;
+  weekWorkouts: Record<string, any>[];
+  openDate: string;
+  dimension: TrainingDimension;
+  sourceWorkout: Record<string, any>;
+}) {
+  const { block, rhythm, weekWorkouts, openDate, dimension, sourceWorkout } = args;
+  const activityType = supportActivityType(dimension, sourceWorkout);
+  const title = supportTitle(dimension, sourceWorkout);
+  const duration = dimension === "recovery" ? 25 : Math.max(30, Math.min(60, sourceWorkout.duration_minutes ?? 45));
+  const intensity = dimension === "recovery" ? "Low" : "Moderate";
+
+  return {
+    type: "create_workout",
+    fields: {
+      active_block_id: block.id,
+      weekly_rhythm_id: rhythm?.id ?? sourceWorkout.weekly_rhythm_id ?? null,
+      scheduled_date: openDate,
+      sequence_order: nextSequenceOrderForDate(weekWorkouts, openDate),
+      activity_type: activityType,
+      title,
+      duration_minutes: duration,
+      intensity_label: intensity,
+      purpose: dimension === "recovery" ? "Restore recovery support after the edit" : `Restore ${dimensionLabel(dimension)} exposure for the week`,
+      status: "planned",
+      source: "replanned",
+      fueling_summary: fuelingSummary(activityType, intensity),
+      prescription_json: fallbackPrescription(title, activityType, intensity),
+    },
+  };
+}
+
+function supportActivityType(dimension: TrainingDimension, sourceWorkout: Record<string, any>) {
+  if (dimension === "neuromuscular") return "strength";
+  if (dimension === "endurance") {
+    const source = normalizeActivity(`${sourceWorkout.activity_type ?? ""} ${sourceWorkout.title ?? ""}`);
+    return ["ride", "run", "swim", "row", "hike"].includes(source) ? source : "ride";
+  }
+  if (dimension === "recovery") return "mobility";
+  return normalizeActivity(`${sourceWorkout.activity_type ?? ""} ${sourceWorkout.title ?? ""}`) || "mobility";
+}
+
+function supportTitle(dimension: TrainingDimension, sourceWorkout: Record<string, any>) {
+  if (dimension === "neuromuscular") return "Strength support";
+  if (dimension === "endurance") return "Endurance support";
+  if (dimension === "recovery") return "Recovery support";
+  return sourceWorkout.title ? `${sourceWorkout.title} support` : "Skill support";
+}
+
+async function runEditRepairDraft(context: Record<string, unknown>, model: string): Promise<PlanEditRepairDraft> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are HAYF's plan-edit coach. Explain why a user's already-applied plan edit may affect recovery, load balance, or training targets. Be matter-of-fact, specific, and concise. Do not shame the user. Return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "draft_plan_edit_repair",
+            context,
+            rules:
+              "Return one reason sentence and one summary sentence for the proposed repair. The user edit has already been applied; frame the repair as a recommendation, not a command.",
+          }),
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "plan_edit_repair",
+          strict: true,
+          schema: editRepairSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  const outputText = extractOutputText(payload);
+  if (!outputText) throw new Error("OpenAI returned no plan-edit repair output");
+  return JSON.parse(outputText) as PlanEditRepairDraft;
 }
 
 async function recommendWorkoutReplacements(
@@ -936,6 +1692,7 @@ async function replaceWorkout(
   admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
+  model: string,
 ) {
   const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
   const candidate = requestBody.replacementCandidate ?? requestBody.replacement_candidate;
@@ -1002,8 +1759,59 @@ async function replaceWorkout(
     },
   });
 
+  const edit: PlanEditInput = {
+    type: "replace_workout",
+    planned_workout_id: workout.id,
+    replacement_workout_id: replacement.id,
+    scheduled_date: replacement.scheduled_date,
+  };
+  const repair = await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+  const proposal = repair
+    ? await createReplanProposal(admin, {
+      userID,
+      activeBlockID: block.id,
+      triggerEventID: event.id,
+      reason: repair.reason,
+      mutations: repair.mutations,
+      metadata: {
+        type: "plan_edit_repair",
+        summary: repair.summary,
+        risks: repair.risks.map((risk) => ({
+          kind: risk.kind,
+          severity: risk.severity,
+          dimensions: risk.dimensions,
+          affectedWorkoutIDs: risk.affectedWorkoutIDs,
+        })),
+      },
+    })
+    : null;
+  if (!proposal) {
+    await expirePendingReplanProposals(admin, userID, block.id);
+  }
   await markCurrentWorkout(admin, userID, block.id, new Date());
-  return { userID, eventID: event.id, originalWorkoutID: workout.id, replacementWorkout: replacement };
+  return {
+    userID,
+    eventID: event.id,
+    originalWorkoutID: workout.id,
+    replacementWorkout: replacement,
+    proposalID: proposal?.id ?? null,
+    reason: repair?.reason ?? null,
+    summary: repair?.summary ?? null,
+    risks: repair?.risks ?? [],
+    mutationCount: repair?.mutations.length ?? 0,
+    proposal: proposal
+      ? {
+        id: proposal.id,
+        active_block_id: proposal.active_block_id,
+        trigger_event_id: proposal.trigger_event_id,
+        reason: proposal.reason,
+        proposed_mutations_json: proposal.proposed_mutations_json,
+        status: proposal.status,
+        created_at: proposal.created_at,
+        updated_at: proposal.updated_at,
+      }
+      : null,
+  };
 }
 
 async function applyReplanProposal(
@@ -1040,6 +1848,8 @@ async function applyReplanProposal(
       .update({ status: requestBody.decision })
       .eq("id", proposal.id),
   );
+
+  await expirePendingReplanProposals(admin, userID, proposal.active_block_id, proposal.id);
 
   const event = await createPlanEvent(admin, {
     userID,
@@ -2333,6 +3143,8 @@ async function createReplanProposal(
     metadata?: Record<string, unknown>;
   },
 ) {
+  await expirePendingReplanProposals(admin, args.userID, args.activeBlockID ?? null);
+
   const proposal = await single(
     admin
       .from("replan_proposals")
@@ -2357,6 +3169,28 @@ async function createReplanProposal(
   });
 
   return proposal;
+}
+
+async function expirePendingReplanProposals(
+  admin: SupabaseAdminClient,
+  userID: string,
+  activeBlockID?: string | null,
+  excludeProposalID?: string | null,
+) {
+  if (!activeBlockID) return;
+
+  let query = admin
+    .from("replan_proposals")
+    .update({ status: "expired" })
+    .eq("user_id", userID)
+    .eq("active_block_id", activeBlockID)
+    .eq("status", "pending");
+
+  if (excludeProposalID) {
+    query = query.neq("id", excludeProposalID);
+  }
+
+  await throwOnError(query);
 }
 
 async function applyProposalMutations(admin: SupabaseAdminClient, userID: string, proposal: Record<string, any>) {
@@ -2563,13 +3397,155 @@ function durationScore(actual: number, planned: number) {
   return 0;
 }
 
+function trainingProfile(workout: Record<string, any>): TrainingProfile {
+  const text = `${workout.activity_type ?? ""} ${workout.title ?? ""} ${workout.purpose ?? ""} ${workout.intensity_label ?? ""}`.toLowerCase();
+  const normalizedActivity = normalizeActivity(text);
+  const dimensions = new Set<TrainingDimension>();
+
+  if (/strength|lift|lifting|gym|barbell|dumbbell|kettlebell|hiit|crossfit|boulder|climb/.test(text)) {
+    dimensions.add("neuromuscular");
+  }
+  if (/run|ride|bike|cycle|cycling|swim|row|hike|endurance|aerobic|cardio|zone 2|long/.test(text)) {
+    dimensions.add("endurance");
+  }
+  if (/mobility|yoga|pilates|stretch|recover|recovery|easy walk|walk|preparation/.test(text)) {
+    dimensions.add("recovery");
+  }
+  if (/boulder|climb|skill|technique|drill|practice|movement quality|yoga/.test(text)) {
+    dimensions.add("skill");
+  }
+  if (dimensions.size === 0) {
+    dimensions.add((workout.duration_minutes ?? 0) >= 45 ? "endurance" : "neuromuscular");
+  }
+
+  return {
+    normalizedActivity,
+    dimensions: Array.from(dimensions),
+    load: trainingLoad(workout, text, dimensions),
+    impact: trainingImpact(text),
+  };
+}
+
+function trainingLoad(workout: Record<string, any>, text: string, dimensions: Set<TrainingDimension>): TrainingLoad {
+  const duration = Number(workout.duration_minutes ?? 0);
+  if (/recovery|mobility|stretch|easy|low|restorative/.test(text) && !/long|quality|hard|heavy|interval|threshold/.test(text)) {
+    return "low";
+  }
+  if (/hard|high|heavy|quality|interval|threshold|tempo|vo2|race|max|test|progression/.test(text)) {
+    return "high";
+  }
+  if (dimensions.has("endurance") && duration >= 75) return "high";
+  if (dimensions.has("neuromuscular") && duration >= 60) return "high";
+  if (/moderate|zone 2|steady|strength|boulder|climb|swim|ride|run/.test(text) || duration >= 30) return "moderate";
+  return "low";
+}
+
+function trainingImpact(text: string): TrainingImpact {
+  if (/run|plyo|jump|sprint|court|field|hiit/.test(text)) return "high";
+  if (/boulder|climb|hike|strength|lift|gym|crossfit/.test(text)) return "medium";
+  return "low";
+}
+
+function dimensionLabel(dimension: TrainingDimension) {
+  switch (dimension) {
+    case "neuromuscular":
+      return "strength and neuromuscular";
+    case "endurance":
+      return "endurance";
+    case "recovery":
+      return "recovery";
+    case "skill":
+      return "skill";
+  }
+}
+
+function workoutsForWeek(workouts: Record<string, any>[], weekStart: Date) {
+  return workouts.filter((workout) => startOfWeek(parseDateOnly(workout.scheduled_date) ?? new Date()).getTime() === weekStart.getTime());
+}
+
+function findRepairDate(weekStart: Date, weekWorkouts: Record<string, any>[], today: Date = weekStart) {
+  const minDate = isoDate(today);
+  const occupied = new Set(weekWorkouts.map((workout) => workout.scheduled_date));
+  const highLoadDates = new Set(
+    weekWorkouts
+      .filter((workout) => trainingProfile(workout).load === "high")
+      .map((workout) => workout.scheduled_date),
+  );
+
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = isoDate(addDays(weekStart, offset));
+    if (date < minDate) continue;
+    if (occupied.has(date)) continue;
+    const adjacentHigh = [-1, 1].some((delta) => highLoadDates.has(isoDate(addDays(weekStart, offset + delta))));
+    if (!adjacentHigh) return date;
+  }
+
+  for (let offset = 0; offset < 7; offset += 1) {
+    const date = isoDate(addDays(weekStart, offset));
+    if (date < minDate) continue;
+    if (!occupied.has(date)) return date;
+  }
+
+  const candidateDates = Array.from({ length: 7 }, (_, offset) => isoDate(addDays(weekStart, offset)))
+    .filter((date) => date >= minDate)
+    .sort((a, b) => workoutsOnDate(weekWorkouts, a) - workoutsOnDate(weekWorkouts, b));
+  const lowerLoadDate = candidateDates.find((date) => {
+    const adjacentHigh = [-1, 1].some((delta) => highLoadDates.has(isoDate(addDays(parseDateOnly(date) ?? weekStart, delta))));
+    return !adjacentHigh;
+  });
+  if (lowerLoadDate) return lowerLoadDate;
+
+  if (candidateDates.length > 0) return candidateDates[0];
+  return null;
+}
+
+function workoutsOnDate(workouts: Record<string, any>[], date: string) {
+  return workouts.filter((workout) => workout.scheduled_date === date).length;
+}
+
+function nextSequenceOrderForDate(workouts: Record<string, any>[], date: string) {
+  const sameDay = workouts.filter((workout) => workout.scheduled_date === date);
+  return sameDay.reduce((max, workout) => Math.max(max, Number(workout.sequence_order ?? 0)), 0) + 1;
+}
+
+function repairSummaryForMutation(mutation: Record<string, unknown>) {
+  if (mutation.type === "create_workout") {
+    const fields = mutation.fields as Record<string, unknown> | undefined;
+    return `I recommend adding ${fields?.title ?? "a lower-dose support session"} so the week still supports the block.`;
+  }
+  if (mutation.type === "update_workout") {
+    const fields = mutation.fields as Record<string, unknown> | undefined;
+    if (fields?.scheduled_date) return `I recommend moving one surrounding session to ${fields.scheduled_date} to restore spacing.`;
+    return "I recommend lowering one surrounding session so the week stays recoverable.";
+  }
+  return "I recommend a small repair so the edit does not pull the week away from the block.";
+}
+
+function compactWorkoutForRepair(workout: Record<string, any>) {
+  return {
+    id: workout.id,
+    date: workout.scheduled_date,
+    title: workout.title,
+    activityType: workout.activity_type,
+    durationMinutes: workout.duration_minutes,
+    intensity: workout.intensity_label,
+    purpose: workout.purpose,
+    status: workout.status,
+    profile: trainingProfile(workout),
+  };
+}
+
 function normalizeActivity(value: string) {
   const lower = value.toLowerCase();
   if (lower.includes("cycle") || lower.includes("bike") || lower.includes("ride")) return "ride";
   if (lower.includes("run")) return "run";
+  if (lower.includes("swim")) return "swim";
+  if (lower.includes("row")) return "row";
+  if (lower.includes("hike")) return "hike";
   if (lower.includes("walk")) return "walk";
-  if (lower.includes("strength") || lower.includes("traditional")) return "strength";
-  if (lower.includes("mobility") || lower.includes("yoga")) return "mobility";
+  if (lower.includes("climb") || lower.includes("boulder")) return "climb";
+  if (lower.includes("strength") || lower.includes("traditional") || lower.includes("lift")) return "strength";
+  if (lower.includes("mobility") || lower.includes("yoga") || lower.includes("stretch")) return "mobility";
   if (lower.includes("recover")) return "recovery";
   return lower.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "workout";
 }
@@ -2641,6 +3617,16 @@ function daysBetween(start: Date, end: Date) {
   return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000));
 }
 
+function signedCalendarDaysBetween(start: Date, end: Date) {
+  const startDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const endDate = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+  return Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000);
+}
+
+function absoluteCalendarDaysBetween(start: Date, end: Date) {
+  return Math.abs(signedCalendarDaysBetween(start, end));
+}
+
 function parseDateOnly(value: string | null | undefined) {
   if (!value) return null;
   const parsed = new Date(value);
@@ -2649,6 +3635,23 @@ function parseDateOnly(value: string | null | undefined) {
 
 function isoDate(date: Date) {
   return date.toISOString().slice(0, 10);
+}
+
+function todayInTimezone(timezone: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    return parseDateOnly(year && month && day ? `${year}-${month}-${day}` : null) ?? new Date();
+  } catch {
+    return new Date();
+  }
 }
 
 function titleCase(value: string) {

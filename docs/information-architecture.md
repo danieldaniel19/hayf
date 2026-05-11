@@ -31,7 +31,7 @@ Plan owns:
 - direct workout planning actions, such as moving or deleting planned workouts
 - repair proposals and plan refresh states
 
-The Plan screen may scroll. The first glance should prioritize the active block, training targets, and current week context. The two-week schedule should always render all seven days of each week, even when a day has no workout, so users can move workouts into empty day slots.
+The Plan screen may scroll. The first glance should prioritize the active block, training targets, and current week context. The two-week schedule should always render all seven days of each week, even when a day has no workout, so users can choose explicit move targets for planned workouts.
 
 Planned workouts in the past should be reconciled after HealthKit sync. If the latest sync window happened after the workout date and there is no matching actual workout evidence, the planned workout should become `missed`. When missed workouts materially change the visible plan, HAYF should refresh the rest of the two-week window instead of leaving stale recommendations in place.
 
