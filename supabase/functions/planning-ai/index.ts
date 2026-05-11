@@ -8,7 +8,10 @@ type PlanningTask =
   | "refresh_plan_window"
   | "record_plan_edit"
   | "recommend_workout_replacements"
+  | "recommend_workout_additions"
+  | "interpret_workout_description"
   | "replace_workout"
+  | "add_workout"
   | "apply_replan_proposal"
   | "check_in_to_workout"
   | "scheduled_refresh_due_windows";
@@ -27,8 +30,14 @@ type PlanningAIRequest = {
   decision?: "accepted" | "rejected";
   plannedWorkoutID?: string;
   planned_workout_id?: string;
+  scheduledDate?: string;
+  scheduled_date?: string;
+  sequenceOrder?: number;
+  sequence_order?: number;
   replacementCandidate?: ReplacementCandidateInput;
   replacement_candidate?: ReplacementCandidateInput;
+  workoutCandidate?: WorkoutCandidateInput;
+  workout_candidate?: WorkoutCandidateInput;
   mood?: { energy?: number; mood?: number };
   textContext?: string;
   currentDerivedSnapshot?: Record<string, unknown> | null;
@@ -60,6 +69,11 @@ type PlanEditInput =
       type: "replace_workout";
       planned_workout_id: string;
       replacement_workout_id: string;
+      scheduled_date: string;
+    }
+  | {
+      type: "add_workout";
+      added_workout_id: string;
       scheduled_date: string;
     };
 
@@ -109,7 +123,7 @@ type GeneratedWorkout = {
   fuelingSummary: string;
 };
 
-type ReplacementCandidateInput = {
+type WorkoutCandidateInput = {
   title: string;
   activityType: string;
   durationMinutes: number;
@@ -121,11 +135,15 @@ type ReplacementCandidateInput = {
   weeklyImpact?: string;
 };
 
-type ReplacementCandidate = ReplacementCandidateInput & {
+type ReplacementCandidateInput = WorkoutCandidateInput;
+
+type WorkoutCandidate = WorkoutCandidateInput & {
   id: string;
   rationale: string;
   weeklyImpact: string;
 };
+
+type ReplacementCandidate = WorkoutCandidate;
 
 type TrainingDimension = "neuromuscular" | "endurance" | "recovery" | "skill";
 type TrainingLoad = "low" | "moderate" | "high";
@@ -349,6 +367,50 @@ const replacementSchema: Record<string, unknown> = {
   },
 };
 
+const workoutCandidateSchema: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["candidate"],
+  properties: {
+    candidate: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "title",
+        "activityType",
+        "durationMinutes",
+        "intensityLabel",
+        "purpose",
+        "prescription",
+        "fuelingSummary",
+        "rationale",
+        "weeklyImpact",
+      ],
+      properties: {
+        title: { type: "string" },
+        activityType: { type: "string" },
+        durationMinutes: { type: "integer" },
+        intensityLabel: { type: "string" },
+        purpose: { type: "string" },
+        prescription: {
+          type: "object",
+          additionalProperties: false,
+          required: ["warmup", "main", "cooldown", "successCriteria"],
+          properties: {
+            warmup: { type: "string" },
+            main: { type: "string" },
+            cooldown: { type: "string" },
+            successCriteria: { type: "string" },
+          },
+        },
+        fuelingSummary: { type: "string" },
+        rationale: { type: "string" },
+        weeklyImpact: { type: "string" },
+      },
+    },
+  },
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -393,6 +455,9 @@ Deno.serve(async (req) => {
       model,
       startedAt,
     });
+    if (!output) {
+      throw new Error(`Planning task returned no output: ${requestBody.task}`);
+    }
 
     await insertTrace(admin, {
       userID: userID ?? output.userID ?? null,
@@ -443,14 +508,22 @@ async function handleTask(args: {
       return recordPlanEdit(admin, userID!, requestBody, model);
     case "recommend_workout_replacements":
       return recommendWorkoutReplacements(admin, userID!, requestBody, model);
+    case "recommend_workout_additions":
+      return recommendWorkoutAdditions(admin, userID!, requestBody, model);
+    case "interpret_workout_description":
+      return interpretWorkoutDescription(admin, userID!, requestBody, model);
     case "replace_workout":
       return replaceWorkout(admin, userID!, requestBody, model);
+    case "add_workout":
+      return addWorkout(admin, userID!, requestBody, model);
     case "apply_replan_proposal":
       return applyReplanProposal(admin, userID!, requestBody);
     case "check_in_to_workout":
       return checkInToWorkout(admin, userID!, requestBody);
     case "scheduled_refresh_due_windows":
       return scheduledRefreshDueWindows(admin, model);
+    default:
+      throw new Error(`Unsupported planning AI task: ${requestBody.task}`);
   }
 }
 
@@ -835,6 +908,9 @@ async function recordPlanEdit(
 
   const block = await loadActiveBlock(admin, userID);
   const edit = requestBody.edit;
+  if (edit.type !== "move_workout" && edit.type !== "delete_workout") {
+    throw new Error("record_plan_edit only supports move and delete edits");
+  }
   const workout = await single(
     admin
       .from("planned_workouts")
@@ -941,7 +1017,7 @@ async function buildPlanEditRepair(
   timezone: string,
 ): Promise<EditRepairPlan | null> {
   const affectedDates = [editedWorkout.scheduled_date];
-  if (edit.type === "move_workout" || edit.type === "replace_workout") affectedDates.push(edit.scheduled_date);
+  if (edit.type === "move_workout" || edit.type === "replace_workout" || edit.type === "add_workout") affectedDates.push(edit.scheduled_date);
   const parsedDates = affectedDates.map((date) => parseDateOnly(date)).filter(Boolean) as Date[];
   const today = todayInTimezone(timezone);
   const currentWeekStart = startOfWeek(today);
@@ -1100,7 +1176,7 @@ function auditedWeekStarts(
   today: Date,
 ) {
   const starts = [startOfWeek(today), startOfWeek(addDays(today, 7)), startOfWeek(parseDateOnly(editedWorkout.scheduled_date) ?? today)];
-  if (edit.type === "move_workout") {
+  if (edit.type === "move_workout" || edit.type === "add_workout") {
     const movedStart = startOfWeek(parseDateOnly(edit.scheduled_date) ?? today);
     if (!starts.some((date) => date.getTime() === movedStart.getTime())) starts.push(movedStart);
   }
@@ -1688,6 +1764,126 @@ async function recommendWorkoutReplacements(
   };
 }
 
+async function recommendWorkoutAdditions(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const scheduledDate = requestBody.scheduledDate ?? requestBody.scheduled_date;
+  if (!scheduledDate) {
+    throw new Error("recommend_workout_additions requires scheduledDate");
+  }
+
+  const block = await loadActiveBlock(admin, userID);
+  throwIfPastPlanningDate(scheduledDate, block.timezone || "UTC");
+  const context = await loadWorkoutPlanningContext(admin, userID, block, scheduledDate);
+
+  let candidates: WorkoutCandidate[];
+  let usedFallback = false;
+  try {
+    candidates = sanitizeWorkoutCandidates(
+      await runWorkoutAdditionGeneration(
+        {
+          ...context,
+          userIntent: requestBody.textContext || "I feel like working out on this day, but I want HAYF to pick something that fits the plan.",
+        },
+        model,
+      ),
+      fallbackAdditionCandidates(context),
+    );
+  } catch (error) {
+    usedFallback = true;
+    candidates = fallbackAdditionCandidates(context);
+    await insertTrace(admin, {
+      userID,
+      task: "recommend_workout_additions",
+      model,
+      compactRequest: { task: "recommend_workout_additions", context },
+      structuredResponse: null,
+      status: "failure",
+      latencyMS: 0,
+      errorMessage: errorMessage(error),
+    });
+  }
+
+  return {
+    userID,
+    model: usedFallback ? "deterministic-fallback" : model,
+    scheduledDate,
+    candidates,
+  };
+}
+
+async function interpretWorkoutDescription(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const textContext = requestBody.textContext?.trim();
+  if (!textContext) {
+    throw new Error("Describe the workout you want to add.");
+  }
+  if (!looksLikeWorkoutDescription(textContext)) {
+    throw new Error("Describe a workout with a sport or modality, plus useful size or effort detail.");
+  }
+
+  const block = await loadActiveBlock(admin, userID);
+  const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
+  const scheduledDate = requestBody.scheduledDate ?? requestBody.scheduled_date;
+  let workout: Record<string, any> | null = null;
+  let contextDate = scheduledDate;
+
+  if (plannedWorkoutID) {
+    const loadedWorkout = await loadPlannedWorkout(admin, userID, block.id, plannedWorkoutID);
+    workout = loadedWorkout;
+    contextDate = loadedWorkout.scheduled_date;
+  }
+  if (!contextDate) {
+    throw new Error("interpret_workout_description requires plannedWorkoutID or scheduledDate");
+  }
+
+  throwIfPastPlanningDate(contextDate, block.timezone || "UTC");
+  const planningContext = await loadWorkoutPlanningContext(admin, userID, block, contextDate);
+  const context = {
+    ...planningContext,
+    workoutToReplace: workout,
+    userIntent: textContext,
+  };
+
+  let candidate: WorkoutCandidate;
+  let usedFallback = false;
+  try {
+    candidate = sanitizeWorkoutCandidate(
+      (await runWorkoutDescriptionInterpretation(context, model)).candidate,
+      fallbackManualWorkoutCandidate(textContext, workout ?? undefined, contextDate),
+      "candidate-1",
+    );
+  } catch (error) {
+    usedFallback = true;
+    candidate = fallbackManualWorkoutCandidate(textContext, workout ?? undefined, contextDate);
+    await insertTrace(admin, {
+      userID,
+      task: "interpret_workout_description",
+      model,
+      compactRequest: { task: "interpret_workout_description", context },
+      structuredResponse: null,
+      status: "failure",
+      latencyMS: 0,
+      errorMessage: errorMessage(error),
+    });
+  }
+
+  return {
+    userID,
+    model: usedFallback ? "deterministic-fallback" : model,
+    scheduledDate: contextDate,
+    workoutID: plannedWorkoutID ?? null,
+    candidate,
+  };
+}
+
 async function replaceWorkout(
   admin: SupabaseAdminClient,
   userID: string,
@@ -1794,6 +1990,122 @@ async function replaceWorkout(
     eventID: event.id,
     originalWorkoutID: workout.id,
     replacementWorkout: replacement,
+    proposalID: proposal?.id ?? null,
+    reason: repair?.reason ?? null,
+    summary: repair?.summary ?? null,
+    risks: repair?.risks ?? [],
+    mutationCount: repair?.mutations.length ?? 0,
+    proposal: proposal
+      ? {
+        id: proposal.id,
+        active_block_id: proposal.active_block_id,
+        trigger_event_id: proposal.trigger_event_id,
+        reason: proposal.reason,
+        proposed_mutations_json: proposal.proposed_mutations_json,
+        status: proposal.status,
+        created_at: proposal.created_at,
+        updated_at: proposal.updated_at,
+      }
+      : null,
+  };
+}
+
+async function addWorkout(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const scheduledDate = requestBody.scheduledDate ?? requestBody.scheduled_date;
+  const rawCandidate = requestBody.workoutCandidate ?? requestBody.workout_candidate ?? requestBody.replacementCandidate ?? requestBody.replacement_candidate;
+  if (!scheduledDate || !rawCandidate) {
+    throw new Error("add_workout requires scheduledDate and workoutCandidate");
+  }
+
+  const block = await loadActiveBlock(admin, userID);
+  throwIfPastPlanningDate(scheduledDate, block.timezone || "UTC");
+  const context = await loadWorkoutPlanningContext(admin, userID, block, scheduledDate);
+  const candidate = sanitizeWorkoutCandidate(rawCandidate, fallbackAdditionCandidates(context)[0], "candidate-1");
+  const sequenceOrder = requestBody.sequenceOrder ?? requestBody.sequence_order ??
+    nextSequenceOrderForDate(context.surroundingWorkouts, scheduledDate);
+
+  const addedWorkout = await single(
+    admin
+      .from("planned_workouts")
+      .insert({
+        active_block_id: block.id,
+        weekly_rhythm_id: context.weeklyRhythm?.id ?? null,
+        user_id: userID,
+        scheduled_date: scheduledDate,
+        sequence_order: sequenceOrder,
+        activity_type: normalizeActivity(candidate.activityType),
+        title: candidate.title,
+        duration_minutes: Math.max(10, candidate.durationMinutes || 30),
+        intensity_label: candidate.intensityLabel || "Moderate",
+        purpose: candidate.purpose || "User-added workout",
+        status: "planned",
+        source: "user_added",
+        prescription_json: {
+          ...(candidate.prescription ?? {}),
+          addedFrom: "plan_day_add",
+          rationale: candidate.rationale ?? null,
+          weeklyImpact: candidate.weeklyImpact ?? null,
+        },
+        fueling_summary: candidate.fuelingSummary || fuelingSummary(candidate.activityType, candidate.intensityLabel),
+        version: 1,
+      })
+      .select()
+      .single(),
+    "Could not insert added workout",
+  );
+
+  const event = await createPlanEvent(admin, {
+    userID,
+    activeBlockID: block.id,
+    plannedWorkoutID: addedWorkout.id,
+    eventType: "workout_added",
+    payload: {
+      action: "workout_added",
+      addedWorkoutID: addedWorkout.id,
+      scheduledDate,
+      candidate,
+    },
+  });
+
+  const edit: PlanEditInput = {
+    type: "add_workout",
+    added_workout_id: addedWorkout.id,
+    scheduled_date: addedWorkout.scheduled_date,
+  };
+  const repair = await buildPlanEditRepair(admin, userID, block, addedWorkout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+  const proposal = repair
+    ? await createReplanProposal(admin, {
+      userID,
+      activeBlockID: block.id,
+      triggerEventID: event.id,
+      reason: repair.reason,
+      mutations: repair.mutations,
+      metadata: {
+        type: "plan_edit_repair",
+        summary: repair.summary,
+        risks: repair.risks.map((risk) => ({
+          kind: risk.kind,
+          severity: risk.severity,
+          dimensions: risk.dimensions,
+          affectedWorkoutIDs: risk.affectedWorkoutIDs,
+        })),
+      },
+    })
+    : null;
+  if (!proposal) {
+    await expirePendingReplanProposals(admin, userID, block.id);
+  }
+  await markCurrentWorkout(admin, userID, block.id, new Date());
+
+  return {
+    userID,
+    eventID: event.id,
+    addedWorkout,
     proposalID: proposal?.id ?? null,
     reason: repair?.reason ?? null,
     summary: repair?.summary ?? null,
@@ -2072,25 +2384,151 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
   return JSON.parse(outputText) as { candidates: ReplacementCandidateInput[] };
 }
 
+async function runWorkoutAdditionGeneration(context: Record<string, unknown>, model: string): Promise<{ candidates: WorkoutCandidateInput[] }> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are HAYF's fitness planning engine. Recommend workouts a user can add to a selected day. Preserve the active block intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "recommend_workout_additions",
+            context,
+            rules:
+              "Return 2-3 useful options for the selected date. Prefer the option that best fits the week without forcing broader changes. Include the weekly impact in plain language. Do not move or delete other workouts directly.",
+          }),
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "workout_addition_candidates",
+          strict: true,
+          schema: replacementSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  }
+
+  const outputText = extractOutputText(payload);
+  if (!outputText) {
+    throw new Error("OpenAI returned no addition output");
+  }
+
+  return JSON.parse(outputText) as { candidates: WorkoutCandidateInput[] };
+}
+
+async function runWorkoutDescriptionInterpretation(context: Record<string, unknown>, model: string): Promise<{ candidate: WorkoutCandidateInput }> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are HAYF's fitness planning engine. Interpret a user's natural-language workout description into one workout candidate that can be inserted into a plan. Preserve concrete details like distance, elevation, duration, intensity, and modality. Return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "interpret_workout_description",
+            context,
+            rules:
+              "Return one candidate. If the description is sparse but clearly a workout, make a conservative candidate and explain what assumption you made in the rationale. If it replaces a planned workout, describe weekly impact relative to the original slot. If it adds to a day, describe likely load/recovery impact.",
+          }),
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "workout_candidate",
+          strict: true,
+          schema: workoutCandidateSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  }
+
+  const outputText = extractOutputText(payload);
+  if (!outputText) {
+    throw new Error("OpenAI returned no interpreted workout");
+  }
+
+  return JSON.parse(outputText) as { candidate: WorkoutCandidateInput };
+}
+
 function sanitizeReplacementCandidates(
   generated: { candidates?: ReplacementCandidateInput[] },
   workout: Record<string, any>,
 ): ReplacementCandidate[] {
   const candidates = Array.isArray(generated.candidates) ? generated.candidates : [];
-  const sanitized = candidates.slice(0, 3).map((candidate, index) => ({
-    id: `candidate-${index + 1}`,
-    title: candidate.title?.trim() || fallbackReplacementTitle(workout, index),
-    activityType: normalizeActivity(candidate.activityType || workout.activity_type || "training"),
-    durationMinutes: Math.max(10, candidate.durationMinutes || workout.duration_minutes || 30),
-    intensityLabel: candidate.intensityLabel?.trim() || "Moderate",
-    purpose: candidate.purpose?.trim() || workout.purpose || "Preserve the plan intent with less friction",
-    prescription: candidate.prescription ?? fallbackPrescription(candidate.title || workout.title, candidate.activityType || workout.activity_type, candidate.intensityLabel || workout.intensity_label),
-    fuelingSummary: candidate.fuelingSummary?.trim() || fuelingSummary(candidate.activityType || workout.activity_type, candidate.intensityLabel || workout.intensity_label),
-    rationale: candidate.rationale?.trim() || "This keeps the training intent while lowering friction for this slot.",
-    weeklyImpact: candidate.weeklyImpact?.trim() || "The surrounding week can stay as planned unless recovery changes.",
-  }));
+  const fallbacks = fallbackReplacementCandidates(workout, []);
+  const sanitized = candidates.slice(0, 3).map((candidate, index) =>
+    sanitizeWorkoutCandidate(candidate, fallbacks[index] ?? fallbackReplacementCandidate(workout, index), `candidate-${index + 1}`)
+  );
 
   return sanitized.length > 0 ? sanitized : fallbackReplacementCandidates(workout, []);
+}
+
+function sanitizeWorkoutCandidates(
+  generated: { candidates?: WorkoutCandidateInput[] },
+  fallbacks: WorkoutCandidate[],
+): WorkoutCandidate[] {
+  const candidates = Array.isArray(generated.candidates) ? generated.candidates : [];
+  const sanitized = candidates.slice(0, 3).map((candidate, index) =>
+    sanitizeWorkoutCandidate(candidate, fallbacks[index] ?? fallbacks[0], `candidate-${index + 1}`)
+  );
+
+  return sanitized.length > 0 ? sanitized : fallbacks.slice(0, 3);
+}
+
+function sanitizeWorkoutCandidate(
+  candidate: WorkoutCandidateInput | null | undefined,
+  fallback: WorkoutCandidate,
+  id: string,
+): WorkoutCandidate {
+  const activityType = normalizeActivity(candidate?.activityType || fallback.activityType || "training");
+  const intensityLabel = candidate?.intensityLabel?.trim() || fallback.intensityLabel || "Moderate";
+  const title = candidate?.title?.trim() || fallback.title || titleCase(activityType);
+  return {
+    id,
+    title,
+    activityType,
+    durationMinutes: Math.max(10, candidate?.durationMinutes || fallback.durationMinutes || 30),
+    intensityLabel,
+    purpose: candidate?.purpose?.trim() || fallback.purpose || "Useful workout for this plan slot",
+    prescription: candidate?.prescription ?? fallback.prescription ?? fallbackPrescription(title, activityType, intensityLabel),
+    fuelingSummary: candidate?.fuelingSummary?.trim() || fallback.fuelingSummary || fuelingSummary(activityType, intensityLabel),
+    rationale: candidate?.rationale?.trim() || fallback.rationale || "This gives the day a useful training stimulus without guessing beyond the plan.",
+    weeklyImpact: candidate?.weeklyImpact?.trim() || fallback.weeklyImpact || "HAYF will check the surrounding week after you confirm.",
+  };
 }
 
 function fallbackReplacementCandidates(workout: Record<string, any>, surroundingWorkouts: Record<string, any>[]): ReplacementCandidate[] {
@@ -2130,10 +2568,263 @@ function fallbackReplacementCandidates(workout: Record<string, any>, surrounding
   return candidates;
 }
 
+function fallbackReplacementCandidate(workout: Record<string, any>, index: number): ReplacementCandidate {
+  return {
+    id: `candidate-${index + 1}`,
+    title: fallbackReplacementTitle(workout, index),
+    activityType: normalizeActivity(workout.activity_type ?? "training"),
+    durationMinutes: Math.max(15, Math.round((workout.duration_minutes ?? 30) * 0.7)),
+    intensityLabel: index === 0 ? "Low" : "Moderate",
+    purpose: workout.purpose || "Preserve the session intent with less friction",
+    prescription: fallbackPrescription(fallbackReplacementTitle(workout, index), workout.activity_type ?? "training", index === 0 ? "Low" : "Moderate"),
+    fuelingSummary: fuelingSummary(workout.activity_type ?? "training", index === 0 ? "Low" : "Moderate"),
+    rationale: "This keeps the training intent while lowering friction for this slot.",
+    weeklyImpact: "The surrounding week can stay as planned unless recovery changes.",
+  };
+}
+
 function fallbackReplacementTitle(workout: Record<string, any>, index: number) {
   if (index === 0) return "Lower dose";
   if (/strength/.test(`${workout.activity_type ?? ""} ${workout.title ?? ""}`.toLowerCase())) return "Easy aerobic reset";
   return "Strength support";
+}
+
+async function loadWorkoutPlanningContext(
+  admin: SupabaseAdminClient,
+  userID: string,
+  block: Record<string, any>,
+  scheduledDate: string,
+) {
+  const date = parseDateOnly(scheduledDate) ?? new Date();
+  const window = twoWeekWindow(date);
+  const weekStart = isoDate(startOfWeek(date));
+  const [surroundingWorkouts, phases, weeklyRhythms] = await Promise.all([
+    list(
+      admin
+        .from("planned_workouts")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .gte("scheduled_date", window.start)
+        .lte("scheduled_date", window.end)
+        .not("status", "in", "(deleted,superseded)")
+        .order("scheduled_date", { ascending: true })
+        .order("sequence_order", { ascending: true }),
+    ),
+    list(
+      admin
+        .from("fitness_block_phases")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .order("start_date", { ascending: true }),
+    ),
+    list(
+      admin
+        .from("weekly_rhythms")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .gte("week_start_date", window.start)
+        .lte("week_start_date", window.end)
+        .order("week_start_date", { ascending: true }),
+    ),
+  ]);
+
+  return {
+    block,
+    scheduledDate,
+    weekStart,
+    weeklyRhythm: weeklyRhythms.find((rhythm: Record<string, any>) => rhythm.week_start_date === weekStart) ?? null,
+    surroundingWorkouts,
+    phases,
+    weeklyRhythms,
+    window,
+  };
+}
+
+function fallbackAdditionCandidates(context: Record<string, any>): WorkoutCandidate[] {
+  const scheduledDate = String(context.scheduledDate ?? isoDate(new Date()));
+  const weekStart = startOfWeek(parseDateOnly(scheduledDate) ?? new Date());
+  const weekWorkouts = workoutsForWeek(context.surroundingWorkouts ?? [], weekStart);
+  const dateWorkouts = (context.surroundingWorkouts ?? []).filter((workout: Record<string, any>) => workout.scheduled_date === scheduledDate);
+  const hasStrength = weekWorkouts.some((workout: Record<string, any>) => trainingProfile(workout).dimensions.includes("neuromuscular"));
+  const hasEndurance = weekWorkouts.some((workout: Record<string, any>) => trainingProfile(workout).dimensions.includes("endurance"));
+  const hasHardNearby = weekWorkouts.some((workout: Record<string, any>) => {
+    const days = absoluteCalendarDaysBetween(parseDateOnly(workout.scheduled_date) ?? weekStart, parseDateOnly(scheduledDate) ?? weekStart);
+    return days <= 1 && trainingProfile(workout).load === "high";
+  });
+
+  const candidates: WorkoutCandidate[] = [];
+  if (dateWorkouts.length > 0 || hasHardNearby) {
+    candidates.push(additionCandidate("Mobility reset", "mobility", 25, "Low", "Recovery support", "This keeps the added day useful without crowding nearby load.", "Low recovery load; the rest of the week should usually stay intact."));
+  }
+  if (!hasEndurance) {
+    candidates.push(additionCandidate("Easy aerobic base", "ride", 35, "Zone 2", "Aerobic base", "This fills an endurance gap without making the day too sharp.", "Adds low-to-moderate endurance work; HAYF will still check spacing after you confirm."));
+  }
+  if (!hasStrength) {
+    candidates.push(additionCandidate("Strength support", "strength", 40, "Moderate", "Strength anchor", "This gives the week useful strength exposure without chasing maximum load.", "Adds neuromuscular load; HAYF will check nearby hard sessions after you confirm."));
+  }
+  if (!candidates.some((candidate) => candidate.title === "Easy aerobic base")) {
+    candidates.push(additionCandidate("Easy aerobic base", "ride", 35, "Zone 2", "Aerobic base", "This is a useful low-friction endurance option for an open training impulse.", "Adds manageable endurance load; HAYF will check spacing after you confirm."));
+  }
+  if (!candidates.some((candidate) => candidate.title === "Strength support")) {
+    candidates.push(additionCandidate("Strength support", "strength", 40, "Moderate", "Strength support", "This is a useful strength option if the day can handle more load.", "Adds neuromuscular load; HAYF will check nearby hard sessions after you confirm."));
+  }
+  candidates.push(additionCandidate("Easy movement", "walk", 30, "Low", "Consistency support", "This preserves the impulse to train while keeping recovery easy.", "Minimal load; useful when the week is already full."));
+
+  return candidates.slice(0, 3).map((candidate, index) => ({ ...candidate, id: `candidate-${index + 1}` }));
+}
+
+function additionCandidate(
+  title: string,
+  activityType: string,
+  durationMinutes: number,
+  intensityLabel: string,
+  purpose: string,
+  rationale: string,
+  weeklyImpact: string,
+): WorkoutCandidate {
+  return {
+    id: "candidate-1",
+    title,
+    activityType,
+    durationMinutes,
+    intensityLabel,
+    purpose,
+    prescription: workoutPrescription(title, activityType, intensityLabel, title),
+    fuelingSummary: fuelingSummary(activityType, intensityLabel),
+    rationale,
+    weeklyImpact,
+  };
+}
+
+function fallbackManualWorkoutCandidate(text: string, workout: Record<string, any> | undefined, scheduledDate: string): WorkoutCandidate {
+  const activityType = normalizeActivity(text);
+  const title = manualWorkoutTitle(text, activityType);
+  const intensityLabel = manualIntensity(text);
+  const durationMinutes = manualDurationMinutes(text, activityType);
+  const sparse = isSparseWorkoutDescription(text);
+
+  return {
+    id: "candidate-1",
+    title,
+    activityType,
+    durationMinutes,
+    intensityLabel,
+    purpose: manualPurpose(activityType, workout),
+    prescription: workoutPrescription(title, activityType, intensityLabel, text),
+    fuelingSummary: fuelingSummary(activityType, intensityLabel),
+    rationale: sparse
+      ? `I read "${text}" as a conservative ${title.toLowerCase()} because the description is sparse.`
+      : "I translated your description into a structured workout HAYF can audit against the plan.",
+    weeklyImpact: workout
+      ? "This becomes the replacement for the slot; HAYF will check whether the surrounding week needs repair."
+      : `This adds load on ${scheduledDate}; HAYF will check whether nearby sessions need spacing or dose changes.`,
+  };
+}
+
+function looksLikeWorkoutDescription(text: string) {
+  const lower = text.toLowerCase();
+  return /run|ride|bike|cycle|swim|row|hike|walk|strength|lift|gym|mobility|yoga|pilates|stretch|climb|boulder|workout|session|interval|tempo|zone|cardio|hiit|legs|upper|lower|core/.test(lower);
+}
+
+function isSparseWorkoutDescription(text: string) {
+  const lower = text.trim().toLowerCase();
+  return lower.split(/\s+/).length <= 2 && !/\d/.test(lower);
+}
+
+function manualWorkoutTitle(text: string, activityType: string) {
+  const lower = text.toLowerCase();
+  if (activityType === "hike") return /long|\d/.test(lower) ? "Long hike" : "Hike";
+  if (activityType === "ride") return /long|\d/.test(lower) ? "Long ride" : "Ride";
+  if (activityType === "run") return /tempo|interval|threshold/.test(lower) ? "Quality run" : /long|\d/.test(lower) ? "Long run" : "Run";
+  if (activityType === "strength") return /upper/.test(lower) ? "Upper strength" : /lower|legs/.test(lower) ? "Lower strength" : "Strength";
+  if (activityType === "mobility") return "Mobility";
+  if (activityType === "walk") return "Walk";
+  if (activityType === "climb") return "Climb";
+  return titleCase(activityType);
+}
+
+function manualIntensity(text: string) {
+  const lower = text.toLowerCase();
+  if (/easy|low|recovery|gentle|light/.test(lower)) return "Low";
+  if (/hard|high|heavy|interval|threshold|tempo|vo2|race|max/.test(lower)) return "High";
+  if (/zone\s*2|z2/.test(lower)) return "Zone 2";
+  if (/steady|long|moderate|elevation|vert/.test(lower)) return "Moderate";
+  return "Moderate";
+}
+
+function manualDurationMinutes(text: string, activityType: string) {
+  const lower = text.toLowerCase();
+  const hourMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/);
+  if (hourMatch) return Math.max(10, Math.round(Number(hourMatch[1].replace(",", ".")) * 60));
+  const minuteMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:m|min|mins|minute|minutes)\b/);
+  if (minuteMatch) return Math.max(10, Math.round(Number(minuteMatch[1].replace(",", "."))));
+
+  const distance = distanceKilometersFromText(lower);
+  if (distance) {
+    if (activityType === "hike") return Math.max(45, Math.round((distance / 4.5) * 60));
+    if (activityType === "run") return Math.max(20, Math.round(distance * 6));
+    if (activityType === "ride") return Math.max(30, Math.round(distance * 2.5));
+    if (activityType === "walk") return Math.max(20, Math.round(distance * 12));
+  }
+
+  if (activityType === "hike") return 60;
+  if (activityType === "strength") return 45;
+  if (activityType === "mobility" || activityType === "walk") return 30;
+  return 45;
+}
+
+function distanceKilometersFromText(text: string) {
+  const match = text.match(/(\d+(?:[.,]\d+)?)\s*(?:km|kilometer|kilometers|kilometre|kilometres)\b/);
+  if (match) return Number(match[1].replace(",", "."));
+  const shorthand = text.match(/(\d+(?:[.,]\d+)?)\s*k\b/);
+  if (shorthand) return Number(shorthand[1].replace(",", "."));
+  return null;
+}
+
+function manualPurpose(activityType: string, workout: Record<string, any> | undefined) {
+  if (workout?.purpose) return workout.purpose;
+  if (activityType === "strength") return "Strength support";
+  if (["run", "ride", "swim", "row", "hike"].includes(activityType)) return "Endurance support";
+  if (["mobility", "walk", "recovery"].includes(activityType)) return "Recovery support";
+  return "User-described workout";
+}
+
+function workoutPrescription(title: string, activityType: string, intensity: string, description: string) {
+  if (activityType === "strength") {
+    return {
+      warmup: "8-10 min easy movement and ramp-up sets",
+      main: description,
+      cooldown: "3-5 min easy mobility",
+      successCriteria: "Keep form clean and stop with 1-2 reps in reserve.",
+    };
+  }
+  if (["run", "ride", "swim", "row", "hike", "walk"].includes(activityType)) {
+    return {
+      warmup: "Start easy for 8-10 min",
+      main: description || `${title} at ${intensity}`,
+      cooldown: "Finish easy for 5-10 min",
+      successCriteria: "Keep the effort controlled enough to recover for the next planned session.",
+    };
+  }
+  return {
+    warmup: "Start easy",
+    main: description || title,
+    cooldown: "Finish easy",
+    successCriteria: "Finish feeling better than you started.",
+  };
+}
+
+function throwIfPastPlanningDate(scheduledDate: string, timezone: string) {
+  const parsed = parseDateOnly(scheduledDate);
+  if (!parsed) {
+    throw new Error("Use a valid scheduledDate.");
+  }
+  if (scheduledDate < isoDate(todayInTimezone(timezone))) {
+    throw new Error("Workouts can only be added or manually changed for today or future days.");
+  }
 }
 
 function fallbackPlan(onboarding: Record<string, any>, start: Date, timezone: string): GeneratedPlan {
@@ -2416,7 +3107,7 @@ async function markMissedWorkouts(
       .eq("active_block_id", activeBlockID)
       .lt("scheduled_date", cutoffDate)
       .in("status", ["planned", "current", "checked_in", "adjusted"])
-      .in("source", ["generated", "replanned", "user_moved", "checkin_adjusted"])
+      .in("source", ["generated", "replanned", "user_moved", "user_added", "checkin_adjusted"])
       .select("id, scheduled_date, title"),
   );
 }

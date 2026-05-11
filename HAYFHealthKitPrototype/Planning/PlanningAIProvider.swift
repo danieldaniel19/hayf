@@ -74,9 +74,41 @@ struct PlanningAIProvider {
         return response.output
     }
 
+    func recommendWorkoutAdditions(
+        scheduledDate: Date,
+        textContext: String? = nil
+    ) async throws -> PlanningWorkoutAdditionOutput {
+        let response: PlanningWorkoutAdditionFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .recommendWorkoutAdditions,
+                scheduledDate: Self.dateOnlyFormatter.string(from: scheduledDate),
+                textContext: textContext
+            )
+        )
+
+        return response.output
+    }
+
+    func interpretWorkoutDescription(
+        textContext: String,
+        plannedWorkoutID: UUID? = nil,
+        scheduledDate: Date? = nil
+    ) async throws -> PlanningWorkoutInterpretationOutput {
+        let response: PlanningWorkoutInterpretationFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .interpretWorkoutDescription,
+                plannedWorkoutID: plannedWorkoutID,
+                scheduledDate: scheduledDate.map(Self.dateOnlyFormatter.string(from:)),
+                textContext: textContext
+            )
+        )
+
+        return response.output
+    }
+
     func replaceWorkout(
         plannedWorkoutID: UUID,
-        candidate: PlanningReplacementCandidate
+        candidate: PlanningWorkoutCandidate
     ) async throws -> PlanningEditOutcome {
         let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
@@ -84,6 +116,24 @@ struct PlanningAIProvider {
                 deviceTimezone: TimeZone.current.identifier,
                 plannedWorkoutID: plannedWorkoutID,
                 replacementCandidate: candidate
+            )
+        )
+
+        return response.output
+    }
+
+    func addWorkout(
+        scheduledDate: Date,
+        sequenceOrder: Int?,
+        candidate: PlanningWorkoutCandidate
+    ) async throws -> PlanningEditOutcome {
+        let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .addWorkout,
+                deviceTimezone: TimeZone.current.identifier,
+                scheduledDate: Self.dateOnlyFormatter.string(from: scheduledDate),
+                sequenceOrder: sequenceOrder,
+                workoutCandidate: candidate
             )
         )
 
@@ -193,7 +243,7 @@ struct PlanningMoodInput: Codable {
 
 struct PlanningReplacementOutput: Decodable {
     let workoutID: UUID
-    let candidates: [PlanningReplacementCandidate]
+    let candidates: [PlanningWorkoutCandidate]
 
     enum CodingKeys: String, CodingKey {
         case workoutID = "workoutID"
@@ -201,7 +251,24 @@ struct PlanningReplacementOutput: Decodable {
     }
 }
 
-struct PlanningReplacementCandidate: Codable, Identifiable {
+struct PlanningWorkoutAdditionOutput: Decodable {
+    let scheduledDate: String
+    let candidates: [PlanningWorkoutCandidate]
+}
+
+struct PlanningWorkoutInterpretationOutput: Decodable {
+    let scheduledDate: String?
+    let workoutID: UUID?
+    let candidate: PlanningWorkoutCandidate
+
+    enum CodingKeys: String, CodingKey {
+        case scheduledDate
+        case workoutID
+        case candidate
+    }
+}
+
+struct PlanningWorkoutCandidate: Codable, Identifiable {
     let id: String
     let title: String
     let activityType: String
@@ -226,6 +293,8 @@ struct PlanningReplacementCandidate: Codable, Identifiable {
         case weeklyImpact
     }
 }
+
+typealias PlanningReplacementCandidate = PlanningWorkoutCandidate
 
 enum PlanningProposalDecision: String, Codable {
     case accepted
@@ -302,7 +371,16 @@ struct PlanningFunctionError: LocalizedError {
     let message: String
 
     var errorDescription: String? {
-        "Planning engine error \(statusCode): \(message)"
+        if message.localizedCaseInsensitiveContains("Cannot read properties of undefined")
+            && message.localizedCaseInsensitiveContains("model") {
+            return "Planning engine is updating. Try again in a moment."
+        }
+
+        if message.localizedCaseInsensitiveContains("Unsupported planning AI task") {
+            return "Planning engine is updating. Try again in a moment."
+        }
+
+        return "Planning engine error \(statusCode): \(message)"
     }
 }
 
@@ -316,13 +394,28 @@ private struct PlanningReplacementFunctionResponse: Decodable {
     let output: PlanningReplacementOutput
 }
 
+private struct PlanningWorkoutAdditionFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningWorkoutAdditionOutput
+}
+
+private struct PlanningWorkoutInterpretationFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningWorkoutInterpretationOutput
+}
+
 enum PlanningAITask: String, Codable {
     case bootstrapAfterOnboarding = "bootstrap_after_onboarding"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"
     case refreshPlanWindow = "refresh_plan_window"
     case recordPlanEdit = "record_plan_edit"
     case recommendWorkoutReplacements = "recommend_workout_replacements"
+    case recommendWorkoutAdditions = "recommend_workout_additions"
+    case interpretWorkoutDescription = "interpret_workout_description"
     case replaceWorkout = "replace_workout"
+    case addWorkout = "add_workout"
     case applyReplanProposal = "apply_replan_proposal"
     case checkInToWorkout = "check_in_to_workout"
     case scheduledRefreshDueWindows = "scheduled_refresh_due_windows"
@@ -340,7 +433,10 @@ private struct PlanningFunctionRequest: Encodable {
     let proposalID: UUID?
     let decision: PlanningProposalDecision?
     let plannedWorkoutID: UUID?
-    let replacementCandidate: PlanningReplacementCandidate?
+    let scheduledDate: String?
+    let sequenceOrder: Int?
+    let replacementCandidate: PlanningWorkoutCandidate?
+    let workoutCandidate: PlanningWorkoutCandidate?
     let mood: PlanningMoodInput?
     let textContext: String?
     let currentDerivedSnapshot: HealthFeatureSnapshot?
@@ -357,7 +453,10 @@ private struct PlanningFunctionRequest: Encodable {
         proposalID: UUID? = nil,
         decision: PlanningProposalDecision? = nil,
         plannedWorkoutID: UUID? = nil,
-        replacementCandidate: PlanningReplacementCandidate? = nil,
+        scheduledDate: String? = nil,
+        sequenceOrder: Int? = nil,
+        replacementCandidate: PlanningWorkoutCandidate? = nil,
+        workoutCandidate: PlanningWorkoutCandidate? = nil,
         mood: PlanningMoodInput? = nil,
         textContext: String? = nil,
         currentDerivedSnapshot: HealthFeatureSnapshot? = nil
@@ -373,7 +472,10 @@ private struct PlanningFunctionRequest: Encodable {
         self.proposalID = proposalID
         self.decision = decision
         self.plannedWorkoutID = plannedWorkoutID
+        self.scheduledDate = scheduledDate
+        self.sequenceOrder = sequenceOrder
         self.replacementCandidate = replacementCandidate
+        self.workoutCandidate = workoutCandidate
         self.mood = mood
         self.textContext = textContext
         self.currentDerivedSnapshot = currentDerivedSnapshot
@@ -391,7 +493,10 @@ private struct PlanningFunctionRequest: Encodable {
         case proposalID = "proposal_id"
         case decision
         case plannedWorkoutID = "planned_workout_id"
+        case scheduledDate
+        case sequenceOrder
         case replacementCandidate = "replacement_candidate"
+        case workoutCandidate = "workout_candidate"
         case mood
         case textContext
         case currentDerivedSnapshot = "current_derived_snapshot"
@@ -410,7 +515,10 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(proposalID?.uuidString.lowercased(), forKey: .proposalID)
         try container.encodeIfPresent(decision, forKey: .decision)
         try container.encodeIfPresent(plannedWorkoutID?.uuidString.lowercased(), forKey: .plannedWorkoutID)
+        try container.encodeIfPresent(scheduledDate, forKey: .scheduledDate)
+        try container.encodeIfPresent(sequenceOrder, forKey: .sequenceOrder)
         try container.encodeIfPresent(replacementCandidate, forKey: .replacementCandidate)
+        try container.encodeIfPresent(workoutCandidate, forKey: .workoutCandidate)
         try container.encodeIfPresent(mood, forKey: .mood)
         let trimmedTextContext = textContext?.trimmingCharacters(in: .whitespacesAndNewlines)
         try container.encodeIfPresent(trimmedTextContext?.isEmpty == false ? trimmedTextContext : nil, forKey: .textContext)

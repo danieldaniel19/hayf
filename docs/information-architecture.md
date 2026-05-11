@@ -28,10 +28,14 @@ Plan owns:
 - training targets for the active block
 - this week's focus / objective
 - current week plus next week workout schedule
-- direct workout planning actions, such as moving or deleting planned workouts
+- direct workout planning actions, such as moving, deleting, replacing, or adding planned workouts
 - repair proposals and plan refresh states
 
 The Plan screen may scroll. The first glance should prioritize the active block, training targets, and current week context. The two-week schedule should always render all seven days of each week, even when a day has no workout, so users can choose explicit move targets for planned workouts.
+
+Today and future day rows may also add workouts. Open days should expose an add-workout entry point directly in the row, and occupied days should expose the same day-level add entry below that day's workout cards. Add and replace should share one coach sheet: HAYF can suggest plan-aware options, or the user can describe a workout in natural language and preview the interpreted workout before confirming. Any selected workout change opens a review step with Accept, Cancel, and a disabled Follow up with coach action before the plan is mutated.
+
+Coach-generated planning proposals should consistently be framed as reviewable changes, not hidden mutations. The user should always understand the current workout/week, the proposed result, and the resulting week before accepting. Cancel returns to the prior decision point for direct workout changes; canceling a repair proposal keeps the user's accepted workout change and rejects only the repair.
 
 Planned workouts in the past should be reconciled after HealthKit sync. If the latest sync window happened after the workout date and there is no matching actual workout evidence, the planned workout should become `missed`. When missed workouts materially change the visible plan, HAYF should refresh the rest of the two-week window instead of leaving stale recommendations in place.
 
@@ -136,6 +140,9 @@ Core tables:
 - `fitness_goal_evaluations`: append-only target evaluations
 - `workout_debrief_requests`: prompts for post-workout feedback
 - `workout_feedback`: user feedback after workouts
+- `plan_events`: audit trail for user and engine planning changes
+- `replan_proposals`: reviewable repair proposals after meaningful planning changes
+- `planning_ai_generations`: compact AI request/response traces and failures
 
 HealthKit remains the source of truth for Apple health data. HAYF stores compact derived features and evidence, not raw HealthKit sample history.
 
@@ -146,6 +153,7 @@ Implemented or partially implemented:
 - Plan reads active block, phases, weekly rhythms, planned workouts, and training targets.
 - Plan renders the visible two-week window.
 - Plan renders all days in each visible week, including empty days.
+- Plan supports add/replace workout flows with AI suggestions, manual natural-language workout interpretation, and review-before-apply confirmation.
 - HealthKit sync stores feature snapshots, actual workouts, history insights, observations, targets, and evaluations.
 - Past planned workouts without matching evidence after sync are marked missed.
 - Missed workouts can force a visible-window refresh.

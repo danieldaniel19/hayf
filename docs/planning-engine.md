@@ -71,6 +71,11 @@ Public tasks:
 - `sync_healthkit_and_reconcile`
 - `refresh_plan_window`
 - `record_plan_edit`
+- `recommend_workout_replacements`
+- `replace_workout`
+- `recommend_workout_additions`
+- `interpret_workout_description`
+- `add_workout`
 - `apply_replan_proposal`
 - `check_in_to_workout`
 - `scheduled_refresh_due_windows`
@@ -107,6 +112,23 @@ Important QA fix:
 - creates one batched `replan_proposal` if any unexpected actuals were detected
 
 The first sync can be slower because it imports many recent workouts and writes events. Later syncs should be much lighter because HealthKit UUID upsert makes it idempotent.
+
+### Workout Adaptation
+
+Workout replacement and addition are first-class planning-engine tasks because they can change weekly load, session spacing, and active-block coverage.
+
+Suggestion tasks:
+
+- `recommend_workout_replacements` takes a planned workout ID and returns second-best candidates for that exact slot.
+- `recommend_workout_additions` takes a scheduled date and returns candidates that fit the selected day and surrounding week.
+- `interpret_workout_description` takes natural-language text and returns one structured candidate. It can be scoped to either an existing workout slot or a scheduled date.
+
+Mutation tasks:
+
+- `replace_workout` supersedes the original workout, inserts the accepted candidate as the new fact, emits `plan_events.event_type = workout_replaced`, and may return a repair proposal.
+- `add_workout` inserts the accepted candidate at the selected date/order, writes `planned_workouts.source = user_added`, emits `plan_events.event_type = workout_added`, and may return a repair proposal.
+
+The planning engine should never treat a user-accepted replacement or addition as the thing to undo. If recovery or balance needs repair, proposals should adapt surrounding sessions around the user's chosen workout.
 
 ### Fitness History And Goal Evidence
 
@@ -236,16 +258,22 @@ Plan should read:
 - `plan_events` and `replan_proposals` for repair/proposal states
 
 Plan edit actions must go through the planning engine, not directly mutate planning rows. Move and delete call `PlanningAIProvider.recordPlanEdit`; replacement calls the audited replacement endpoint and returns the same coach-review outcome shape.
+Workout additions also go through the planning engine. The app first asks for suggested additions or asks the engine to interpret a natural-language workout description, then `add_workout` inserts the user-approved candidate with `planned_workouts.source = user_added` and emits `plan_events.event_type = workout_added`.
 
 Audited Plan edit UX:
 
 - Planned workout cards expose explicit swipe actions for replace, move, and delete.
+- Today/future day rows expose a day-level add-workout action; open days show it as the row body, and occupied days show it below the day's cards.
 - Plan does not use drag/drop for workout movement. Move enters a target-selection state, and whole day rows become tappable destinations.
 - Submitted edits show a blocking coach-analysis overlay while HAYF audits the resulting week.
 - The visible plan changes only after the backend returns and Plan reloads.
 - If the edit is low risk, the user edit stands with no extra prompt.
 - If the edit creates meaningful risk, the existing coach-review sheet opens with one consolidated replan proposal.
 - Replacement keeps the user's chosen replacement as the new fact; any repair proposal must adapt around it, not revert it.
+- Addition keeps the user's added workout as the new fact; any repair proposal must adapt surrounding sessions instead of removing the addition.
+- Replacement and addition share one pull-up sheet. While suggestions load, the frontend rotates static prompt-derived coach copy explaining that HAYF is checking role, load, recovery spacing, active-block targets, and weekly impact. Manual natural-language entry is always available and previews the interpreted workout.
+- Choosing either an AI suggestion or a manual preview opens a review step before mutation. The user can accept, cancel back to the choice sheet, or see the disabled Follow up with coach action reserved for future conversational planning.
+- Replan proposals use the same decision language: accept the adjustment, cancel it, or see the disabled Follow up with coach action.
 
 Check-in should call `PlanningAIProvider.checkInToWorkout`.
 
