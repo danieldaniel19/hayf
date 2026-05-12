@@ -774,9 +774,8 @@ private struct PlanTrainingTargetsCard: View {
     let showTargetDetail: (PlanGoalTarget) -> Void
 
     private var visibleTargets: [PlanGoalTarget] {
-        let primary = targets.filter { $0.targetKind == .primary }
-        let supporting = targets.filter { $0.targetKind == .subGoal }
-        return Array((primary + supporting).prefix(4))
+        let weekly = targets.filter(PlanTargetDisplay.isWeeklyTarget)
+        return Array(weekly.prefix(4))
     }
 
     var body: some View {
@@ -786,7 +785,7 @@ private struct PlanTrainingTargetsCard: View {
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
 
-                Text("What HAYF is watching for this block.")
+                Text("North stars for the week you're shaping.")
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(HAYFColor.muted)
             }
@@ -828,7 +827,7 @@ private struct PlanTargetsEmptyView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
 
-                Text("HAYF needs enough recent evidence before it can show useful short-term targets.")
+                Text("HAYF needs the latest plan and health evidence before it can show useful weekly targets.")
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(HAYFColor.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1068,8 +1067,6 @@ private struct PlanWorkoutsPanel: View {
                     addWorkout: addWorkout
                 )
 
-                PlanLegend()
-                    .padding(.top, 18)
             }
             .padding(18)
             .background(HAYFColor.surface)
@@ -1124,7 +1121,7 @@ private struct PlanWeekSection: View {
                 }
             }
 
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 ForEach(groups) { group in
                     PlanWorkoutDayRow(
                         group: group,
@@ -1153,18 +1150,21 @@ private struct PlanWorkoutDayRow: View {
     let addWorkout: (String, Int) -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(PlanDate.weekdayLabel(group.date))
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(HAYFColor.primary)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
 
                 Text(PlanDate.dayLabel(group.date))
-                    .font(.system(size: 22, weight: .regular))
+                    .font(.system(size: 21, weight: .regular))
                     .foregroundStyle(HAYFColor.primary)
             }
-            .frame(width: 42, alignment: .leading)
-            .padding(.top, 14)
+            .frame(width: 38, alignment: .leading)
+            .padding(.top, 10)
+
+            PlanTimelineMarker()
+                .frame(width: 12)
 
             VStack(spacing: 8) {
                 if group.workouts.isEmpty {
@@ -1172,7 +1172,6 @@ private struct PlanWorkoutDayRow: View {
                         PlanEmptyDayDropZone(isMoveTarget: true)
                     } else if canAddWorkout {
                         PlanAddWorkoutRow(
-                            isCompact: false,
                             add: { addWorkout(group.date, nextSequenceOrder) }
                         )
                     } else {
@@ -1191,7 +1190,6 @@ private struct PlanWorkoutDayRow: View {
 
                     if canAddWorkout && !isMoveTarget && !isAnalyzingEdit {
                         PlanAddWorkoutRow(
-                            isCompact: true,
                             add: { addWorkout(group.date, nextSequenceOrder) }
                         )
                     }
@@ -1233,66 +1231,74 @@ private struct PlanWorkoutDayRow: View {
     }
 }
 
+private struct PlanTimelineMarker: View {
+    var body: some View {
+        ZStack(alignment: .top) {
+            Rectangle()
+                .fill(HAYFColor.borderStrong.opacity(0.62))
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+
+            Circle()
+                .fill(HAYFColor.borderStrong)
+                .frame(width: 7, height: 7)
+                .padding(.top, 20)
+        }
+    }
+}
+
 private struct PlanEmptyDayDropZone: View {
     let isMoveTarget: Bool
 
     var body: some View {
         HStack(spacing: 0) {
-            Text("Open day")
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
+            if isMoveTarget {
+                Text("Move here")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(HAYFColor.orange)
+            }
 
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 58)
-        .background(isMoveTarget ? HAYFColor.orange.opacity(0.06) : HAYFColor.neutral)
+        .padding(.horizontal, 12)
+        .frame(minHeight: 54)
+        .background(isMoveTarget ? HAYFColor.orange.opacity(0.06) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isMoveTarget ? HAYFColor.orange.opacity(0.45) : HAYFColor.border, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
+            if isMoveTarget {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(HAYFColor.orange.opacity(0.45), lineWidth: 1)
+            }
         }
     }
 }
 
 private struct PlanAddWorkoutRow: View {
-    let isCompact: Bool
     let add: () -> Void
 
     var body: some View {
         Button(action: add) {
-            HStack(spacing: 10) {
+            HStack(spacing: 12) {
                 Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(HAYFColor.orange)
-                    .frame(width: 28, height: 28)
-                    .background(HAYFColor.orange.opacity(0.08))
-                    .clipShape(Circle())
+                    .frame(width: 24, height: 24)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Add workout")
-                        .font(.system(size: isCompact ? 14 : 15, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-
-                    if !isCompact {
-                        Text("Describe one or let HAYF suggest it")
-                            .font(.system(size: 13, weight: .regular))
-                            .foregroundStyle(HAYFColor.muted)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                }
+                Text("Add workout")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .lineLimit(1)
 
                 Spacer(minLength: 8)
             }
-            .padding(.horizontal, 14)
-            .frame(minHeight: isCompact ? 46 : 58)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 52)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.neutral)
+            .background(HAYFColor.surface.opacity(0.65))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                    .stroke(HAYFColor.border, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
             }
         }
         .buttonStyle(.plain)
@@ -1308,121 +1314,159 @@ private struct PlanWorkoutCard: View {
     let replaceWorkout: () -> Void
 
     @State private var horizontalOffset: CGFloat = 0
-    private let actionWidth: CGFloat = 160
+    @State private var dragStartOffset: CGFloat = 0
+    @State private var isDragging = false
+    private let actionWidth: CGFloat = 132
+    private let actionSpacing: CGFloat = 4
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            HStack(spacing: 8) {
-                Button(action: {
-                    closeActions()
-                    replaceWorkout()
-                }) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 64)
-                        .background(HAYFColor.orange)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Replace workout")
-
-                Button(action: {
-                    closeActions()
-                    moveWorkout()
-                }) {
-                    Image(systemName: "calendar.badge.clock")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 64)
-                        .background(HAYFColor.primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Move workout")
-
-                Button(role: .destructive, action: {
-                    closeActions()
-                    deleteWorkout()
-                }) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 64)
-                        .background(HAYFColor.error)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Delete workout")
-            }
+            actionButtons
+                .opacity(actionOpacity)
+                .allowsHitTesting(horizontalOffset < -20)
 
             cardContent
                 .offset(x: horizontalOffset)
-                .gesture(
-                    DragGesture(minimumDistance: 12, coordinateSpace: .local)
-                        .onChanged { value in
-                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                            horizontalOffset = min(0, max(-actionWidth, value.translation.width))
-                        }
-                        .onEnded { value in
-                            guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                horizontalOffset = value.translation.width < -(actionWidth / 2) ? -actionWidth : 0
-                            }
-                        }
-                )
         }
-        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    if !isDragging {
+                        dragStartOffset = horizontalOffset
+                        isDragging = true
+                    }
+                    horizontalOffset = min(0, max(-actionWidth, dragStartOffset + value.translation.width))
+                }
+                .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    let shouldOpen = horizontalOffset < -actionWidth / 2 || value.predictedEndTranslation.width < -actionWidth
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        horizontalOffset = shouldOpen ? -actionWidth : 0
+                    }
+                    dragStartOffset = 0
+                    isDragging = false
+                }
+        )
+        .contextMenu {
+            Button {
+                closeActions()
+                replaceWorkout()
+            } label: {
+                Label("Replace workout", systemImage: "arrow.triangle.2.circlepath")
+            }
+
+            Button {
+                closeActions()
+                moveWorkout()
+            } label: {
+                Label("Move workout", systemImage: "calendar.badge.clock")
+            }
+
+            Button(role: .destructive) {
+                closeActions()
+                deleteWorkout()
+            } label: {
+                Label("Delete workout", systemImage: "trash")
+            }
+        }
         .allowsHitTesting(!isDisabled)
         .opacity(isDisabled ? 0.82 : 1)
     }
 
-    private var cardContent: some View {
-        HStack(spacing: 14) {
-            Image(systemName: iconName)
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(HAYFColor.primary)
-                .frame(width: 34)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(workout.title)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-
-                Text(metadata)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+    private var actionButtons: some View {
+        HStack(spacing: actionSpacing) {
+            Button(action: {
+                closeActions()
+                replaceWorkout()
+            }) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: actionButtonWidth, height: rowHeight)
+                    .background(HAYFColor.orange)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Replace workout")
 
-            Spacer(minLength: 8)
-
-            PlanWorkoutStatusPill(status: workout.status)
-        }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 64)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(alignment: .leading) {
-            if workout.status == .current {
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(HAYFColor.orange)
-                    .frame(width: 4)
-                    .padding(.vertical, 2)
+            Button(action: {
+                closeActions()
+                moveWorkout()
+            }) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: actionButtonWidth, height: rowHeight)
+                    .background(HAYFColor.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Move workout")
+
+            Button(role: .destructive, action: {
+                closeActions()
+                deleteWorkout()
+            }) {
+                Image(systemName: "trash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: actionButtonWidth, height: rowHeight)
+                    .background(HAYFColor.error)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Delete workout")
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(HAYFColor.borderStrong, lineWidth: 1)
-        }
+        .frame(width: actionWidth, alignment: .trailing)
+    }
+
+    private var actionButtonWidth: CGFloat {
+        (actionWidth - (actionSpacing * 2)) / 3
+    }
+
+    private var actionOpacity: Double {
+        min(1, max(0, Double(abs(horizontalOffset) / 20)))
+    }
+
+    private var rowHeight: CGFloat {
+        workout.status == .current ? 58 : 54
     }
 
     private func closeActions() {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             horizontalOffset = 0
+        }
+    }
+
+    private var cardContent: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: workout.status == .current ? 5 : 4) {
+                Text(workout.title)
+                    .font(titleFont)
+                    .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(1)
+
+                Text(metadata)
+                    .font(.system(size: workout.status == .current ? 14 : 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .lineLimit(1)
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: 4)
+
+            PlanWorkoutStatusPill(status: workout.status)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: rowHeight)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(workout.status == .current ? HAYFColor.orange.opacity(0.28) : HAYFColor.border, lineWidth: 1)
         }
     }
 
@@ -1436,39 +1480,30 @@ private struct PlanWorkoutCard: View {
         "\(workout.durationMinutes) min"
     }
 
-    private var iconName: String {
-        switch workout.activityType.lowercased() {
-        case let type where type.contains("strength"):
-            return "dumbbell"
-        case let type where type.contains("ride") || type.contains("bike") || type.contains("cycle") || type.contains("cycling"):
-            return "bicycle"
-        case let type where type.contains("run"):
-            return "figure.run"
-        case let type where type.contains("mobility") || type.contains("yoga") || type.contains("stretch"):
-            return "figure.flexibility"
-        case let type where type.contains("recovery") || type.contains("rest"):
-            return "arrow.triangle.2.circlepath"
-        default:
-            return "figure.strengthtraining.traditional"
+    private var titleFont: Font {
+        if workout.status == .current {
+            return .system(size: 17, weight: .bold)
+        }
+        return .system(size: 16, weight: .semibold)
+    }
+
+    @ViewBuilder
+    private var cardBackground: some View {
+        HAYFColor.surface
+
+        if workout.status == .current {
+            HAYFColor.orange.opacity(0.035)
         }
     }
+
 }
 
 private struct PlanWorkoutStatusPill: View {
     let status: PlanWorkoutStatus
 
     var body: some View {
-        HStack(spacing: 6) {
-            statusIcon
-
-            if status != .done {
-                Text(status.displayName)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(labelColor)
-                    .lineLimit(1)
-            }
-        }
-        .frame(minWidth: status == .done ? 28 : 78, alignment: .leading)
+        statusIcon
+            .frame(width: 22, height: 22)
     }
 
     @ViewBuilder
@@ -1476,38 +1511,27 @@ private struct PlanWorkoutStatusPill: View {
         switch status {
         case .done:
             Image(systemName: "checkmark")
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
+                .frame(width: 20, height: 20)
                 .background(HAYFColor.primary)
                 .clipShape(Circle())
         case .current:
             Circle()
                 .fill(HAYFColor.orange)
-                .frame(width: 12, height: 12)
+                .frame(width: 9, height: 9)
         case .adjusted:
             Circle()
                 .stroke(HAYFColor.orange, lineWidth: 2)
-                .frame(width: 13, height: 13)
+                .frame(width: 10, height: 10)
         case .missed:
             Circle()
                 .stroke(HAYFColor.error, lineWidth: 2)
-                .frame(width: 13, height: 13)
+                .frame(width: 10, height: 10)
         default:
             Circle()
                 .stroke(HAYFColor.muted, lineWidth: 1.5)
-                .frame(width: 13, height: 13)
-        }
-    }
-
-    private var labelColor: Color {
-        switch status {
-        case .current, .adjusted:
-            return HAYFColor.orange
-        case .missed:
-            return HAYFColor.error
-        default:
-            return HAYFColor.muted
+                .frame(width: 10, height: 10)
         }
     }
 }
@@ -3094,6 +3118,11 @@ private enum PlanDisplay {
 }
 
 private enum PlanTargetDisplay {
+    static func isWeeklyTarget(_ target: PlanGoalTarget) -> Bool {
+        let category = target.metricCategory ?? ""
+        return category.hasPrefix("weekly_")
+    }
+
     static func latestEvaluation(
         for target: PlanGoalTarget,
         in evaluations: [PlanGoalEvaluation]
@@ -3127,6 +3156,8 @@ private enum PlanTargetDisplay {
             return "bicycle"
         } else if text.contains("strength") || text.contains("upper") {
             return "dumbbell"
+        } else if text.contains("recovery") || text.contains("mobility") || text.contains("rest") {
+            return "figure.cooldown"
         } else if text.contains("step") || text.contains("activity") {
             return "figure.walk"
         } else if text.contains("consistency") || text.contains("workout") {
@@ -3202,6 +3233,16 @@ private enum PlanTargetDisplay {
         }
 
         switch target.metricCategory {
+        case "weekly_volume":
+            return "This is the total weekly training dose you can adjust by moving, adding, or shrinking sessions."
+        case "weekly_cycling":
+            return "This keeps the cycling work concrete for the week, instead of leaving the block goal abstract."
+        case "weekly_running":
+            return "This keeps the running work concrete for the week, so run volume can move with the plan."
+        case "weekly_strength":
+            return "This protects the strength or gym anchors that support the broader block."
+        case "weekly_recovery":
+            return "This keeps recovery visible as something to plan, not just something left over."
         case "body":
             return "This is tied to the body-composition outcome for the current block."
         case "volume":
@@ -3219,6 +3260,14 @@ private enum PlanTargetDisplay {
 
     static func planImpactText(for target: PlanGoalTarget) -> String {
         switch target.metricCategory {
+        case "weekly_volume":
+            return "If this slips, HAYF should rebalance the week before changing the whole block."
+        case "weekly_cycling", "weekly_running":
+            return "If this slips, HAYF should protect the most important sport-specific session first."
+        case "weekly_strength":
+            return "If this slips, HAYF should keep at least one useful strength exposure alive."
+        case "weekly_recovery":
+            return "If this slips, HAYF should make room for lower-load work before adding more intensity."
         case "body":
             return "HAYF should keep the plan steady and use this trend cautiously, alongside training, recovery, and feedback."
         case "volume":
