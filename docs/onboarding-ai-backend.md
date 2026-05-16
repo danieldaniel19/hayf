@@ -48,8 +48,7 @@ Used by all branches after the user has answered the setup questions.
 
 Expected output:
 
-- `rows`: 5-7 summary rows
-- `coachNote`: short coach readback
+- `readback`: one concise sentence confirming the core assignment understood from the user's input
 - `realismNote`: empty string when not needed; useful for concrete goals
 
 ### `generate_goal_candidates`
@@ -200,7 +199,7 @@ You are HAYF's onboarding coach. Return concise, practical fitness setup JSON th
 
 Each task also adds task-specific rules through `taskRules(task)`:
 
-- Summary: return 5-7 rows, optional coach note, optional realism note.
+- Summary: return one concise readback sentence plus an optional realism note.
 - First rhythm: return 3-5 starter rhythm rows and use deterministic health features cautiously when present. Do not generate full programs, phases, or long-term calendars here.
 - Goal candidates: return exactly three distinct candidates.
 - Blended candidate: combine the selected candidates into one clearer goal.

@@ -20,22 +20,9 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
   generate_summary: {
     type: "object",
     additionalProperties: false,
-    required: ["rows", "coachNote", "realismNote"],
+    required: ["readback", "realismNote"],
     properties: {
-      rows: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["systemImage", "label", "value"],
-          properties: {
-            systemImage: { type: "string" },
-            label: { type: "string" },
-            value: { type: "string" },
-          },
-        },
-      },
-      coachNote: { type: "string" },
+      readback: { type: "string" },
       realismNote: { type: "string" },
     },
   },
@@ -185,7 +172,7 @@ function validateRequest(value: OnboardingAIRequest | null): asserts value is On
 function taskRules(task: OnboardingTask) {
   switch (task) {
     case "generate_summary":
-      return "Return 5-7 rows using SF Symbol names already familiar to iOS, plus optional coachNote and realismNote strings. Use an empty string when no realism note is needed.";
+      return "Return one concise sentence that confirms the core assignment you understood from the user's input. Do not explain how HAYF will execute it, and do not list or repeat every answer. Also return a realismNote string; use an empty string when no realism note is needed.";
     case "generate_goal_candidates":
       return "Return exactly three distinct goal candidates. Keep ids URL-safe, titles concrete, and tracking fields short.";
     case "generate_blended_candidate":

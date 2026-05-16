@@ -89,7 +89,7 @@ Example context packet:
 
 ### Onboarding AI boundary
 
-Onboarding should use the same boundary: the app owns fixed screens and sends a compact onboarding context to a backend function when it needs coach-like interpretation. The backend should return structured content for summaries, goal candidates, realism notes, blended candidate previews, and first rhythm rows.
+Onboarding should use the same boundary: the app owns fixed screens and sends a compact onboarding context to a backend function when it needs coach-like interpretation. The backend should return structured content for short readbacks, goal candidates, realism notes, and blended candidate previews.
 
 Current implementation status: the iOS app uses a remote `OnboardingAIProvider` backed by the authenticated Supabase Edge Function `onboarding-ai`. Local deterministic fixtures remain as fallback output if the function, model call, or schema decoding fails.
 

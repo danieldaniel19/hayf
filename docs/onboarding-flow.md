@@ -255,11 +255,11 @@ No client RLS policies are added for the trace table. The Edge Function writes t
 
 The function uses the OpenAI Responses API with strict JSON schemas. It reads `OPENAI_API_KEY` and `OPENAI_MODEL` from Supabase secrets, defaulting the model to `gpt-5-mini` when `OPENAI_MODEL` is unset.
 
-The iOS app sends compact onboarding context only: intent, selected options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, and bad-day floor. It does not send raw HealthKit samples.
+The iOS app sends compact onboarding context only: intent, ranked training options, goal text or candidate, baseline, timeline or date, priority, blockers, support style, and bad-day floor. It does not send raw HealthKit samples.
 
 ## Completion And Restart Behavior
 
-Tapping the final setup action upserts `public.onboarding_profiles` with the final selected answers, generated summary, first rhythm, Health permission state, and completion timestamp. The app routes home after the upsert succeeds.
+Tapping the final setup action upserts `public.onboarding_profiles` with the final selected answers, generated summary, Health permission state, and completion timestamp. The app routes home after planning bootstrap succeeds.
 
 The temporary tester `Restart onboarding` control deletes the signed-in user's `public.onboarding_profiles` row. The next authenticated app state opens onboarding again.
 
@@ -481,12 +481,10 @@ The backend function receives a compact onboarding context:
 
 The backend should return structured content only:
 
-- summary rows
-- coach note
+- concise summary readback
 - realism note, when relevant
 - exactly three goal candidates for the goal-discovery branch
 - blended candidate preview
-- first rhythm rows and rhythm coach note
 
 The final onboarding screen may derive a local setup preview around that output:
 

@@ -180,7 +180,9 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: selectedIntent == .concreteGoal ? "What else can HAYF\nuse around this?" : "What can HAYF\nrealistically recommend?",
-                copy: selectedIntent == .concreteGoal ? "Pick the training options that can support your goal without crowding it out." : "Choose what fits your life, not just what you like."
+                copy: selectedIntent == .concreteGoal
+                    ? "Tap the training options in the order you want HAYF to prioritize them around your goal."
+                    : "Tap the training options in the order you want HAYF to prioritize them."
             )
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
@@ -188,14 +190,14 @@ struct OnboardingFlowView: View {
                     SelectableTile(
                         title: option.title,
                         systemImage: option.systemImage,
-                        isSelected: draft.trainingOptions.contains(option)
+                        selectionRank: draft.trainingOptionRank(for: option)
                     ) {
-                        draft.trainingOptions.toggle(option)
+                        draft.toggleTrainingOption(option)
                     }
                 }
             }
 
-            Text("You can change this anytime.")
+            Text("The number shows priority. Tap again to remove an option.")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(HAYFColor.muted)
         }
@@ -603,24 +605,61 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "Here's what HAYF\nunderstood.",
-                copy: "Edit anything that feels off."
+                copy: "Check HAYF's readback against the answers you gave."
             )
 
-            VStack(spacing: 10) {
-                ForEach(currentSummary.rows) { row in
-                    SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
-                }
+            SummarySection(title: "What HAYF understood") {
+                CoachNote(text: currentSummary.readback)
             }
 
             if let realismNote = currentSummary.realismNote {
                 CoachNote(systemImage: "exclamationmark.triangle", text: realismNote)
             }
 
-            if let coachNote = currentSummary.coachNote {
-                CoachNote(text: coachNote)
+            SummarySection(title: "Your answers") {
+                VStack(spacing: 10) {
+                    ForEach(currentInputSummaryRows) { row in
+                        SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
+                    }
+                }
             }
 
             PersonalizationNote()
+        }
+    }
+
+    private var currentInputSummaryRows: [SummaryItem] {
+        switch currentIntent {
+        case .stayConsistent:
+            return [
+                SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(systemImage: "bolt.heart", label: "Anchor", value: draft.motivationInputSummary),
+                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerInputSummary),
+                SummaryItem(systemImage: "figure.cooldown", label: "Support", value: draft.supportSummary),
+                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+            ]
+        case .concreteGoal:
+            return [
+                SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "calendar", label: "Timeline", value: draft.timelineSummary),
+                SummaryItem(systemImage: "chart.line.uptrend.xyaxis", label: "Baseline", value: draft.baselineSummary),
+                SummaryItem(systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
+                SummaryItem(systemImage: "scope", label: "Marker", value: draft.markerSummary),
+                SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+            ]
+        case .findGoal:
+            return [
+                SummaryItem(systemImage: "target", label: "Chosen goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
+                SummaryItem(systemImage: "flag", label: "Challenge", value: draft.challengeSummary),
+                SummaryItem(systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
+                SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+            ]
         }
     }
 
@@ -694,7 +733,7 @@ struct OnboardingFlowView: View {
             }
 
             if step == .summary {
-                Button("Adjust answers") {
+                Button("Edit answers") {
                     step = summaryEditStep
                 }
                 .font(.system(size: 16, weight: .semibold))
@@ -983,14 +1022,7 @@ struct OnboardingFlowView: View {
     }
 
     private var summaryEditStep: OnboardingStep {
-        switch currentIntent {
-        case .stayConsistent:
-            return .anchor
-        case .concreteGoal:
-            return .goalBrief
-        case .findGoal:
-            return .goalCandidates
-        }
+        .options
     }
 
     private func resetGeneratedOutputs() {
@@ -1272,7 +1304,7 @@ private enum OnboardingIntent: String, CaseIterable, Identifiable {
 }
 
 private struct ConsistencyOnboardingDraft {
-    var trainingOptions: Set<TrainingOption> = []
+    var trainingOptions: [TrainingOption] = []
     var motivationAnchors: Set<MotivationAnchor> = []
     var motivationNote = ""
     var goalBrief = ""
@@ -1296,8 +1328,13 @@ private struct ConsistencyOnboardingDraft {
         summary(for: motivationAnchors.map(\.title), fallback: "Not set")
     }
 
+    var motivationInputSummary: String {
+        summaryWithOptionalNote(values: motivationAnchors.map(\.title), note: motivationNote, fallback: "Not set")
+    }
+
     var trainingSummary: String {
-        summary(for: trainingOptions.map(\.title), fallback: "Not set")
+        guard !trainingOptions.isEmpty else { return "Not set" }
+        return trainingOptions.enumerated().map { "\($0.offset + 1). \($0.element.title)" }.joined(separator: ", ")
     }
 
     var rhythmSummary: String {
@@ -1307,6 +1344,10 @@ private struct ConsistencyOnboardingDraft {
 
     var blockerSummary: String {
         summary(for: blockers.map(\.title), fallback: "Not set")
+    }
+
+    var blockerInputSummary: String {
+        summaryWithOptionalNote(values: blockers.map(\.title), note: blockerNote, fallback: "Not set")
     }
 
     var supportSummary: String {
@@ -1328,6 +1369,11 @@ private struct ConsistencyOnboardingDraft {
 
     var baselineSummary: String {
         goalBaseline?.title ?? "Not set"
+    }
+
+    var markerSummary: String {
+        let trimmedMarker = goalMarker.trimmed
+        return trimmedMarker.isEmpty ? "Not set" : trimmedMarker
     }
 
     var timelineSummary: String {
@@ -1359,6 +1405,26 @@ private struct ConsistencyOnboardingDraft {
         let sortedValues = values.sorted()
         guard !sortedValues.isEmpty else { return fallback }
         return sortedValues.prefix(3).joined(separator: ", ") + (sortedValues.count > 3 ? " +" : "")
+    }
+
+    private func summaryWithOptionalNote(values: [String], note: String, fallback: String) -> String {
+        let base = summary(for: values, fallback: fallback)
+        let trimmedNote = note.trimmed
+        guard !trimmedNote.isEmpty else { return base }
+        return base == fallback ? trimmedNote : "\(base). \(trimmedNote)"
+    }
+
+    func trainingOptionRank(for option: TrainingOption) -> Int? {
+        guard let index = trainingOptions.firstIndex(of: option) else { return nil }
+        return index + 1
+    }
+
+    mutating func toggleTrainingOption(_ option: TrainingOption) {
+        if let index = trainingOptions.firstIndex(of: option) {
+            trainingOptions.remove(at: index)
+        } else {
+            trainingOptions.append(option)
+        }
     }
 
     private static let goalDateFormatter: DateFormatter = {
@@ -1404,7 +1470,7 @@ private struct OnboardingAIHealthSnapshot: Codable {
 private struct OnboardingAICompactContext: Codable {
     let intent: String
     let intentTitle: String
-    let trainingOptions: [String]
+    let trainingOptions: [RankedTrainingOptionPayload]
     let motivationAnchors: [String]
     let motivationNote: String
     let goalBrief: String
@@ -1427,7 +1493,9 @@ private struct OnboardingAICompactContext: Codable {
     init(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, healthSnapshot: OnboardingAIHealthSnapshot? = nil) {
         self.intent = intent.rawValue
         intentTitle = intent.title
-        trainingOptions = draft.trainingOptions.map(\.title).sorted()
+        trainingOptions = draft.trainingOptions.enumerated().map { index, option in
+            RankedTrainingOptionPayload(option: option, priority: index + 1)
+        }
         motivationAnchors = draft.motivationAnchors.map(\.title).sorted()
         motivationNote = draft.motivationNote.trimmed
         goalBrief = draft.goalBrief.trimmed
@@ -1475,6 +1543,18 @@ private struct GoalCandidatePayload: Codable {
     }
 }
 
+private struct RankedTrainingOptionPayload: Codable {
+    let activity: String
+    let title: String
+    let priority: Int
+
+    init(option: TrainingOption, priority: Int) {
+        activity = option.rawValue
+        title = option.title
+        self.priority = priority
+    }
+}
+
 private struct OnboardingAIFunctionRequest: Codable {
     let task: OnboardingAITask
     let context: OnboardingAICompactContext
@@ -1494,38 +1574,19 @@ private struct OnboardingAIBlendedCandidateFunctionResponse: Decodable {
 }
 
 private struct OnboardingAISummaryPayload: Codable {
-    let rows: [SummaryItemPayload]
-    let coachNote: String
+    let readback: String
     let realismNote: String
 
     init(summary: OnboardingSummaryOutput) {
-        rows = summary.rows.map(SummaryItemPayload.init(item:))
-        coachNote = summary.coachNote ?? ""
+        readback = summary.readback
         realismNote = summary.realismNote ?? ""
     }
 
     func summaryOutput() -> OnboardingSummaryOutput {
         OnboardingSummaryOutput(
-            rows: rows.map { $0.summaryItem() },
-            coachNote: coachNote.trimmed.nilIfEmpty,
+            readback: readback.trimmed,
             realismNote: realismNote.trimmed.nilIfEmpty
         )
-    }
-}
-
-private struct SummaryItemPayload: Codable {
-    let systemImage: String
-    let label: String
-    let value: String
-
-    init(item: SummaryItem) {
-        systemImage = item.systemImage
-        label = item.label
-        value = item.value
-    }
-
-    func summaryItem() -> SummaryItem {
-        SummaryItem(systemImage: systemImage, label: label, value: value)
     }
 }
 
@@ -1534,12 +1595,11 @@ private struct OnboardingAIGoalCandidatesPayload: Codable {
 }
 
 private struct OnboardingSummaryOutput {
-    let rows: [SummaryItem]
-    let coachNote: String?
+    let readback: String
     let realismNote: String?
 
     var isValid: Bool {
-        !rows.isEmpty && rows.allSatisfy { !$0.label.trimmed.isEmpty && !$0.value.trimmed.isEmpty }
+        !readback.trimmed.isEmpty
     }
 }
 
@@ -1635,44 +1695,17 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         switch intent {
         case .stayConsistent:
             return OnboardingSummaryOutput(
-                rows: [
-                    SummaryItem(systemImage: "target", label: "Intent", value: "Stay consistent and balanced"),
-                    SummaryItem(systemImage: "bolt.heart", label: "Anchor", value: draft.motivationSummary),
-                    SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
-                    SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
-                    SummaryItem(systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerSummary),
-                    SummaryItem(systemImage: "figure.cooldown", label: "Support", value: draft.supportSummary),
-                    SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
-                ],
-                coachNote: "Your setup points to a consistency-first rhythm: enough structure to remove decisions, with enough flexibility to protect the week when energy or work gets messy.",
+                readback: "You want a consistency-first rhythm that keeps training realistic when life gets messy.",
                 realismNote: nil
             )
         case .concreteGoal:
             return OnboardingSummaryOutput(
-                rows: [
-                    SummaryItem(systemImage: "flag", label: "Goal", value: concreteGoalTitle(from: draft)),
-                    SummaryItem(systemImage: "calendar", label: "Timeline", value: draft.timelineSummary),
-                    SummaryItem(systemImage: "chart.line.uptrend.xyaxis", label: "Baseline", value: draft.baselineSummary),
-                    SummaryItem(systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
-                    SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Support work", value: draft.trainingSummary),
-                    SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
-                    SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
-                ],
-                coachNote: "HAYF will treat the goal as the spine, then layer strength, mobility, and recovery around it instead of letting every week become a fresh planning problem.",
+                readback: "You have a concrete target and want the rest of training built around it.",
                 realismNote: concreteRealismNote(for: draft)
             )
         case .findGoal:
             return OnboardingSummaryOutput(
-                rows: [
-                    SummaryItem(systemImage: "target", label: "Chosen goal", value: draft.goalSummary),
-                    SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
-                    SummaryItem(systemImage: "flag", label: "Challenge", value: draft.challengeSummary),
-                    SummaryItem(systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
-                    SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
-                    SummaryItem(systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerSummary),
-                    SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
-                ],
-                coachNote: "The selected goal gives HAYF direction without turning the setup into a rigid performance project.",
+                readback: "You want HAYF to turn your preferences into a concrete goal that fits your life.",
                 realismNote: nil
             )
         }
@@ -2362,8 +2395,12 @@ private struct OnboardingOptionCard: View {
 private struct SelectableTile: View {
     let title: String
     let systemImage: String
-    let isSelected: Bool
+    let selectionRank: Int?
     let action: () -> Void
+
+    private var isSelected: Bool {
+        selectionRank != nil
+    }
 
     var body: some View {
         Button(action: action) {
@@ -2379,8 +2416,10 @@ private struct SelectableTile: View {
             .frame(maxWidth: .infinity)
             .frame(height: 104)
             .overlay(alignment: .topTrailing) {
-                CheckmarkBox(isSelected: isSelected)
-                    .padding(10)
+                if let selectionRank {
+                    PriorityBadge(rank: selectionRank)
+                        .padding(10)
+                }
             }
             .background(HAYFColor.surface)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -2390,6 +2429,19 @@ private struct SelectableTile: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct PriorityBadge: View {
+    let rank: Int
+
+    var body: some View {
+        Text("\(rank)")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .frame(width: 24, height: 24)
+            .background(HAYFColor.orange)
+            .clipShape(Circle())
     }
 }
 
@@ -2615,6 +2667,22 @@ private struct SummaryRow: View {
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct SummarySection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .medium))
+                .kerning(1.2)
+                .foregroundStyle(HAYFColor.secondary)
+
+            content()
         }
     }
 }
