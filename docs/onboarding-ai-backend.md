@@ -48,8 +48,7 @@ Used by all branches after the user has answered the setup questions.
 
 Expected output:
 
-- `readback`: one concise sentence confirming the core assignment understood from the user's input
-- `realismNote`: empty string when not needed; useful for concrete goals
+- `readback`: one concise coach-style sentence addressed to the user, reflecting what they want in natural second-person language
 
 ### `generate_goal_candidates`
 
@@ -58,7 +57,7 @@ Used only by the "Help me find a goal" branch.
 Expected output:
 
 - exactly three candidate objects
-- each candidate includes `id`, `title`, `rationale`, `tracking`, and `systemImage`
+- each candidate includes `id`, `title`, `rationale`, `tracking`, `timeframeWeeks`, and `systemImage`
 
 ### `generate_blended_candidate`
 
@@ -66,7 +65,7 @@ Used only by the "Help me find a goal" branch when the user picks two candidates
 
 Expected output:
 
-- one candidate object with `id`, `title`, `rationale`, `tracking`, and `systemImage`
+- one candidate object with `id`, `title`, `rationale`, `tracking`, `timeframeWeeks`, and `systemImage`
 
 ## Branch Coverage
 
@@ -123,7 +122,9 @@ Primary context:
 - desired direction
 - challenge style
 - avoids
+- injuries or discomforts
 - chosen/edited/blended goal candidate
+- generated goal timeframe
 - frequency
 - session length
 - blockers
@@ -143,8 +144,8 @@ The iOS app sends this shape as `context`:
   "motivationAnchors": ["Training without overthinking"],
   "motivationNote": "I lose the rhythm when work gets busy.",
   "goalBrief": "",
-  "goalMarker": "",
-  "goalBaseline": "Not set",
+  "injuryNotes": "",
+  "goalExperience": "Not set",
   "goalTimeline": "Not set",
   "goalPriority": "Not set",
   "goalDirection": "Not set",
@@ -199,7 +200,7 @@ You are HAYF's onboarding coach. Return concise, practical fitness setup JSON th
 
 Each task also adds task-specific rules through `taskRules(task)`:
 
-- Summary: return one concise readback sentence plus an optional realism note.
+- Summary: return one concise coach-style readback sentence addressed to the user.
 - First rhythm: return 3-5 starter rhythm rows and use deterministic health features cautiously when present. Do not generate full programs, phases, or long-term calendars here.
 - Goal candidates: return exactly three distinct candidates.
 - Blended candidate: combine the selected candidates into one clearer goal.
@@ -252,7 +253,6 @@ Good outputs should:
 - avoid medical claims
 - respect the selected intent
 - keep consistency users away from forced performance goals
-- give concrete-goal users a realism note when the timeline or target is risky
 - give goal-discovery users meaningfully different candidates
 - use HealthKit feature snapshot only as a cautious modifier
 - never mention unavailable data as if it is known

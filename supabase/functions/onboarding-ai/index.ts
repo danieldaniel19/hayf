@@ -20,10 +20,9 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
   generate_summary: {
     type: "object",
     additionalProperties: false,
-    required: ["readback", "realismNote"],
+    required: ["readback"],
     properties: {
       readback: { type: "string" },
-      realismNote: { type: "string" },
     },
   },
   generate_goal_candidates: {
@@ -36,7 +35,7 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["id", "title", "rationale", "tracking", "systemImage"],
+          required: ["id", "title", "rationale", "tracking", "timeframeWeeks", "systemImage"],
           properties: goalCandidateProperties(),
         },
       },
@@ -45,7 +44,7 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
   generate_blended_candidate: {
     type: "object",
     additionalProperties: false,
-    required: ["id", "title", "rationale", "tracking", "systemImage"],
+    required: ["id", "title", "rationale", "tracking", "timeframeWeeks", "systemImage"],
     properties: goalCandidateProperties(),
   },
 };
@@ -111,6 +110,7 @@ Deno.serve(async (req) => {
 
 async function runOpenAI(requestBody: OnboardingAIRequest, model: string) {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const promptContext = compactPromptContext(requestBody.task, requestBody.context);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -119,23 +119,25 @@ async function runOpenAI(requestBody: OnboardingAIRequest, model: string) {
     },
     body: JSON.stringify({
       model,
+      reasoning: { effort: "minimal" },
       input: [
         {
           role: "system",
           content:
-            "You are HAYF's onboarding coach. Return concise, practical fitness setup JSON that exactly matches the schema. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples.",
+            "You are HAYF's onboarding coach. Be concise and practical. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples.",
         },
         {
           role: "user",
           content: JSON.stringify({
             task: requestBody.task,
-            context: requestBody.context,
+            context: promptContext,
             candidates: requestBody.candidates ?? [],
             rules: taskRules(requestBody.task),
           }),
         },
       ],
       text: {
+        verbosity: "low",
         format: {
           type: "json_schema",
           name: requestBody.task,
@@ -172,12 +174,90 @@ function validateRequest(value: OnboardingAIRequest | null): asserts value is On
 function taskRules(task: OnboardingTask) {
   switch (task) {
     case "generate_summary":
-      return "Return one concise sentence that confirms the core assignment you understood from the user's input. Do not explain how HAYF will execute it, and do not list or repeat every answer. Also return a realismNote string; use an empty string when no realism note is needed.";
+      return "Return one concise sentence addressed to the user, like a coach reflecting back what a new client just told them. Describe what the user wants or selected in natural second-person language, such as 'You selected a goal that will help you build power and raise your threshold over 12 weeks.' Do not use imperative planner language like 'Create', 'Build a plan', or 'Track'. Do not explain how HAYF will execute it, and do not list or repeat every answer.";
     case "generate_goal_candidates":
-      return "Return exactly three distinct goal candidates. Keep ids URL-safe, titles concrete, and tracking fields short.";
+      return "Return exactly three distinct goal candidates. Each candidate must have a concrete title that includes its timeframe, a short tracking field, and timeframeWeeks set to 4, 8, or 12.";
     case "generate_blended_candidate":
-      return "Blend the two selected candidates into one candidate that keeps the clearer target and borrows useful support structure.";
+      return "Blend the two selected candidates into one candidate that keeps the clearer target, borrows useful support structure, and chooses a concrete 4-, 8-, or 12-week timeframe.";
   }
+}
+
+function compactPromptContext(task: OnboardingTask, context: Record<string, unknown>) {
+  if (task === "generate_goal_candidates") {
+    return pick(context, [
+      "intent",
+      "trainingOptions",
+      "goalDirection",
+      "challengeStyle",
+      "goalAvoidances",
+      "injuryNotes",
+    ]);
+  }
+
+  if (task === "generate_blended_candidate") {
+    return pick(context, [
+      "intent",
+      "trainingOptions",
+      "goalDirection",
+      "challengeStyle",
+      "goalAvoidances",
+      "injuryNotes",
+    ]);
+  }
+
+  if (context.intent === "stayConsistent") {
+    return pick(context, [
+      "intent",
+      "trainingOptions",
+      "motivationAnchors",
+      "motivationNote",
+      "frequency",
+      "sessionLength",
+      "blockers",
+      "blockerNote",
+      "supportStyle",
+      "badDayFloor",
+    ]);
+  }
+
+  if (context.intent === "concreteGoal") {
+    return pick(context, [
+      "intent",
+      "goalBrief",
+      "goalExperience",
+      "injuryNotes",
+      "goalTimeline",
+      "goalPriority",
+      "trainingOptions",
+      "frequency",
+      "sessionLength",
+      "blockers",
+      "blockerNote",
+      "supportStyle",
+      "badDayFloor",
+    ]);
+  }
+
+  return pick(context, [
+    "intent",
+    "chosenGoal",
+    "trainingOptions",
+    "goalDirection",
+    "challengeStyle",
+    "goalAvoidances",
+    "injuryNotes",
+    "goalTimeline",
+    "frequency",
+    "sessionLength",
+    "blockers",
+    "blockerNote",
+    "supportStyle",
+    "badDayFloor",
+  ]);
+}
+
+function pick(source: Record<string, unknown>, keys: string[]) {
+  return Object.fromEntries(keys.flatMap((key) => key in source ? [[key, source[key]]] : []));
 }
 
 function goalCandidateProperties() {
@@ -186,6 +266,7 @@ function goalCandidateProperties() {
     title: { type: "string" },
     rationale: { type: "string" },
     tracking: { type: "string" },
+    timeframeWeeks: { type: "integer", enum: [4, 8, 12] },
     systemImage: { type: "string" },
   };
 }

@@ -11,6 +11,7 @@ struct OnboardingFlowView: View {
     @State private var goalCandidates: [GoalCandidate] = []
     @State private var selectedGoalCandidateID: String?
     @State private var editingGoalText = ""
+    @State private var editingGoalTimeline: GoalTimeline = .eightWeeks
     @State private var blendCandidateIDs: Set<String> = []
     @State private var blendedCandidate: GoalCandidate?
     @State private var healthRequestState: HealthRequestState = .idle
@@ -223,23 +224,28 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 28) {
             OnboardingIntro(
                 title: "Let's make that\ncoachable.",
-                copy: "A few details help HAYF layer the goal onto a rhythm you can actually sustain."
+                copy: "HAYF will read your workout history from Apple Health later. Here, add the experience and constraints only you can tell us."
             )
 
-            OptionGroup(title: "Where are you starting from?") {
+            OptionGroup(title: "How experienced are you with training?") {
                 VStack(spacing: 10) {
-                    ForEach(GoalBaseline.allCases) { baseline in
+                    ForEach(GoalExperience.allCases) { experience in
                         DetailedSelectableRow(
-                            title: baseline.title,
-                            subtitle: baseline.subtitle,
-                            systemImage: baseline.systemImage,
-                            isSelected: draft.goalBaseline == baseline
+                            title: experience.title,
+                            subtitle: experience.subtitle,
+                            systemImage: experience.systemImage,
+                            isSelected: draft.goalExperience == experience
                         ) {
-                            draft.goalBaseline = baseline
+                            draft.goalExperience = experience
                         }
                     }
                 }
             }
+
+            Text("Apple Health will help HAYF estimate your recent training load. Your answer here takes priority if your tracked history is sparse or incomplete.")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(HAYFColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
 
             OptionGroup(title: "Timeline") {
                 VStack(alignment: .leading, spacing: 12) {
@@ -276,9 +282,9 @@ struct OnboardingFlowView: View {
             }
 
             OnboardingTextArea(
-                title: "Any useful marker?",
-                placeholder: "Current long run, recent race time, current lift, weekly mileage, or anything HAYF should know...",
-                text: $draft.goalMarker,
+                title: "Any injuries or discomforts?",
+                placeholder: "Knee pain on descents, shoulder discomfort overhead, returning from an ankle issue, or anything HAYF should plan around...",
+                text: $draft.injuryNotes,
                 characterLimit: 220
             )
         }
@@ -374,6 +380,13 @@ struct OnboardingFlowView: View {
                     }
                 }
             }
+
+            OnboardingTextArea(
+                title: "Any injuries or discomforts?",
+                placeholder: "Knee pain on descents, shoulder discomfort overhead, returning from an ankle issue, or anything HAYF should avoid building around...",
+                text: $draft.injuryNotes,
+                characterLimit: 220
+            )
         }
     }
 
@@ -410,10 +423,23 @@ struct OnboardingFlowView: View {
 
             OnboardingTextArea(
                 title: "Edited goal",
-                placeholder: "Build an 8-week balanced athlete goal with 3 sessions per week...",
+                placeholder: "Improve 10K pace while keeping one weekly strength session...",
                 text: $editingGoalText,
                 characterLimit: 320
             )
+
+            OptionGroup(title: "Timeframe") {
+                HStack(spacing: 10) {
+                    ForEach(GoalTimeline.discoveryCases) { timeline in
+                        CompactChoiceButton(
+                            title: timeline.title,
+                            isSelected: editingGoalTimeline == timeline
+                        ) {
+                            editingGoalTimeline = timeline
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -612,10 +638,6 @@ struct OnboardingFlowView: View {
                 CoachNote(text: currentSummary.readback)
             }
 
-            if let realismNote = currentSummary.realismNote {
-                CoachNote(systemImage: "exclamationmark.triangle", text: realismNote)
-            }
-
             SummarySection(title: "Your answers") {
                 VStack(spacing: 10) {
                     ForEach(currentInputSummaryRows) { row in
@@ -643,9 +665,9 @@ struct OnboardingFlowView: View {
             return [
                 SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary),
                 SummaryItem(systemImage: "calendar", label: "Timeline", value: draft.timelineSummary),
-                SummaryItem(systemImage: "chart.line.uptrend.xyaxis", label: "Baseline", value: draft.baselineSummary),
+                SummaryItem(systemImage: "figure.run", label: "Experience", value: draft.experienceSummary),
                 SummaryItem(systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
-                SummaryItem(systemImage: "scope", label: "Marker", value: draft.markerSummary),
+                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
                 SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
@@ -653,9 +675,11 @@ struct OnboardingFlowView: View {
         case .findGoal:
             return [
                 SummaryItem(systemImage: "target", label: "Chosen goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "calendar", label: "Timeframe", value: draft.timelineSummary),
                 SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
                 SummaryItem(systemImage: "flag", label: "Challenge", value: draft.challengeSummary),
                 SummaryItem(systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
+                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
                 SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
@@ -822,7 +846,7 @@ struct OnboardingFlowView: View {
         case .goalBrief:
             return !draft.goalBrief.trimmed.isEmpty
         case .goalClarification:
-            return draft.goalBaseline != nil && draft.goalTimeline != nil && draft.goalPriority != nil
+            return draft.goalExperience != nil && draft.goalTimeline != nil && draft.goalPriority != nil
         case .options:
             return !draft.trainingOptions.isEmpty
         case .anchor:
@@ -891,6 +915,7 @@ struct OnboardingFlowView: View {
         case .goalCandidates:
             if let selectedCandidate {
                 draft.chosenGoal = selectedCandidate
+                draft.goalTimeline = selectedCandidate.timeline
             }
             step = .rhythm
         case .editCandidate:
@@ -899,13 +924,16 @@ struct OnboardingFlowView: View {
                 title: editingGoalText.trimmed,
                 rationale: "Edited by you from HAYF's suggested direction.",
                 tracking: "HAYF will track consistency, recovery, and the goal markers you choose.",
+                timeline: editingGoalTimeline,
                 systemImage: "pencil"
             )
+            draft.goalTimeline = editingGoalTimeline
             step = .rhythm
         case .blendCandidates:
             step = .generatingBlend
         case .blendPreview:
             draft.chosenGoal = blendedCandidate
+            draft.goalTimeline = blendedCandidate?.timeline
             step = .rhythm
         case .rhythm:
             step = .friction
@@ -1030,6 +1058,7 @@ struct OnboardingFlowView: View {
         goalCandidates = []
         selectedGoalCandidateID = nil
         editingGoalText = ""
+        editingGoalTimeline = .eightWeeks
         blendCandidateIDs = []
         blendedCandidate = nil
     }
@@ -1037,6 +1066,7 @@ struct OnboardingFlowView: View {
     private func prepareCandidateEdit() {
         guard let selectedCandidate else { return }
         editingGoalText = "\(selectedCandidate.title): \(selectedCandidate.rationale)"
+        editingGoalTimeline = selectedCandidate.timeline
         step = .editCandidate
     }
 
@@ -1308,8 +1338,8 @@ private struct ConsistencyOnboardingDraft {
     var motivationAnchors: Set<MotivationAnchor> = []
     var motivationNote = ""
     var goalBrief = ""
-    var goalMarker = ""
-    var goalBaseline: GoalBaseline?
+    var injuryNotes = ""
+    var goalExperience: GoalExperience?
     var goalTimeline: GoalTimeline?
     var goalDate = Calendar.current.date(byAdding: .month, value: 3, to: .now) ?? .now
     var goalPriority: GoalPriority?
@@ -1367,13 +1397,13 @@ private struct ConsistencyOnboardingDraft {
         return trimmedGoal.isEmpty ? "Not set" : trimmedGoal
     }
 
-    var baselineSummary: String {
-        goalBaseline?.title ?? "Not set"
+    var experienceSummary: String {
+        goalExperience?.title ?? "Not set"
     }
 
-    var markerSummary: String {
-        let trimmedMarker = goalMarker.trimmed
-        return trimmedMarker.isEmpty ? "Not set" : trimmedMarker
+    var injurySummary: String {
+        let trimmedInjuryNotes = injuryNotes.trimmed
+        return trimmedInjuryNotes.isEmpty ? "None noted" : trimmedInjuryNotes
     }
 
     var timelineSummary: String {
@@ -1474,8 +1504,8 @@ private struct OnboardingAICompactContext: Codable {
     let motivationAnchors: [String]
     let motivationNote: String
     let goalBrief: String
-    let goalMarker: String
-    let goalBaseline: String
+    let injuryNotes: String
+    let goalExperience: String
     let goalTimeline: String
     let goalPriority: String
     let goalDirection: String
@@ -1499,8 +1529,8 @@ private struct OnboardingAICompactContext: Codable {
         motivationAnchors = draft.motivationAnchors.map(\.title).sorted()
         motivationNote = draft.motivationNote.trimmed
         goalBrief = draft.goalBrief.trimmed
-        goalMarker = draft.goalMarker.trimmed
-        goalBaseline = draft.baselineSummary
+        injuryNotes = draft.injuryNotes.trimmed
+        goalExperience = draft.experienceSummary
         goalTimeline = draft.timelineSummary
         goalPriority = draft.prioritySummary
         goalDirection = draft.directionSummary
@@ -1522,6 +1552,7 @@ private struct GoalCandidatePayload: Codable {
     let title: String
     let rationale: String
     let tracking: String
+    let timeframeWeeks: Int
     let systemImage: String
 
     init(candidate: GoalCandidate) {
@@ -1529,6 +1560,7 @@ private struct GoalCandidatePayload: Codable {
         title = candidate.title
         rationale = candidate.rationale
         tracking = candidate.tracking
+        timeframeWeeks = candidate.timeline.weeks
         systemImage = candidate.systemImage
     }
 
@@ -1538,6 +1570,7 @@ private struct GoalCandidatePayload: Codable {
             title: title,
             rationale: rationale,
             tracking: tracking,
+            timeline: GoalTimeline(weeks: timeframeWeeks) ?? .eightWeeks,
             systemImage: systemImage
         )
     }
@@ -1575,17 +1608,14 @@ private struct OnboardingAIBlendedCandidateFunctionResponse: Decodable {
 
 private struct OnboardingAISummaryPayload: Codable {
     let readback: String
-    let realismNote: String
 
     init(summary: OnboardingSummaryOutput) {
         readback = summary.readback
-        realismNote = summary.realismNote ?? ""
     }
 
     func summaryOutput() -> OnboardingSummaryOutput {
         OnboardingSummaryOutput(
-            readback: readback.trimmed,
-            realismNote: realismNote.trimmed.nilIfEmpty
+            readback: readback.trimmed
         )
     }
 }
@@ -1596,7 +1626,6 @@ private struct OnboardingAIGoalCandidatesPayload: Codable {
 
 private struct OnboardingSummaryOutput {
     let readback: String
-    let realismNote: String?
 
     var isValid: Bool {
         !readback.trimmed.isEmpty
@@ -1615,6 +1644,7 @@ private struct GoalCandidate: Identifiable, Equatable {
     let title: String
     let rationale: String
     let tracking: String
+    let timeline: GoalTimeline
     let systemImage: String
 }
 
@@ -1695,18 +1725,15 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         switch intent {
         case .stayConsistent:
             return OnboardingSummaryOutput(
-                readback: "You want a consistency-first rhythm that keeps training realistic when life gets messy.",
-                realismNote: nil
+                readback: "You want a consistency-first rhythm that still feels realistic when life gets messy."
             )
         case .concreteGoal:
             return OnboardingSummaryOutput(
-                readback: "You have a concrete target and want the rest of training built around it.",
-                realismNote: concreteRealismNote(for: draft)
+                readback: "You have a concrete target and want your training shaped around making steady progress toward it."
             )
         case .findGoal:
             return OnboardingSummaryOutput(
-                readback: "You want HAYF to turn your preferences into a concrete goal that fits your life.",
-                realismNote: nil
+                readback: "You chose a goal direction that fits the kind of training you enjoy and the constraints you want respected."
             )
         }
     }
@@ -1724,22 +1751,25 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
                 title: "8-week balanced athlete rhythm",
                 rationale: "Build consistency with strength, low-impact cardio, and mobility without relying on running.",
                 tracking: "Sessions completed, strength exposure, cardio exposure, recovery trend.",
+                timeline: .eightWeeks,
                 systemImage: "circle.lefthalf.filled"
             )
             : GoalCandidate(
                 id: "endurance-base",
-                title: wantsEndurance ? "10K-ready endurance base" : "8-week aerobic base",
+                title: wantsEndurance ? "Improve 10K readiness in 12 weeks" : "Build an 8-week aerobic base",
                 rationale: "Give your week a clear endurance direction while keeping the plan light enough to repeat.",
                 tracking: "Easy minutes, long-session confidence, consistency, recovery.",
+                timeline: wantsEndurance ? .twelveWeeks : .eightWeeks,
                 systemImage: "figure.run"
             )
 
         let second = wantsStrength
             ? GoalCandidate(
                 id: "strength-base",
-                title: "Strength base with one cardio anchor",
+                title: "Build strength with one cardio anchor in 12 weeks",
                 rationale: avoidsGym ? "Use simple strength sessions and one conditioning day without depending on a gym." : "Improve strength exposure while keeping enough cardio to feel athletic.",
                 tracking: "Strength sessions, movement quality, conditioning touchpoint, soreness.",
+                timeline: .twelveWeeks,
                 systemImage: "figure.strengthtraining.traditional"
             )
             : GoalCandidate(
@@ -1747,15 +1777,17 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
                 title: "4-week consistency reset",
                 rationale: "Make the win repeatable: never miss twice, keep one fallback, and reduce planning friction.",
                 tracking: "Weekly sessions, bad-day floor used, skipped-week recovery.",
+                timeline: .fourWeeks,
                 systemImage: "arrow.triangle.2.circlepath"
             )
 
         let third = sportReady
             ? GoalCandidate(
                 id: "sport-ready",
-                title: "Sport-ready conditioning block",
+                title: "Build sport-ready conditioning in 8 weeks",
                 rationale: "Build the engine, mobility, and strength base that make court or field sessions feel better.",
                 tracking: "Conditioning, mobility, strength support, sport-session readiness.",
+                timeline: .eightWeeks,
                 systemImage: "sportscourt"
             )
             : GoalCandidate(
@@ -1763,6 +1795,7 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
                 title: "Feel-fit 8-week build",
                 rationale: "Aim for more energy and capability without a hard event or all-or-nothing target.",
                 tracking: "Energy, consistency, cardio exposure, strength exposure.",
+                timeline: .eightWeeks,
                 systemImage: "bolt.heart"
             )
 
@@ -1776,6 +1809,7 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
                 title: "Balanced 8-week goal",
                 rationale: "Blend consistency, strength, and easy cardio into a repeatable rhythm.",
                 tracking: "Sessions, recovery, strength exposure, cardio exposure.",
+                timeline: .eightWeeks,
                 systemImage: "point.topleft.down.curvedto.point.bottomright.up"
             )
         }
@@ -1785,6 +1819,7 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
             title: "Blended goal: \(candidates[0].title) + \(candidates[1].title)",
             rationale: "Keep the clearest target from \(candidates[0].title.lowercased()) while borrowing the support structure from \(candidates[1].title.lowercased()).",
             tracking: "\(candidates[0].tracking) Also watch: \(candidates[1].tracking.lowercased())",
+            timeline: candidates.map(\.timeline).max(by: { $0.weeks < $1.weeks }) ?? .eightWeeks,
             systemImage: "point.topleft.down.curvedto.point.bottomright.up"
         )
     }
@@ -1800,19 +1835,6 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         }
 
         return goal
-    }
-
-    private static func concreteRealismNote(for draft: ConsistencyOnboardingDraft) -> String {
-        let goal = draft.goalBrief.lowercased()
-        if containsAny(goal, values: ["half", "marathon"]) && draft.goalTimeline == .fourWeeks {
-            return "A half marathon push on a 4-week timeline may be tight. HAYF will bias toward finishing healthy and building the next block instead of forcing risky volume."
-        }
-
-        if containsAny(goal, values: ["sub 2", "sub-2", "under 2"]) {
-            return "Sub-2 is plausible if your baseline supports it, but HAYF should protect easy volume and recovery rather than chase pace every session."
-        }
-
-        return "HAYF will treat this as adjustable: ambitious enough to guide the week, flexible enough to protect consistency."
     }
 
     private static func containsAny(_ text: String, values: [String]) -> Bool {
@@ -1942,38 +1964,38 @@ private enum SessionLength: String, CaseIterable, Identifiable {
     }
 }
 
-private enum GoalBaseline: String, CaseIterable, Identifiable {
-    case newToThis
-    case returning
-    case casual
-    case serious
+private enum GoalExperience: String, CaseIterable, Identifiable {
+    case underOneYear
+    case oneToThreeYears
+    case threeToFiveYears
+    case fivePlusYears
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .newToThis: return "New to this"
-        case .returning: return "Returning after a break"
-        case .casual: return "Training casually"
-        case .serious: return "Already training seriously"
+        case .underOneYear: return "Under 1 year"
+        case .oneToThreeYears: return "1-3 years"
+        case .threeToFiveYears: return "3-5 years"
+        case .fivePlusYears: return "5+ years"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .newToThis: return "Start from the ground up."
-        case .returning: return "Rebuild without pretending nothing changed."
-        case .casual: return "Add direction to what you already do."
-        case .serious: return "Shape the week around a real target."
+        case .underOneYear: return "Still building your base."
+        case .oneToThreeYears: return "Some history, still plenty of room to shape."
+        case .threeToFiveYears: return "A solid base HAYF should respect."
+        case .fivePlusYears: return "Long-term training experience."
         }
     }
 
     var systemImage: String {
         switch self {
-        case .newToThis: return "leaf"
-        case .returning: return "arrow.triangle.2.circlepath"
-        case .casual: return "figure.walk.motion"
-        case .serious: return "chart.line.uptrend.xyaxis"
+        case .underOneYear: return "leaf"
+        case .oneToThreeYears: return "figure.walk.motion"
+        case .threeToFiveYears: return "figure.run"
+        case .fivePlusYears: return "chart.line.uptrend.xyaxis"
         }
     }
 }
@@ -1992,6 +2014,26 @@ private enum GoalTimeline: String, CaseIterable, Identifiable {
         case .eightWeeks: return "8 weeks"
         case .twelveWeeks: return "12 weeks"
         case .specificDate: return "Date"
+        }
+    }
+
+    static let discoveryCases: [GoalTimeline] = [.fourWeeks, .eightWeeks, .twelveWeeks]
+
+    var weeks: Int {
+        switch self {
+        case .fourWeeks: return 4
+        case .eightWeeks: return 8
+        case .twelveWeeks: return 12
+        case .specificDate: return 12
+        }
+    }
+
+    init?(weeks: Int) {
+        switch weeks {
+        case 4: self = .fourWeeks
+        case 8: self = .eightWeeks
+        case 12: self = .twelveWeeks
+        default: return nil
         }
     }
 }

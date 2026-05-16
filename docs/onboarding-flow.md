@@ -272,16 +272,16 @@ Current frontend flow:
 1. Intent.
 2. Open goal brief, with no helper chips.
 3. Goal clarification:
-   - baseline
+   - training experience
    - timeline
    - priority tradeoff
-   - optional marker text
+   - optional injuries or discomforts
 4. Supporting training options.
 5. Rhythm.
 6. Friction.
 7. Support style.
 8. Bad-day floor.
-9. AI summary with realism note, backed by deterministic fallback.
+9. AI summary, backed by deterministic fallback.
 10. Apple Health.
 11. Active block preview: show the starter program, high-level phases, first weekly rhythm, and what HAYF will watch. The first rhythm is AI-backed with deterministic fallback; the program/phases are derived locally from the chosen goal, timeline, and draft answers.
 
@@ -318,13 +318,14 @@ When do you want to achieve it?
 - Specific date
 - No firm date
 
-Where are you starting from?
+How experienced are you with training?
 
-- New to this
-- Returning after a break
-- Training casually
-- Already training seriously
-- Not sure
+- Under 1 year
+- 1-3 years
+- 3-5 years
+- 5+ years
+
+HAYF should derive observed recent training load from Apple Health after onboarding. The user's self-reported experience should remain a separate signal and take priority when tracked history is sparse or incomplete.
 
 What cannot change?
 
@@ -371,7 +372,7 @@ Current frontend flow:
 2. Feasible training options.
 3. Desired change.
 4. Challenge style.
-5. Avoids.
+5. Avoids plus injuries or discomforts.
 6. AI goal candidates with choose, edit, or blend actions:
    - choose selects one candidate
    - edit opens one seeded text area and uses the edited text as the chosen goal
@@ -419,14 +420,6 @@ What would you rather avoid?
 - Gym dependence
 - Nothing specific
 
-Pick a timeframe that feels good.
-
-- 4-week reset
-- 8-week challenge
-- 12-week build
-- Seasonal goal
-- Decide for me
-
 Goal candidates:
 
 - 8-week balanced athlete goal: 3 workouts per week combining strength and cardio.
@@ -434,6 +427,8 @@ Goal candidates:
 - 4-week consistency reset: never miss twice, minimum 20 minutes.
 - Strength base goal: improve squat, press, and pull while keeping one cardio day.
 - Sport-ready goal: build conditioning and mobility for football, tennis, or basketball.
+
+Each generated candidate should carry a real timeframe, not just a phrase in the title. Choosing a candidate stores that timeframe with the selected goal. Editing a candidate lets the user change both the goal text and timeframe. Blending two candidates lets HAYF choose the timeframe for the blended result.
 
 Choice question:
 
@@ -481,8 +476,7 @@ The backend function receives a compact onboarding context:
 
 The backend should return structured content only:
 
-- concise summary readback
-- realism note, when relevant
+- concise coach-style summary readback
 - exactly three goal candidates for the goal-discovery branch
 - blended candidate preview
 
