@@ -47,12 +47,16 @@ struct PlanningAIProvider {
         )
     }
 
-    func recordPlanEdit(_ edit: PlanningPlanEdit) async throws -> PlanningEditOutcome {
+    func recordPlanEdit(
+        _ edit: PlanningPlanEdit,
+        repairPolicy: PlanningRepairPolicy = .immediate
+    ) async throws -> PlanningEditOutcome {
         let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
                 task: .recordPlanEdit,
                 deviceTimezone: TimeZone.current.identifier,
-                edit: edit
+                edit: edit,
+                repairPolicy: repairPolicy
             )
         )
 
@@ -108,14 +112,16 @@ struct PlanningAIProvider {
 
     func replaceWorkout(
         plannedWorkoutID: UUID,
-        candidate: PlanningWorkoutCandidate
+        candidate: PlanningWorkoutCandidate,
+        repairPolicy: PlanningRepairPolicy = .immediate
     ) async throws -> PlanningEditOutcome {
         let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
                 task: .replaceWorkout,
                 deviceTimezone: TimeZone.current.identifier,
                 plannedWorkoutID: plannedWorkoutID,
-                replacementCandidate: candidate
+                replacementCandidate: candidate,
+                repairPolicy: repairPolicy
             )
         )
 
@@ -125,7 +131,8 @@ struct PlanningAIProvider {
     func addWorkout(
         scheduledDate: Date,
         sequenceOrder: Int?,
-        candidate: PlanningWorkoutCandidate
+        candidate: PlanningWorkoutCandidate,
+        repairPolicy: PlanningRepairPolicy = .immediate
     ) async throws -> PlanningEditOutcome {
         let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
@@ -133,7 +140,20 @@ struct PlanningAIProvider {
                 deviceTimezone: TimeZone.current.identifier,
                 scheduledDate: Self.dateOnlyFormatter.string(from: scheduledDate),
                 sequenceOrder: sequenceOrder,
-                workoutCandidate: candidate
+                workoutCandidate: candidate,
+                repairPolicy: repairPolicy
+            )
+        )
+
+        return response.output
+    }
+
+    func createRepairProposal(for eventID: UUID) async throws -> PlanningEditOutcome {
+        let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .createRepairProposalForRecentEdit,
+                eventID: eventID,
+                repairPolicy: .immediate
             )
         )
 
@@ -301,6 +321,11 @@ enum PlanningProposalDecision: String, Codable {
     case rejected
 }
 
+enum PlanningRepairPolicy: String, Codable {
+    case immediate
+    case deferred
+}
+
 enum PlanningPlanEdit: Encodable {
     case moveWorkout(plannedWorkoutID: UUID, scheduledDate: Date, sequenceOrder: Int?)
     case deleteWorkout(plannedWorkoutID: UUID)
@@ -349,6 +374,7 @@ struct PlanningEditOutcome: Decodable {
     let summary: String?
     let mutationCount: Int?
     let proposal: PlanReplanProposal?
+    let reviewHint: PlanReviewHint?
 
     enum CodingKeys: String, CodingKey {
         case eventID
@@ -357,6 +383,21 @@ struct PlanningEditOutcome: Decodable {
         case summary
         case mutationCount
         case proposal
+        case reviewHint
+    }
+}
+
+struct PlanReviewHint: Decodable {
+    let reason: String
+    let summary: String?
+    let affectedWeekStart: String?
+    let riskCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case reason
+        case summary
+        case affectedWeekStart
+        case riskCount
     }
 }
 
@@ -416,6 +457,7 @@ enum PlanningAITask: String, Codable {
     case interpretWorkoutDescription = "interpret_workout_description"
     case replaceWorkout = "replace_workout"
     case addWorkout = "add_workout"
+    case createRepairProposalForRecentEdit = "create_repair_proposal_for_recent_edit"
     case applyReplanProposal = "apply_replan_proposal"
     case checkInToWorkout = "check_in_to_workout"
     case scheduledRefreshDueWindows = "scheduled_refresh_due_windows"
@@ -431,6 +473,7 @@ private struct PlanningFunctionRequest: Encodable {
     let windowStart: String?
     let edit: PlanningPlanEdit?
     let proposalID: UUID?
+    let eventID: UUID?
     let decision: PlanningProposalDecision?
     let plannedWorkoutID: UUID?
     let scheduledDate: String?
@@ -440,6 +483,7 @@ private struct PlanningFunctionRequest: Encodable {
     let mood: PlanningMoodInput?
     let textContext: String?
     let currentDerivedSnapshot: HealthFeatureSnapshot?
+    let repairPolicy: PlanningRepairPolicy?
 
     init(
         task: PlanningAITask,
@@ -451,6 +495,7 @@ private struct PlanningFunctionRequest: Encodable {
         windowStart: String? = nil,
         edit: PlanningPlanEdit? = nil,
         proposalID: UUID? = nil,
+        eventID: UUID? = nil,
         decision: PlanningProposalDecision? = nil,
         plannedWorkoutID: UUID? = nil,
         scheduledDate: String? = nil,
@@ -459,7 +504,8 @@ private struct PlanningFunctionRequest: Encodable {
         workoutCandidate: PlanningWorkoutCandidate? = nil,
         mood: PlanningMoodInput? = nil,
         textContext: String? = nil,
-        currentDerivedSnapshot: HealthFeatureSnapshot? = nil
+        currentDerivedSnapshot: HealthFeatureSnapshot? = nil,
+        repairPolicy: PlanningRepairPolicy? = nil
     ) {
         self.task = task
         self.healthSnapshot = healthSnapshot
@@ -470,6 +516,7 @@ private struct PlanningFunctionRequest: Encodable {
         self.windowStart = windowStart
         self.edit = edit
         self.proposalID = proposalID
+        self.eventID = eventID
         self.decision = decision
         self.plannedWorkoutID = plannedWorkoutID
         self.scheduledDate = scheduledDate
@@ -479,6 +526,7 @@ private struct PlanningFunctionRequest: Encodable {
         self.mood = mood
         self.textContext = textContext
         self.currentDerivedSnapshot = currentDerivedSnapshot
+        self.repairPolicy = repairPolicy
     }
 
     enum CodingKeys: String, CodingKey {
@@ -491,6 +539,7 @@ private struct PlanningFunctionRequest: Encodable {
         case windowStart
         case edit
         case proposalID = "proposal_id"
+        case eventID = "event_id"
         case decision
         case plannedWorkoutID = "planned_workout_id"
         case scheduledDate
@@ -500,6 +549,7 @@ private struct PlanningFunctionRequest: Encodable {
         case mood
         case textContext
         case currentDerivedSnapshot = "current_derived_snapshot"
+        case repairPolicy = "repair_policy"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -513,6 +563,7 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(windowStart, forKey: .windowStart)
         try container.encodeIfPresent(edit, forKey: .edit)
         try container.encodeIfPresent(proposalID?.uuidString.lowercased(), forKey: .proposalID)
+        try container.encodeIfPresent(eventID?.uuidString.lowercased(), forKey: .eventID)
         try container.encodeIfPresent(decision, forKey: .decision)
         try container.encodeIfPresent(plannedWorkoutID?.uuidString.lowercased(), forKey: .plannedWorkoutID)
         try container.encodeIfPresent(scheduledDate, forKey: .scheduledDate)
@@ -523,6 +574,7 @@ private struct PlanningFunctionRequest: Encodable {
         let trimmedTextContext = textContext?.trimmingCharacters(in: .whitespacesAndNewlines)
         try container.encodeIfPresent(trimmedTextContext?.isEmpty == false ? trimmedTextContext : nil, forKey: .textContext)
         try container.encodeIfPresent(currentDerivedSnapshot, forKey: .currentDerivedSnapshot)
+        try container.encodeIfPresent(repairPolicy, forKey: .repairPolicy)
     }
 }
 

@@ -14,6 +14,7 @@ struct PlanScreenView: View {
     @State private var isApplyingReplanProposal = false
     @State private var movingWorkout: PlanWorkout?
     @State private var activeEditAnalysis: PlanEditAnalysis?
+    @State private var workoutCandidateLoadID: UUID?
 
     private let planningAIProvider = PlanningAIProvider()
 
@@ -220,7 +221,9 @@ struct PlanScreenView: View {
     private func deleteWorkout(_ workout: PlanWorkout) async {
         activeEditAnalysis = .delete
         do {
-            let outcome = try await planningAIProvider.recordPlanEdit(.deleteWorkout(plannedWorkoutID: workout.id))
+            let outcome = try await planningAIProvider.recordPlanEdit(
+                .deleteWorkout(plannedWorkoutID: workout.id)
+            )
             await store.loadVisiblePlan()
             activeEditAnalysis = nil
             if movingWorkout?.id == workout.id {
@@ -242,21 +245,25 @@ struct PlanScreenView: View {
     }
 
     private func loadWorkoutCandidates(for context: WorkoutPlanningContext) {
+        let loadID = UUID()
+        workoutCandidateLoadID = loadID
         workoutCandidates = []
         workoutPlanningErrorMessage = nil
         isLoadingWorkoutCandidates = true
 
         Task {
             do {
+                let loadedCandidates: [PlanningWorkoutCandidate]
                 switch context.mode {
                 case let .replace(workout):
                     let output = try await planningAIProvider.recommendWorkoutReplacements(
                         plannedWorkoutID: workout.id,
                         textContext: "I do not want to do this workout in this slot."
                     )
-                    workoutCandidates = output.candidates
+                    loadedCandidates = output.candidates
                 case let .add(date, _):
                     guard let scheduledDate = PlanDate.date(from: date) else {
+                        guard workoutCandidateLoadID == loadID else { return }
                         workoutPlanningErrorMessage = "Could not read the selected date."
                         isLoadingWorkoutCandidates = false
                         return
@@ -265,10 +272,13 @@ struct PlanScreenView: View {
                         scheduledDate: scheduledDate,
                         textContext: "I feel like working out on this day, but I want HAYF to pick something that fits the plan."
                     )
-                    workoutCandidates = output.candidates
+                    loadedCandidates = output.candidates
                 }
+                guard workoutCandidateLoadID == loadID, workoutPlanningContext?.id == context.id else { return }
+                workoutCandidates = loadedCandidates
                 isLoadingWorkoutCandidates = false
             } catch {
+                guard workoutCandidateLoadID == loadID, workoutPlanningContext?.id == context.id else { return }
                 workoutPlanningErrorMessage = error.localizedDescription
                 isLoadingWorkoutCandidates = false
             }
@@ -317,7 +327,10 @@ struct PlanScreenView: View {
         case let .replace(workout):
             activeEditAnalysis = .replace
             do {
-                let outcome = try await planningAIProvider.replaceWorkout(plannedWorkoutID: workout.id, candidate: candidate)
+                let outcome = try await planningAIProvider.replaceWorkout(
+                    plannedWorkoutID: workout.id,
+                    candidate: candidate
+                )
                 await store.loadVisiblePlan()
                 activeEditAnalysis = nil
                 if movingWorkout?.id == workout.id {
@@ -354,11 +367,15 @@ struct PlanScreenView: View {
     }
 
     private func presentReplanProposal(from outcome: PlanningEditOutcome) {
-        guard let proposalID = outcome.proposalID else { return }
-        if let proposal = store.pendingReplanProposals.first(where: { $0.id == proposalID }) {
+        if let proposalID = outcome.proposalID,
+           let proposal = store.pendingReplanProposals.first(where: { $0.id == proposalID }) {
             selectedReplanProposal = proposal
-        } else if let proposal = outcome.proposal, proposal.mutationCount > 0 {
+            return
+        }
+
+        if let proposal = outcome.proposal, proposal.mutationCount > 0 {
             selectedReplanProposal = proposal
+            return
         }
     }
 
@@ -2436,24 +2453,44 @@ private struct ReplanMutationSummary: View {
             let fields = object.objectValue("fields")
             let title = fields?.stringValue("title") ?? "a support workout"
             let date = fields?.stringValue("scheduled_date")
+            let sourceTitle = object.stringValue("source_workout_title")
+            let sourceDate = object.stringValue("source_scheduled_date")
             if let date {
+                if let sourceTitle, let sourceDate {
+                    return "Add \(title) on \(PlanDate.longLabel(date)) to cover the gap from \(sourceTitle) on \(PlanDate.longLabel(sourceDate))."
+                }
                 return "Add \(title) on \(PlanDate.longLabel(date))."
             }
             return "Add \(title) to restore the week."
         case "update_workout":
             let fields = object.objectValue("fields")
+            let title = object.stringValue("workout_title") ?? "a surrounding workout"
+            let fromDate = object.stringValue("from_scheduled_date")
             if let date = fields?.stringValue("scheduled_date") {
-                return "Move a surrounding workout to \(PlanDate.longLabel(date)) for better spacing."
+                if let fromDate, fromDate != date {
+                    return "Move \(title) from \(PlanDate.longLabel(fromDate)) to \(PlanDate.longLabel(date)) for better spacing."
+                }
+                return "Move \(title) to \(PlanDate.longLabel(date)) for better spacing."
             }
             if let duration = fields?.intValue("duration_minutes") {
-                return "Lower a surrounding workout to \(duration) minutes."
+                if let fromDate {
+                    return "Lower \(title) on \(PlanDate.longLabel(fromDate)) to \(duration) minutes."
+                }
+                return "Lower \(title) to \(duration) minutes."
             }
             if let intensity = fields?.stringValue("intensity_label") {
-                return "Lower a surrounding workout to \(intensity) intensity."
+                if let fromDate {
+                    return "Lower \(title) on \(PlanDate.longLabel(fromDate)) to \(intensity) intensity."
+                }
+                return "Lower \(title) to \(intensity) intensity."
             }
-            return "Adjust a surrounding workout so the week stays recoverable."
+            return "Adjust \(title) so the week stays recoverable."
         case "delete_workout":
-            return "Remove one surrounding workout from the week."
+            let title = object.stringValue("workout_title") ?? "one surrounding workout"
+            if let fromDate = object.stringValue("from_scheduled_date") {
+                return "Remove \(title) on \(PlanDate.longLabel(fromDate)) from the week."
+            }
+            return "Remove \(title) from the week."
         default:
             return nil
         }

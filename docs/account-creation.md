@@ -69,6 +69,8 @@ Do not collect height or weight in account creation. These should come from Heal
 
 The account profile is stored in `public.profiles`.
 
+In the Supabase dashboard, this usually appears as `profiles` because the table editor is already scoped to the `public` schema. `profiles` in the table list and `public.profiles` in SQL refer to the same relation unless you deliberately switch schemas.
+
 Expected fields:
 
 - `id uuid primary key references auth.users(id) on delete cascade`
@@ -87,6 +89,8 @@ Profile photos use a private Supabase Storage bucket:
 - bucket: `profile-photos`
 - path convention: `{user_id}/avatar.jpg`
 - access policy: users can read, upload, update, and delete only objects in their own user-id folder
+
+Because the bucket is private, the app must create a signed URL from `profile_photo_path` before it can render a custom uploaded image.
 
 ## Current Code Shape
 

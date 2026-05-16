@@ -143,6 +143,9 @@ struct ActivityFeatureSummary: Codable {
     let averageSteps28Days: Double?
     let activeEnergy7DaysKilocalories: Double?
     let exerciseMinutes7Days: Double?
+    let cyclingDistance7DaysKilometers: Double?
+    let runningDistance7DaysKilometers: Double?
+    let walkingRunningDistance7DaysKilometers: Double?
     let walkingRunningDistance28DaysKilometers: Double?
     let cyclingDistance90DaysKilometers: Double?
 }
@@ -274,6 +277,8 @@ struct FitnessLongestWorkoutSummary: Codable, Identifiable {
 }
 
 struct FitnessStrengthContinuitySummary: Codable {
+    let strengthWorkouts7Days: Int
+    let strengthMinutes7Days: Double
     let strengthWorkouts28Days: Int
     let strengthWorkouts90Days: Int
     let strengthMinutes90Days: Double
@@ -430,6 +435,7 @@ final class HealthKitManager {
         async let steps28 = fetchDailyAverage(identifier: .stepCount, unit: .count(), days: 28)
         async let activeEnergy7 = fetchCumulativeQuantity(identifier: .activeEnergyBurned, unit: .kilocalorie(), days: 7)
         async let exerciseMinutes7 = fetchCumulativeQuantity(identifier: .appleExerciseTime, unit: .minute(), days: 7)
+        async let walkingRunningDistance7 = fetchCumulativeQuantity(identifier: .distanceWalkingRunning, unit: .meter(), days: 7)
         async let walkingRunningDistance28 = fetchCumulativeQuantity(identifier: .distanceWalkingRunning, unit: .meter(), days: 28)
         async let cyclingDistance90 = fetchCumulativeQuantity(identifier: .distanceCycling, unit: .meter(), days: 90)
         async let restingHeartRate14 = fetchAverageQuantity(identifier: .restingHeartRate, unit: .count().unitDivided(by: .minute()), days: 14)
@@ -448,11 +454,24 @@ final class HealthKitManager {
 
         let workoutSamples = try await workouts
         let workoutLedger = buildWorkoutLedger(from: workoutSamples)
+        let sevenDayStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+        let recentWorkouts = workoutSamples.filter { $0.startDate >= sevenDayStart }
+        let cyclingDistance7 = recentWorkouts
+            .filter { normalizedModality(for: $0) == "cycling" }
+            .compactMap(distanceKilometers)
+            .reduce(0, +)
+        let runningDistance7 = recentWorkouts
+            .filter { normalizedModality(for: $0) == "running" }
+            .compactMap(distanceKilometers)
+            .reduce(0, +)
         let activity = try await ActivityFeatureSummary(
             averageSteps7Days: steps7,
             averageSteps28Days: steps28,
             activeEnergy7DaysKilocalories: activeEnergy7,
             exerciseMinutes7Days: exerciseMinutes7,
+            cyclingDistance7DaysKilometers: cyclingDistance7 > 0 ? cyclingDistance7 : nil,
+            runningDistance7DaysKilometers: runningDistance7 > 0 ? runningDistance7 : nil,
+            walkingRunningDistance7DaysKilometers: walkingRunningDistance7.map { $0 / 1000 },
             walkingRunningDistance28DaysKilometers: walkingRunningDistance28.map { $0 / 1000 },
             cyclingDistance90DaysKilometers: cyclingDistance90.map { $0 / 1000 }
         )
@@ -883,12 +902,18 @@ final class HealthKitManager {
             guard let start = calendar.date(byAdding: .day, value: -90, to: now) else { return false }
             return workout.startDate >= start
         }
+        let sevenDayStrength = strengthWorkouts.filter { workout in
+            guard let start = calendar.date(byAdding: .day, value: -7, to: now) else { return false }
+            return workout.startDate >= start
+        }
         let strength90 = ninetyDayWorkouts.filter { normalizedModality(for: $0) == "strength" }
         let total90Minutes = ninetyDayWorkouts.reduce(0) { $0 + $1.duration / 60 }
         let strength90Minutes = strength90.reduce(0) { $0 + $1.duration / 60 }
         let lastStrength = strengthWorkouts.map(\.startDate).max()
 
         return FitnessStrengthContinuitySummary(
+            strengthWorkouts7Days: sevenDayStrength.count,
+            strengthMinutes7Days: sevenDayStrength.reduce(0) { $0 + $1.duration / 60 },
             strengthWorkouts28Days: workoutsInLast(days: 28, workouts: strengthWorkouts),
             strengthWorkouts90Days: strength90.count,
             strengthMinutes90Days: strength90Minutes,

@@ -12,6 +12,7 @@ type PlanningTask =
   | "interpret_workout_description"
   | "replace_workout"
   | "add_workout"
+  | "create_repair_proposal_for_recent_edit"
   | "apply_replan_proposal"
   | "check_in_to_workout"
   | "scheduled_refresh_due_windows";
@@ -27,6 +28,8 @@ type PlanningAIRequest = {
   edit?: PlanEditInput;
   proposalID?: string;
   proposal_id?: string;
+  eventID?: string;
+  event_id?: string;
   decision?: "accepted" | "rejected";
   plannedWorkoutID?: string;
   planned_workout_id?: string;
@@ -42,6 +45,8 @@ type PlanningAIRequest = {
   textContext?: string;
   currentDerivedSnapshot?: Record<string, unknown> | null;
   current_derived_snapshot?: Record<string, unknown> | null;
+  repairPolicy?: "immediate" | "deferred";
+  repair_policy?: "immediate" | "deferred";
 };
 
 type ActualWorkoutInput = {
@@ -516,6 +521,8 @@ async function handleTask(args: {
       return replaceWorkout(admin, userID!, requestBody, model);
     case "add_workout":
       return addWorkout(admin, userID!, requestBody, model);
+    case "create_repair_proposal_for_recent_edit":
+      return createRepairProposalForRecentEdit(admin, userID!, requestBody, model);
     case "apply_replan_proposal":
       return applyReplanProposal(admin, userID!, requestBody);
     case "check_in_to_workout":
@@ -960,27 +967,14 @@ async function recordPlanEdit(
     throw new Error("record_plan_edit does not support replacement edits directly");
   }
 
-  const repair = await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
-  const proposal = repair
-    ? await createReplanProposal(admin, {
-      userID,
-      activeBlockID: block.id,
-      triggerEventID: event.id,
-      reason: repair.reason,
-      mutations: repair.mutations,
-      metadata: {
-        type: "plan_edit_repair",
-        summary: repair.summary,
-        risks: repair.risks.map((risk) => ({
-          kind: risk.kind,
-          severity: risk.severity,
-          dimensions: risk.dimensions,
-          affectedWorkoutIDs: risk.affectedWorkoutIDs,
-        })),
-      },
-    })
+  const repairPolicy = requestedRepairPolicy(requestBody);
+  const repair = repairPolicy === "deferred"
+    ? await buildPlanEditReviewHint(admin, userID, block, workout, edit, requestBody.deviceTimezone || block.timezone || "UTC")
+    : await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+  const proposal = repair && repairPolicy === "immediate"
+    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
     : null;
-  if (!proposal) {
+  if (!proposal || repairPolicy === "deferred") {
     await expirePendingReplanProposals(admin, userID, block.id);
   }
   await markCurrentWorkout(admin, userID, block.id, new Date());
@@ -992,6 +986,7 @@ async function recordPlanEdit(
     summary: repair?.summary ?? null,
     risks: repair?.risks ?? [],
     mutationCount: repair?.mutations.length ?? 0,
+    reviewHint: repair && repairPolicy === "deferred" ? reviewHintFromRepair(repair) : null,
     proposal: proposal
       ? {
         id: proposal.id,
@@ -1024,7 +1019,7 @@ async function buildPlanEditRepair(
   const affectedFirstWeek = startOfWeek(new Date(Math.min(...parsedDates.map((date) => date.getTime()))));
   const affectedLastWeek = startOfWeek(new Date(Math.max(...parsedDates.map((date) => date.getTime()))));
   const firstWeek = new Date(Math.min(currentWeekStart.getTime(), affectedFirstWeek.getTime()));
-  const lastWeek = new Date(Math.max(addDays(currentWeekStart, 7).getTime(), affectedLastWeek.getTime()));
+  const lastWeek = new Date(Math.max(currentWeekStart.getTime(), affectedLastWeek.getTime()));
   const window = { start: isoDate(firstWeek), end: isoDate(addDays(lastWeek, 6)) };
 
   const [workouts, rhythms, goalTargets] = await Promise.all([
@@ -1095,6 +1090,122 @@ async function buildPlanEditRepair(
     reason: draft?.reason?.trim() || fallback.reason,
     summary: draft?.summary?.trim() || fallback.summary,
   };
+}
+
+async function buildPlanEditReviewHint(
+  admin: SupabaseAdminClient,
+  userID: string,
+  block: Record<string, any>,
+  editedWorkout: Record<string, any>,
+  edit: PlanEditInput,
+  timezone: string,
+): Promise<EditRepairPlan | null> {
+  const affectedDates = [editedWorkout.scheduled_date];
+  if (edit.type === "move_workout" || edit.type === "replace_workout" || edit.type === "add_workout") affectedDates.push(edit.scheduled_date);
+  const parsedDates = affectedDates.map((date) => parseDateOnly(date)).filter(Boolean) as Date[];
+  const today = todayInTimezone(timezone);
+  const currentWeekStart = startOfWeek(today);
+  const affectedFirstWeek = startOfWeek(new Date(Math.min(...parsedDates.map((date) => date.getTime()))));
+  const affectedLastWeek = startOfWeek(new Date(Math.max(...parsedDates.map((date) => date.getTime()))));
+  const firstWeek = new Date(Math.min(currentWeekStart.getTime(), affectedFirstWeek.getTime()));
+  const lastWeek = new Date(Math.max(currentWeekStart.getTime(), affectedLastWeek.getTime()));
+  const window = { start: isoDate(firstWeek), end: isoDate(addDays(lastWeek, 6)) };
+
+  const [workouts, rhythms, goalTargets] = await Promise.all([
+    list(
+      admin
+        .from("planned_workouts")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .gte("scheduled_date", window.start)
+        .lte("scheduled_date", window.end)
+        .in("status", ["planned", "current", "checked_in", "adjusted", "done"])
+        .order("scheduled_date", { ascending: true })
+        .order("sequence_order", { ascending: true }),
+    ),
+    list(
+      admin
+        .from("weekly_rhythms")
+        .select()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .eq("status", "active")
+        .gte("week_start_date", window.start)
+        .lte("week_start_date", window.end),
+    ),
+    list(
+      admin
+        .from("fitness_goal_targets")
+        .select("id,target_kind,title,description,metric_key,metric_category,evaluation_rule_json,status")
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .in("status", ["on_track", "lagging", "needs_review"]),
+    ),
+  ]);
+
+  const risks = detectPlanEditRisks({
+    block,
+    workouts,
+    rhythms,
+    goalTargets,
+    editedWorkout,
+    edit,
+    today,
+  });
+  if (risks.length === 0) return null;
+
+  const fallback = fallbackEditRepair({ block, workouts, rhythms, editedWorkout, edit, risks, today });
+  if (fallback.mutations.length === 0) return null;
+  return fallback;
+}
+
+function requestedRepairPolicy(requestBody: PlanningAIRequest): "immediate" | "deferred" {
+  return requestBody.repairPolicy ?? requestBody.repair_policy ?? "immediate";
+}
+
+function reviewHintFromRepair(repair: EditRepairPlan) {
+  const affectedWeekStart = repair.risks.find((risk) => risk.weekStartDate)?.weekStartDate ?? null;
+  return {
+    reason: repair.reason,
+    summary: repair.summary,
+    affectedWeekStart,
+    riskCount: repair.risks.length,
+    risks: repair.risks.map((risk) => ({
+      kind: risk.kind,
+      severity: risk.severity,
+      message: risk.message,
+      affectedWorkoutIDs: risk.affectedWorkoutIDs,
+      dimensions: risk.dimensions,
+      weekStartDate: risk.weekStartDate ?? null,
+    })),
+  };
+}
+
+async function createPlanEditRepairProposal(
+  admin: SupabaseAdminClient,
+  userID: string,
+  activeBlockID: string,
+  triggerEventID: string,
+  repair: EditRepairPlan,
+) {
+  return createReplanProposal(admin, {
+    userID,
+    activeBlockID,
+    triggerEventID,
+    reason: repair.reason,
+    mutations: repair.mutations,
+    metadata: {
+      type: "plan_edit_repair",
+      summary: repair.summary,
+      risks: repair.risks.map((risk) => ({
+        kind: risk.kind,
+        severity: risk.severity,
+        dimensions: risk.dimensions,
+        affectedWorkoutIDs: risk.affectedWorkoutIDs,
+      })),
+    },
+  });
 }
 
 function detectPlanEditRisks(args: {
@@ -1557,6 +1668,8 @@ function buildRepairMutations(
       mutations.push({
         type: "update_workout",
         workout_id: candidate.id,
+        workout_title: candidate.title,
+        from_scheduled_date: candidate.scheduled_date,
         fields: {
           scheduled_date: openDate,
           sequence_order: nextSequenceOrderForDate(weekWorkouts, openDate),
@@ -1571,6 +1684,8 @@ function buildRepairMutations(
     mutations.push({
       type: "update_workout",
       workout_id: candidate.id,
+      workout_title: candidate.title,
+      from_scheduled_date: candidate.scheduled_date,
       fields: {
         duration_minutes: Math.max(20, Math.round((candidate.duration_minutes ?? 30) * 0.75)),
         intensity_label: "Low",
@@ -1603,6 +1718,8 @@ function createSupportWorkoutMutation(args: {
 
   return {
     type: "create_workout",
+    source_workout_title: sourceWorkout.title ?? null,
+    source_scheduled_date: sourceWorkout.scheduled_date ?? null,
     fields: {
       active_block_id: block.id,
       weekly_rhythm_id: rhythm?.id ?? sourceWorkout.weekly_rhythm_id ?? null,
@@ -1961,27 +2078,14 @@ async function replaceWorkout(
     replacement_workout_id: replacement.id,
     scheduled_date: replacement.scheduled_date,
   };
-  const repair = await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
-  const proposal = repair
-    ? await createReplanProposal(admin, {
-      userID,
-      activeBlockID: block.id,
-      triggerEventID: event.id,
-      reason: repair.reason,
-      mutations: repair.mutations,
-      metadata: {
-        type: "plan_edit_repair",
-        summary: repair.summary,
-        risks: repair.risks.map((risk) => ({
-          kind: risk.kind,
-          severity: risk.severity,
-          dimensions: risk.dimensions,
-          affectedWorkoutIDs: risk.affectedWorkoutIDs,
-        })),
-      },
-    })
+  const repairPolicy = requestedRepairPolicy(requestBody);
+  const repair = repairPolicy === "deferred"
+    ? await buildPlanEditReviewHint(admin, userID, block, workout, edit, requestBody.deviceTimezone || block.timezone || "UTC")
+    : await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+  const proposal = repair && repairPolicy === "immediate"
+    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
     : null;
-  if (!proposal) {
+  if (!proposal || repairPolicy === "deferred") {
     await expirePendingReplanProposals(admin, userID, block.id);
   }
   await markCurrentWorkout(admin, userID, block.id, new Date());
@@ -1995,6 +2099,7 @@ async function replaceWorkout(
     summary: repair?.summary ?? null,
     risks: repair?.risks ?? [],
     mutationCount: repair?.mutations.length ?? 0,
+    reviewHint: repair && repairPolicy === "deferred" ? reviewHintFromRepair(repair) : null,
     proposal: proposal
       ? {
         id: proposal.id,
@@ -2077,27 +2182,14 @@ async function addWorkout(
     added_workout_id: addedWorkout.id,
     scheduled_date: addedWorkout.scheduled_date,
   };
-  const repair = await buildPlanEditRepair(admin, userID, block, addedWorkout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
-  const proposal = repair
-    ? await createReplanProposal(admin, {
-      userID,
-      activeBlockID: block.id,
-      triggerEventID: event.id,
-      reason: repair.reason,
-      mutations: repair.mutations,
-      metadata: {
-        type: "plan_edit_repair",
-        summary: repair.summary,
-        risks: repair.risks.map((risk) => ({
-          kind: risk.kind,
-          severity: risk.severity,
-          dimensions: risk.dimensions,
-          affectedWorkoutIDs: risk.affectedWorkoutIDs,
-        })),
-      },
-    })
+  const repairPolicy = requestedRepairPolicy(requestBody);
+  const repair = repairPolicy === "deferred"
+    ? await buildPlanEditReviewHint(admin, userID, block, addedWorkout, edit, requestBody.deviceTimezone || block.timezone || "UTC")
+    : await buildPlanEditRepair(admin, userID, block, addedWorkout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+  const proposal = repair && repairPolicy === "immediate"
+    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
     : null;
-  if (!proposal) {
+  if (!proposal || repairPolicy === "deferred") {
     await expirePendingReplanProposals(admin, userID, block.id);
   }
   await markCurrentWorkout(admin, userID, block.id, new Date());
@@ -2111,6 +2203,7 @@ async function addWorkout(
     summary: repair?.summary ?? null,
     risks: repair?.risks ?? [],
     mutationCount: repair?.mutations.length ?? 0,
+    reviewHint: repair && repairPolicy === "deferred" ? reviewHintFromRepair(repair) : null,
     proposal: proposal
       ? {
         id: proposal.id,
@@ -2171,6 +2264,149 @@ async function applyReplanProposal(
   });
 
   return { userID, proposalID: proposal.id, decision: requestBody.decision, eventID: event.id };
+}
+
+async function createRepairProposalForRecentEdit(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const eventID = requestBody.eventID ?? requestBody.event_id;
+  if (!eventID) {
+    throw new Error("create_repair_proposal_for_recent_edit requires eventID");
+  }
+
+  const block = await loadActiveBlock(admin, userID);
+  const event = await single(
+    admin
+      .from("plan_events")
+      .select()
+      .eq("id", eventID)
+      .eq("user_id", userID)
+      .eq("active_block_id", block.id)
+      .single(),
+    "Plan edit event not found",
+  );
+
+  const payload = event.payload_json ?? {};
+  const reconstructed = await reconstructPlanEditFromEvent(admin, userID, block, event, payload);
+  const repair = await buildPlanEditRepair(
+    admin,
+    userID,
+    block,
+    reconstructed.editedWorkout,
+    reconstructed.edit,
+    model,
+    requestBody.deviceTimezone || block.timezone || "UTC",
+  );
+
+  const proposal = repair
+    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
+    : null;
+  if (!proposal) {
+    await expirePendingReplanProposals(admin, userID, block.id);
+  }
+
+  return {
+    userID,
+    eventID: event.id,
+    proposalID: proposal?.id ?? null,
+    reason: repair?.reason ?? null,
+    summary: repair?.summary ?? null,
+    risks: repair?.risks ?? [],
+    mutationCount: repair?.mutations.length ?? 0,
+    reviewHint: repair && !proposal ? reviewHintFromRepair(repair) : null,
+    proposal: proposal
+      ? {
+        id: proposal.id,
+        active_block_id: proposal.active_block_id,
+        trigger_event_id: proposal.trigger_event_id,
+        reason: proposal.reason,
+        proposed_mutations_json: proposal.proposed_mutations_json,
+        status: proposal.status,
+        created_at: proposal.created_at,
+        updated_at: proposal.updated_at,
+      }
+      : null,
+  };
+}
+
+async function reconstructPlanEditFromEvent(
+  admin: SupabaseAdminClient,
+  userID: string,
+  block: Record<string, any>,
+  event: Record<string, any>,
+  payload: Record<string, any>,
+): Promise<{ editedWorkout: Record<string, any>; edit: PlanEditInput }> {
+  if (payload.action === "workout_replaced") {
+    const originalWorkoutID = String(payload.originalWorkoutID ?? payload.original_workout_id ?? "");
+    const replacementWorkoutID = String(payload.replacementWorkoutID ?? payload.replacement_workout_id ?? event.planned_workout_id ?? "");
+    if (!originalWorkoutID || !replacementWorkoutID) {
+      throw new Error("Replacement event is missing workout IDs");
+    }
+    const original = await loadPlannedWorkout(admin, userID, block.id, originalWorkoutID);
+    const replacement = await loadPlannedWorkout(admin, userID, block.id, replacementWorkoutID);
+    return {
+      editedWorkout: original,
+      edit: {
+        type: "replace_workout",
+        planned_workout_id: original.id,
+        replacement_workout_id: replacement.id,
+        scheduled_date: replacement.scheduled_date,
+      },
+    };
+  }
+
+  if (event.event_type === "workout_added") {
+    const addedWorkoutID = String(payload.addedWorkoutID ?? payload.added_workout_id ?? event.planned_workout_id ?? "");
+    if (!addedWorkoutID) {
+      throw new Error("Add event is missing workout ID");
+    }
+    const added = await loadPlannedWorkout(admin, userID, block.id, addedWorkoutID);
+    return {
+      editedWorkout: added,
+      edit: {
+        type: "add_workout",
+        added_workout_id: added.id,
+        scheduled_date: added.scheduled_date,
+      },
+    };
+  }
+
+  if (event.event_type === "workout_deleted") {
+    const deletedWorkout = payload.deletedWorkout as Record<string, any> | undefined;
+    const workoutID = String(deletedWorkout?.id ?? event.planned_workout_id ?? "");
+    const editedWorkout = deletedWorkout ?? await loadPlannedWorkout(admin, userID, block.id, workoutID);
+    return {
+      editedWorkout,
+      edit: {
+        type: "delete_workout",
+        planned_workout_id: String(editedWorkout.id),
+      },
+    };
+  }
+
+  if (event.event_type === "workout_moved") {
+    const workoutID = String(event.planned_workout_id ?? "");
+    if (!workoutID) {
+      throw new Error("Move event is missing workout ID");
+    }
+    const workout = await loadPlannedWorkout(admin, userID, block.id, workoutID);
+    const from = String(payload.from ?? workout.scheduled_date);
+    const to = String(payload.to ?? workout.scheduled_date);
+    return {
+      editedWorkout: { ...workout, scheduled_date: from },
+      edit: {
+        type: "move_workout",
+        planned_workout_id: workout.id,
+        scheduled_date: to,
+        sequence_order: workout.sequence_order,
+      },
+    };
+  }
+
+  throw new Error("Only recent workout edit events can create a repair proposal");
 }
 
 async function checkInToWorkout(
@@ -3305,6 +3541,8 @@ function fitnessMetricObservations(
     push(`training_distance_${window.window}_km`, `Training distance ${window.window}`, "volume", window.totalDistanceKilometers, "km", { window: window.window });
   }
 
+  push("cycling_distance_7d_km", "Cycling distance 7d", "weekly_cycling", snapshot.activity?.cyclingDistance7DaysKilometers, "km", { modality: "cycling", window: "7d" });
+  push("running_distance_7d_km", "Running distance 7d", "weekly_running", snapshot.activity?.runningDistance7DaysKilometers ?? snapshot.activity?.walkingRunningDistance7DaysKilometers, "km", { modality: "running", window: "7d" });
   push("cycling_distance_90d_km", "Cycling distance 90d", "volume", snapshot.activity?.cyclingDistance90DaysKilometers, "km", { modality: "cycling", window: "90d" });
   push("walking_running_distance_28d_km", "Walking/running distance 28d", "volume", snapshot.activity?.walkingRunningDistance28DaysKilometers, "km", { modality: "walking_running", window: "28d" });
   push("steps_7d_avg", "Average steps 7d", "activity_floor", snapshot.activity?.averageSteps7Days, "steps/day", { window: "7d" });
@@ -3316,6 +3554,8 @@ function fitnessMetricObservations(
   push("vo2_max_latest", "VO2 max latest", "recovery", snapshot.recovery?.vo2MaxLatest, "mL/kg/min");
   push("active_weeks", "Active training weeks", "consistency", profile.consistency?.activeWeeks, "weeks");
   push("longest_active_week_streak", "Longest active week streak", "consistency", profile.consistency?.longestActiveWeekStreak, "weeks");
+  push("strength_workouts_7d", "Strength workouts 7d", "weekly_strength", profile.strengthContinuity?.strengthWorkouts7Days, "sessions", { modality: "strength", window: "7d" });
+  push("strength_minutes_7d", "Strength minutes 7d", "weekly_strength", profile.strengthContinuity?.strengthMinutes7Days, "min", { modality: "strength", window: "7d" });
   push("strength_workouts_90d", "Strength workouts 90d", "balance", profile.strengthContinuity?.strengthWorkouts90Days, "count", { modality: "strength", window: "90d" });
   push("strength_minutes_90d", "Strength minutes 90d", "balance", profile.strengthContinuity?.strengthMinutes90Days, "min", { modality: "strength", window: "90d" });
 
@@ -3341,21 +3581,37 @@ async function createInitialGoalTargets(
   block: Record<string, any>,
   snapshot: Record<string, any>,
 ) {
-  const existing = await list(
+  const existingWeekly: Array<Record<string, any>> = await list(
     admin
       .from("fitness_goal_targets")
-      .select("id")
+      .select("id,metric_key,metric_category,target_kind")
       .eq("user_id", userID)
       .eq("active_block_id", block.id)
-      .limit(1),
+      .like("metric_category", "weekly_%")
   );
-  if (existing.length > 0) {
+
+  const plannedWorkouts = await list(
+    admin
+      .from("planned_workouts")
+      .select("scheduled_date,activity_type,title,duration_minutes,status")
+      .eq("user_id", userID)
+      .eq("active_block_id", block.id)
+      .in("status", ["planned", "current", "checked_in", "adjusted", "done"]),
+  );
+  const targets = buildInitialGoalTargets(userID, block, snapshot, plannedWorkouts);
+  if (targets.length === 0) {
     return;
   }
 
-  const targets = buildInitialGoalTargets(userID, block, snapshot);
-  if (targets.length === 0) {
-    return;
+  if (existingWeekly.length > 0) {
+    await throwOnError(
+      admin
+        .from("fitness_goal_targets")
+        .delete()
+        .eq("user_id", userID)
+        .eq("active_block_id", block.id)
+        .like("metric_category", "weekly_%"),
+    );
   }
 
   await throwOnError(admin.from("fitness_goal_targets").insert(targets));
@@ -3363,140 +3619,174 @@ async function createInitialGoalTargets(
     userID,
     activeBlockID: block.id,
     eventType: "goal_targets_created",
-    payload: { count: targets.length, source: "healthkit_snapshot" },
+    payload: { count: targets.length, source: "weekly_plan_targets", replaced: existingWeekly.length },
   });
 }
 
-function buildInitialGoalTargets(userID: string, block: Record<string, any>, snapshot: Record<string, any>) {
+function buildInitialGoalTargets(
+  userID: string,
+  block: Record<string, any>,
+  snapshot: Record<string, any>,
+  plannedWorkouts: Array<Record<string, any>> = [],
+) {
   const text = `${block.goal_text ?? ""} ${block.title ?? ""}`.toLowerCase();
-  const startDate = block.start_date ?? isoDate(new Date());
-  const targetDate = block.target_date ?? null;
+  const startDate = isoDate(startOfWeek(new Date()));
+  const targetDate = isoDate(addDays(parseDateOnly(startDate) ?? new Date(), 6));
   const profile = snapshot.fitnessHistory ?? snapshot.fitness_history ?? {};
-  const isBodyGoal = /weight|kg|kilo|fat|lean|body/.test(text);
   const isCyclingGoal = /cycle|cycling|bike|ride|climb/.test(text);
   const isRunningGoal = /run|running|5k|10k|marathon|pace/.test(text);
-  const isConsistencyGoal = block.kind === "consistency" || /consistent|routine|habit|streak/.test(text);
+  const week = weeklyPlanSummary(plannedWorkouts, startDate);
+  const modalities = new Set([
+    ...(profile.trainingIdentity?.dominantModalities ?? []),
+    ...week.modalities,
+  ].map((value: string) => normalizeWorkoutModality(value)));
+  if (isCyclingGoal) modalities.add("cycling");
+  if (isRunningGoal) modalities.add("running");
+  if (/strength|lift|gym|boulder|climb/.test(text)) modalities.add("strength");
 
-  let primaryMetric = "training_minutes_28d";
-  let primaryCategory = "volume";
-  let direction: "increase" | "decrease" | "maintain" | "complete" | "review" = "increase";
-  let unit = "min";
-  let baseline = metricValueFor(snapshot, primaryMetric);
-  let target: number | null = typeof baseline === "number" ? Math.max(120, Math.round(baseline * 1.1)) : null;
-
-  if (isBodyGoal && /fat/.test(text)) {
-    primaryMetric = "body_fat_28d_avg_percentage";
-    primaryCategory = "body";
-    direction = "decrease";
-    unit = "%";
-    baseline = metricValueFor(snapshot, primaryMetric) ?? metricValueFor(snapshot, "body_fat_latest_percentage");
-    const delta = extractFirstNumber(text);
-    target = typeof baseline === "number" && delta ? Math.max(0, baseline - delta) : null;
-  } else if (isBodyGoal) {
-    primaryMetric = "body_mass_28d_avg_kg";
-    primaryCategory = "body";
-    direction = "decrease";
-    unit = "kg";
-    baseline = metricValueFor(snapshot, primaryMetric) ?? metricValueFor(snapshot, "body_mass_latest_kg");
-    const delta = extractFirstNumber(text);
-    target = typeof baseline === "number" && delta ? Math.max(0, baseline - delta) : null;
-  } else if (isCyclingGoal) {
-    primaryMetric = "cycling_distance_90d_km";
-    primaryCategory = "volume";
-    direction = "increase";
-    unit = "km";
-    baseline = metricValueFor(snapshot, primaryMetric);
-    target = typeof baseline === "number" ? Math.max(100, Math.round(baseline * 1.1)) : null;
-  } else if (isRunningGoal) {
-    primaryMetric = "walking_running_distance_28d_km";
-    primaryCategory = "volume";
-    direction = "increase";
-    unit = "km";
-    baseline = metricValueFor(snapshot, primaryMetric);
-    target = typeof baseline === "number" ? Math.max(20, Math.round(baseline * 1.1)) : null;
-  } else if (isConsistencyGoal) {
-    primaryMetric = "training_workouts_28d";
-    primaryCategory = "consistency";
-    direction = "maintain";
-    unit = "count";
-    baseline = metricValueFor(snapshot, primaryMetric);
-    target = typeof baseline === "number" ? Math.max(8, Math.round(baseline)) : 8;
-  }
-
-  const rows: Array<Record<string, unknown>> = [
-    goalTargetRow({
+  const rows: Array<Record<string, unknown>> = [];
+  const pushWeeklyTarget = (args: {
+    kind?: "primary" | "sub_goal";
+    title: string;
+    description: string;
+    metricKey: string;
+    metricCategory: string;
+    targetValue: number | null;
+    unit: string;
+    rule: Record<string, unknown>;
+  }) => {
+    rows.push(goalTargetRow({
       userID,
       blockID: block.id,
-      kind: "primary",
-      title: block.goal_text || block.title || "Active block goal",
-      description: "Primary goal HAYF tracks against your active block.",
-      metricKey: primaryMetric,
-      metricCategory: primaryCategory,
-      direction,
-      baselineValue: baseline,
-      targetValue: target,
-      unit,
+      kind: args.kind ?? "sub_goal",
+      title: args.title,
+      description: args.description,
+      metricKey: args.metricKey,
+      metricCategory: args.metricCategory,
+      direction: "maintain",
+      baselineValue: metricValueFor(snapshot, args.metricKey),
+      targetValue: args.targetValue,
+      unit: args.unit,
       startDate,
       targetDate,
-      rule: { source: "initial_healthkit_profile", profileLabel: profile.trainingIdentity?.label ?? null },
-    }),
-  ];
+      rule: { ...args.rule, source: "weekly_plan_target", window: "7d", profileLabel: profile.trainingIdentity?.label ?? null },
+    }));
+  };
 
-  const training7d = metricValueFor(snapshot, "training_minutes_7d");
-  rows.push(goalTargetRow({
-    userID,
-    blockID: block.id,
-    kind: "sub_goal",
-    title: "Build weekly training volume",
-    description: "Keep the week moving without making the active block brittle.",
+  pushWeeklyTarget({
+    kind: "primary",
+    title: "Weekly training time",
+    description: "The total planned training dose for this week. Adjust the week by moving, adding, or resizing sessions.",
     metricKey: "training_minutes_7d",
-    metricCategory: "volume",
-    direction: "maintain",
-    baselineValue: training7d,
-    targetValue: typeof training7d === "number" ? Math.max(90, Math.round(training7d * 0.9)) : 90,
+    metricCategory: "weekly_volume",
+    targetValue: week.totalMinutes || fallbackWeeklyMinutes(profile),
     unit: "min",
-    startDate,
-    targetDate,
-    rule: { window: "7d" },
-  }));
+    rule: { plannedSessions: week.sessionCount },
+  });
 
-  const strength90 = metricValueFor(snapshot, "strength_workouts_90d");
-  rows.push(goalTargetRow({
-    userID,
-    blockID: block.id,
-    kind: "sub_goal",
-    title: "Keep strength in the mix",
-    description: "Protect strength continuity while the block moves forward.",
-    metricKey: "strength_workouts_90d",
-    metricCategory: "balance",
-    direction: "maintain",
-    baselineValue: strength90,
-    targetValue: typeof strength90 === "number" ? Math.max(4, Math.round(strength90 * 0.8)) : 4,
-    unit: "count",
-    startDate,
-    targetDate,
-    rule: { modality: "strength", window: "90d" },
-  }));
+  if (modalities.has("cycling")) {
+    const planned = Math.round((week.minutesByModality.cycling ?? 0) * 0.42);
+    pushWeeklyTarget({
+      title: "Cycling distance this week",
+      description: "A weekly cycling exposure target based on the rides in the plan and the active block goal.",
+      metricKey: "cycling_distance_7d_km",
+      metricCategory: "weekly_cycling",
+      targetValue: planned > 0 ? planned : 40,
+      unit: "km",
+      rule: { modality: "cycling", plannedMinutes: week.minutesByModality.cycling ?? 0 },
+    });
+  }
 
-  const steps = metricValueFor(snapshot, "steps_7d_avg");
-  rows.push(goalTargetRow({
-    userID,
-    blockID: block.id,
-    kind: "sub_goal",
-    title: "Protect the activity floor",
-    description: "Watch whether non-workout movement stays alive.",
-    metricKey: "steps_7d_avg",
-    metricCategory: "activity_floor",
-    direction: "maintain",
-    baselineValue: steps,
-    targetValue: typeof steps === "number" ? Math.round(steps * 0.85) : null,
-    unit: "steps/day",
-    startDate,
-    targetDate,
-    rule: { window: "7d" },
-  }));
+  if (modalities.has("running")) {
+    const planned = Math.round((week.minutesByModality.running ?? 0) * 0.13);
+    pushWeeklyTarget({
+      title: "Running distance this week",
+      description: "A weekly run-distance target that can be shaped by adding, moving, or reducing run sessions.",
+      metricKey: "running_distance_7d_km",
+      metricCategory: "weekly_running",
+      targetValue: planned > 0 ? planned : 12,
+      unit: "km",
+      rule: { modality: "running", plannedMinutes: week.minutesByModality.running ?? 0 },
+    });
+  }
 
-  return rows;
+  if (modalities.has("strength")) {
+    pushWeeklyTarget({
+      title: "Strength sessions this week",
+      description: "The gym or strength anchors HAYF is trying to keep alive in this week.",
+      metricKey: "strength_workouts_7d",
+      metricCategory: "weekly_strength",
+      targetValue: Math.max(1, week.countByModality.strength ?? 0),
+      unit: "sessions",
+      rule: { modality: "strength", plannedMinutes: week.minutesByModality.strength ?? 0 },
+    });
+  }
+
+  const recoveryCount = (week.countByModality.recovery ?? 0) + (week.countByModality.walking ?? 0) + (week.countByModality.mobility ?? 0);
+  pushWeeklyTarget({
+    title: "Recovery sessions this week",
+    description: "Low-friction recovery work that keeps the plan adjustable instead of brittle.",
+    metricKey: "recovery_sessions_7d",
+    metricCategory: "weekly_recovery",
+    targetValue: Math.max(1, recoveryCount),
+    unit: "sessions",
+    rule: { modalities: ["recovery", "walking", "mobility"] },
+  });
+
+  return rows.slice(0, 5);
+}
+
+function weeklyPlanSummary(plannedWorkouts: Array<Record<string, any>>, startDate: string) {
+  const weekStart = startOfWeek(parseDateOnly(startDate) ?? new Date());
+  const weekEnd = addDays(weekStart, 6);
+  const summary: {
+    totalMinutes: number;
+    sessionCount: number;
+    modalities: string[];
+    minutesByModality: Record<string, number>;
+    countByModality: Record<string, number>;
+  } = {
+    totalMinutes: 0,
+    sessionCount: 0,
+    modalities: [],
+    minutesByModality: {},
+    countByModality: {},
+  };
+
+  for (const workout of plannedWorkouts) {
+    const scheduled = parseDateOnly(String(workout.scheduled_date ?? ""));
+    if (!scheduled || scheduled < weekStart || scheduled > weekEnd) continue;
+
+    const modality = normalizeWorkoutModality(`${workout.activity_type ?? ""} ${workout.title ?? ""}`);
+    const minutes = Math.max(0, Number(workout.duration_minutes ?? 0));
+    summary.totalMinutes += minutes;
+    summary.sessionCount += 1;
+    summary.minutesByModality[modality] = (summary.minutesByModality[modality] ?? 0) + minutes;
+    summary.countByModality[modality] = (summary.countByModality[modality] ?? 0) + 1;
+  }
+
+  summary.modalities = Object.keys(summary.countByModality);
+  summary.totalMinutes = Math.round(summary.totalMinutes);
+  return summary;
+}
+
+function fallbackWeeklyMinutes(profile: Record<string, any>) {
+  const average = profile.consistency?.averageMinutesPerActiveWeek;
+  if (typeof average === "number" && !Number.isNaN(average)) {
+    return Math.max(90, Math.round(average));
+  }
+  return 150;
+}
+
+function normalizeWorkoutModality(value: string) {
+  const text = String(value ?? "").toLowerCase();
+  if (/cycle|cycling|bike|ride/.test(text)) return "cycling";
+  if (/run|running|jog/.test(text)) return "running";
+  if (/strength|lift|lifting|gym|barbell|dumbbell|kettlebell|boulder|climb/.test(text)) return "strength";
+  if (/walk|hike/.test(text)) return "walking";
+  if (/mobility|yoga|pilates|stretch/.test(text)) return "mobility";
+  if (/recover|rest/.test(text)) return "recovery";
+  return text.trim() || "training";
 }
 
 function goalTargetRow(args: {
@@ -3690,8 +3980,15 @@ function metricValueFor(snapshot: Record<string, any>, metricKey: string): numbe
     training_workouts_7d: loadWindow("7d", "workouts"),
     training_workouts_28d: loadWindow("28d", "workouts"),
     training_workouts_90d: loadWindow("90d", "workouts"),
+    cycling_distance_7d_km: snapshot.activity?.cyclingDistance7DaysKilometers,
+    running_distance_7d_km: snapshot.activity?.runningDistance7DaysKilometers
+      ?? snapshot.activity?.walkingRunningDistance7DaysKilometers,
     cycling_distance_90d_km: snapshot.activity?.cyclingDistance90DaysKilometers,
     walking_running_distance_28d_km: snapshot.activity?.walkingRunningDistance28DaysKilometers,
+    strength_workouts_7d: profile.strengthContinuity?.strengthWorkouts7Days,
+    strength_minutes_7d: profile.strengthContinuity?.strengthMinutes7Days,
+    recovery_sessions_7d: null,
+    recovery_minutes_7d: null,
     steps_7d_avg: snapshot.activity?.averageSteps7Days,
     active_energy_7d_kcal: snapshot.activity?.activeEnergy7DaysKilocalories,
     body_mass_latest_kg: snapshot.body?.bodyMassKilograms,

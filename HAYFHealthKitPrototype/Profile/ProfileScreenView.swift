@@ -7,8 +7,10 @@ struct ProfileScreenView: View {
     let signOut: () -> Void
 
     @StateObject private var store = ProfileDataStore()
+    @StateObject private var accountProfileStore = AccountProfileStore()
     @State private var didLoad = false
     @State private var selectedDetail: ProfileDetailSheet?
+    @State private var profilePhotoURL: URL?
 
     var body: some View {
         ZStack {
@@ -25,6 +27,7 @@ struct ProfileScreenView: View {
 
                     ProfileIdentityCard(
                         profile: accountProfile,
+                        profilePhotoURL: profilePhotoURL,
                         userEmail: userEmail,
                         openSettings: openSettings
                     )
@@ -100,8 +103,16 @@ struct ProfileScreenView: View {
     }
 
     private func load() async {
-        await store.loadProfileContext()
+        async let profileContextLoad: Void = store.loadProfileContext()
+        async let photoURLLoad = loadProfilePhotoURL()
+
+        _ = await profileContextLoad
+        profilePhotoURL = await photoURLLoad
         didLoad = true
+    }
+
+    private func loadProfilePhotoURL() async -> URL? {
+        try? await accountProfileStore.displayPhotoURL(for: accountProfile)
     }
 }
 
@@ -154,24 +165,16 @@ private struct ProfileHeader: View {
 
 private struct ProfileIdentityCard: View {
     let profile: StoredAccountProfile
+    let profilePhotoURL: URL?
     let userEmail: String?
     let openSettings: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(HAYFColor.surfaceRaised)
-                    .frame(width: 62, height: 62)
-                    .overlay {
-                        Circle()
-                            .stroke(HAYFColor.borderStrong, lineWidth: 1)
-                    }
-
-                Text(ProfileDisplay.initials(for: profile.name))
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-            }
+            ProfileAvatarView(
+                name: profile.name,
+                photoURL: profilePhotoURL
+            )
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(profile.name)
@@ -211,6 +214,46 @@ private struct ProfileIdentityCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(HAYFColor.borderStrong, lineWidth: 1)
         }
+    }
+}
+
+private struct ProfileAvatarView: View {
+    let name: String
+    let photoURL: URL?
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(HAYFColor.surfaceRaised)
+                .frame(width: 62, height: 62)
+                .overlay {
+                    Circle()
+                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                }
+
+            if let photoURL {
+                AsyncImage(url: photoURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        initials
+                    }
+                }
+                .frame(width: 62, height: 62)
+                .clipShape(Circle())
+            } else {
+                initials
+            }
+        }
+    }
+
+    private var initials: some View {
+        Text(ProfileDisplay.initials(for: name))
+            .font(.system(size: 22, weight: .semibold))
+            .foregroundStyle(HAYFColor.primary)
     }
 }
 

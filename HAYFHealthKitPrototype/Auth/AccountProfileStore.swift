@@ -136,6 +136,16 @@ final class AccountProfileStore: ObservableObject {
         errorMessage = nil
     }
 
+    func displayPhotoURL(for profile: StoredAccountProfile) async throws -> URL? {
+        if let profilePhotoPath = profile.profilePhotoPath {
+            return try await supabase.storage
+                .from("profile-photos")
+                .createSignedURL(path: profilePhotoPath, expiresIn: 60 * 60)
+        }
+
+        return profile.profilePhotoURL.flatMap(URL.init(string:))
+    }
+
     func reset() {
         profile = nil
         errorMessage = nil
