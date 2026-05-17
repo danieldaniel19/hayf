@@ -3,7 +3,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 type OnboardingTask =
   | "generate_summary"
   | "generate_goal_candidates"
-  | "generate_blended_candidate";
+  | "generate_blended_candidate"
+  | "generate_athlete_blueprint";
 
 type OnboardingAIRequest = {
   task: OnboardingTask;
@@ -46,6 +47,38 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
     additionalProperties: false,
     required: ["id", "title", "rationale", "tracking", "timeframeWeeks", "systemImage"],
     properties: goalCandidateProperties(),
+  },
+  generate_athlete_blueprint: {
+    type: "object",
+    additionalProperties: false,
+    required: ["coachRead", "athleteArchetype", "currentTrainingState", "historyFindings", "goalFit"],
+    properties: {
+      coachRead: { type: "string" },
+      athleteArchetype: blueprintTextPairSchema(),
+      currentTrainingState: blueprintTextPairSchema(),
+      historyFindings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "title", "summary"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string" },
+          },
+        },
+      },
+      goalFit: {
+        type: "object",
+        additionalProperties: false,
+        required: ["headline", "summary"],
+        properties: {
+          headline: { type: "string" },
+          summary: { type: "string" },
+        },
+      },
+    },
   },
 };
 
@@ -124,7 +157,7 @@ async function runOpenAI(requestBody: OnboardingAIRequest, model: string) {
         {
           role: "system",
           content:
-            "You are HAYF's onboarding coach. Be concise and practical. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples.",
+            "You are HAYF's onboarding coach. Be concise, perceptive, and practical. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples. When writing an Athlete Blueprint, sound like an elite coach who has studied the athlete closely, but stay fully inside the approved evidence.",
         },
         {
           role: "user",
@@ -179,6 +212,19 @@ function taskRules(task: OnboardingTask) {
       return "Return exactly three distinct goal candidates. Each candidate must have a concrete title that includes its timeframe, a short tracking field, and timeframeWeeks set to 4, 8, or 12.";
     case "generate_blended_candidate":
       return "Blend the two selected candidates into one candidate that keeps the clearer target, borrows useful support structure, and chooses a concrete 4-, 8-, or 12-week timeframe.";
+    case "generate_athlete_blueprint":
+      return [
+        "Return authored copy for the five Athlete Blueprint sections only.",
+        "Use sectionSeeds as factual constraints, not as sample copy to lightly paraphrase.",
+        "Do not add new factual claims and preserve every historyFindings id exactly.",
+        "coachRead is a read of the athlete, not a restatement of the goal: lead with identity, current state, repeatable patterns, and coaching-relevant tendencies visible in the evidence. Mention the goal only if it creates a meaningful tension or fit. Use 2 to 4 short sentences.",
+        "athleteArchetype may verbalize the canonical label naturally. Label length: 2 to 5 words. Summary: one sentence, 12 to 28 words.",
+        "currentTrainingState may verbalize the canonical state naturally. Label length: 2 to 5 words. Summary: one sentence, 12 to 28 words.",
+        "Each history finding should keep its id but may use fresh natural language. Title: at most 8 words. Summary: one sentence, at most 22 words.",
+        "goalFit should assess whether the selected goal and chosen feasible training options make sense together, with historical modalities used as context rather than veto power. Headline: 2 to 6 words. Summary: 1 to 2 sentences, 25 to 55 words.",
+        "Do not turn goalFit into a mini-plan: no prescriptions, no weekly session counts, no exercise programming.",
+        "Rephrase goals in natural English; never echo a first-person brief such as 'I want to...' verbatim after 'your goal of'.",
+      ].join(" ");
   }
 }
 
@@ -202,6 +248,18 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "challengeStyle",
       "goalAvoidances",
       "injuryNotes",
+    ]);
+  }
+
+  if (task === "generate_athlete_blueprint") {
+    return pick(context, [
+      "intent",
+      "normalizedGoal",
+      "feasibleTrainingOptions",
+      "onboardingSignals",
+      "evidenceSummary",
+      "sectionSeeds",
+      "doNotClaim",
     ]);
   }
 
@@ -268,6 +326,18 @@ function goalCandidateProperties() {
     tracking: { type: "string" },
     timeframeWeeks: { type: "integer", enum: [4, 8, 12] },
     systemImage: { type: "string" },
+  };
+}
+
+function blueprintTextPairSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["label", "summary"],
+    properties: {
+      label: { type: "string" },
+      summary: { type: "string" },
+    },
   };
 }
 

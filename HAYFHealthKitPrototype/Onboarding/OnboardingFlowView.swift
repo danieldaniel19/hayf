@@ -1,5 +1,6 @@
 import SwiftUI
 import Supabase
+import OSLog
 
 struct OnboardingFlowView: View {
     let onComplete: () -> Void
@@ -15,6 +16,9 @@ struct OnboardingFlowView: View {
     @State private var blendCandidateIDs: Set<String> = []
     @State private var blendedCandidate: GoalCandidate?
     @State private var healthRequestState: HealthRequestState = .idle
+    @State private var athleteBlueprint: AthleteBlueprintOutput?
+    @State private var pendingHealthSnapshot: HealthFeatureSnapshot?
+    @State private var selectedBlueprintDetail: AthleteBlueprintDetail?
     @State private var completionErrorMessage: String?
     @State private var isCompleting = false
 
@@ -52,10 +56,17 @@ struct OnboardingFlowView: View {
             .frame(maxWidth: 480)
         }
         .animation(.easeInOut(duration: 0.2), value: step)
+        .sheet(item: $selectedBlueprintDetail) { detail in
+            AthleteBlueprintDetailSheet(detail: detail)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
         .task(id: step) {
             switch step {
             case .health:
                 await refreshHealthState()
+            case .generatingBlueprint:
+                await generateAthleteBlueprint()
             case .generatingSummary:
                 await generateSummary()
             case .generatingCandidates:
@@ -152,6 +163,10 @@ struct OnboardingFlowView: View {
             summaryScreen
         case .health:
             healthScreen
+        case .generatingBlueprint:
+            loadingScreen(title: "Reading your athlete profile.", copy: "HAYF is combining what you told us with your training history.")
+        case .athleteBlueprint:
+            athleteBlueprintScreen
         }
     }
 
@@ -746,6 +761,82 @@ struct OnboardingFlowView: View {
         }
     }
 
+    private var athleteBlueprintScreen: some View {
+        let blueprint = currentAthleteBlueprint
+
+        return VStack(alignment: .leading, spacing: 26) {
+            OnboardingIntro(
+                eyebrow: "ATHLETE BLUEPRINT",
+                title: "Here's HAYF's\nread on you.",
+                copy: "This is the athlete HAYF believes it is coaching before it builds the strategy."
+            )
+
+            Button {
+                selectedBlueprintDetail = blueprint.coachRead.detail
+            } label: {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("COACH'S READ")
+                        .font(.system(size: 10, weight: .medium))
+                        .kerning(1.2)
+                        .foregroundStyle(HAYFColor.secondary)
+
+                    Text(blueprint.coachRead.text)
+                        .font(.system(size: 18, weight: .regular))
+                        .lineSpacing(5)
+                        .foregroundStyle(HAYFColor.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    BlueprintEvidenceHint()
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HAYFColor.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+
+            VStack(spacing: 12) {
+                AthleteBlueprintSummaryRow(
+                    systemImage: "person.text.rectangle",
+                    eyebrow: "ATHLETE TYPE",
+                    title: blueprint.archetype.label,
+                    summary: blueprint.archetype.explanation
+                ) {
+                    selectedBlueprintDetail = blueprint.archetype.detail
+                }
+
+                AthleteBlueprintSummaryRow(
+                    systemImage: "waveform.path.ecg",
+                    eyebrow: "CURRENT STATE",
+                    title: blueprint.currentTrainingState.label,
+                    summary: blueprint.currentTrainingState.summary
+                ) {
+                    selectedBlueprintDetail = blueprint.currentTrainingState.detail
+                }
+            }
+
+            SummarySection(title: "What your history shows") {
+                VStack(spacing: 10) {
+                    ForEach(blueprint.historyFindings) { finding in
+                        AthleteBlueprintFindingRow(finding: finding) {
+                            selectedBlueprintDetail = finding.detail
+                        }
+                    }
+                }
+            }
+
+            SummarySection(title: "Goal fit") {
+                AthleteBlueprintGoalFitCard(goalFit: blueprint.goalFit) {
+                    selectedBlueprintDetail = blueprint.goalFit.detail
+                }
+            }
+        }
+    }
+
     private var bottomAction: some View {
         VStack(spacing: 14) {
             OnboardingPrimaryButton(
@@ -758,6 +849,22 @@ struct OnboardingFlowView: View {
 
             if step == .summary {
                 Button("Edit answers") {
+                    step = summaryEditStep
+                }
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 48)
+                .background(HAYFColor.surface)
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                }
+            } else if step == .athleteBlueprint {
+                Button("Edit answers") {
+                    athleteBlueprint = nil
+                    pendingHealthSnapshot = nil
                     step = summaryEditStep
                 }
                 .font(.system(size: 16, weight: .semibold))
@@ -816,7 +923,7 @@ struct OnboardingFlowView: View {
 
     private var primaryButtonTitle: String {
         switch step {
-        case .generatingSummary, .generatingCandidates, .generatingBlend:
+        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint:
             return "Working"
         case .summary:
             return "Looks right"
@@ -825,9 +932,11 @@ struct OnboardingFlowView: View {
                 return "Finishing"
             }
             if healthRequestState == .connected || healthRequestState == .unavailable {
-                return "Finish onboarding"
+                return "Build athlete blueprint"
             }
             return "Connect Apple Health"
+        case .athleteBlueprint:
+            return "Accept blueprint"
         case .blendPreview:
             return "Use blended goal"
         case .editCandidate:
@@ -873,7 +982,7 @@ struct OnboardingFlowView: View {
             return draft.supportStyle != nil
         case .floor:
             return draft.badDayFloor != nil
-        case .generatingSummary, .generatingCandidates, .generatingBlend:
+        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint:
             return false
         default:
             return true
@@ -949,11 +1058,13 @@ struct OnboardingFlowView: View {
             step = .health
         case .health:
             if healthRequestState == .connected || healthRequestState == .unavailable {
-                completeOnboarding()
+                prepareAthleteBlueprint()
             } else {
                 requestHealthAccess()
             }
-        case .generatingCandidates, .generatingBlend:
+        case .athleteBlueprint:
+            completeOnboarding()
+        case .generatingCandidates, .generatingBlend, .generatingBlueprint:
             break
         }
     }
@@ -1008,6 +1119,8 @@ struct OnboardingFlowView: View {
             step = .floor
         case .health:
             step = .summary
+        case .generatingBlueprint, .athleteBlueprint:
+            step = .health
         }
     }
 
@@ -1047,6 +1160,14 @@ struct OnboardingFlowView: View {
 
     private var currentSummary: OnboardingSummaryOutput {
         summaryOutput ?? MockOnboardingAIProvider.fallbackSummary(intent: currentIntent, draft: draft)
+    }
+
+    private var currentAthleteBlueprint: AthleteBlueprintOutput {
+        athleteBlueprint ?? AthleteBlueprintBuilder.build(
+            intent: currentIntent,
+            draft: draft,
+            snapshot: pendingHealthSnapshot
+        )
     }
 
     private var summaryEditStep: OnboardingStep {
@@ -1133,13 +1254,35 @@ struct OnboardingFlowView: View {
             do {
                 try await healthKitManager.requestReadAuthorization()
                 healthRequestState = .connected
-                completeOnboarding()
+                prepareAthleteBlueprint()
             } catch HealthKitError.healthDataUnavailable {
                 healthRequestState = .unavailable
             } catch {
                 healthRequestState = .failed(error.localizedDescription)
             }
         }
+    }
+
+    private func prepareAthleteBlueprint() {
+        completionErrorMessage = nil
+        step = .generatingBlueprint
+    }
+
+    private func generateAthleteBlueprint() async {
+        let snapshot = await planningHealthSnapshot()
+        pendingHealthSnapshot = snapshot
+        let fallback = AthleteBlueprintBuilder.build(
+            intent: currentIntent,
+            draft: draft,
+            snapshot: snapshot
+        )
+        athleteBlueprint = await aiProvider.generateAthleteBlueprint(
+            intent: currentIntent,
+            draft: draft,
+            snapshot: snapshot,
+            fallback: fallback
+        )
+        step = .athleteBlueprint
     }
 
     private func completeOnboarding() {
@@ -1151,7 +1294,12 @@ struct OnboardingFlowView: View {
             defer { isCompleting = false }
 
             do {
-                let healthSnapshot = await planningHealthSnapshot()
+                let healthSnapshot: HealthFeatureSnapshot?
+                if let pendingHealthSnapshot {
+                    healthSnapshot = pendingHealthSnapshot
+                } else {
+                    healthSnapshot = await planningHealthSnapshot()
+                }
                 let completedProfile = try await onboardingProfileStore.completeCurrentUserOnboarding(
                     intent: currentIntent,
                     draft: draft,
@@ -1208,10 +1356,12 @@ private enum OnboardingStep: Equatable {
     case generatingSummary
     case summary
     case health
+    case generatingBlueprint
+    case athleteBlueprint
 
     var isGenerating: Bool {
         switch self {
-        case .generatingSummary, .generatingCandidates, .generatingBlend:
+        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint:
             return true
         default:
             return false
@@ -1221,11 +1371,11 @@ private enum OnboardingStep: Equatable {
     static func totalSegments(for intent: OnboardingIntent) -> Int {
         switch intent {
         case .stayConsistent:
-            return 9
-        case .concreteGoal:
             return 10
+        case .concreteGoal:
+            return 11
         case .findGoal:
-            return 12
+            return 13
         }
     }
 
@@ -1241,7 +1391,8 @@ private enum OnboardingStep: Equatable {
             case .support: return 6
             case .floor, .generatingSummary: return 7
             case .summary: return 8
-            case .health: return 9
+            case .health, .generatingBlueprint: return 9
+            case .athleteBlueprint: return 10
             default: return 1
             }
         case .concreteGoal:
@@ -1255,7 +1406,8 @@ private enum OnboardingStep: Equatable {
             case .support: return 7
             case .floor, .generatingSummary: return 8
             case .summary: return 9
-            case .health: return 10
+            case .health, .generatingBlueprint: return 10
+            case .athleteBlueprint: return 11
             default: return 1
             }
         case .findGoal:
@@ -1271,7 +1423,8 @@ private enum OnboardingStep: Equatable {
             case .support: return 9
             case .floor, .generatingSummary: return 10
             case .summary: return 11
-            case .health: return 12
+            case .health, .generatingBlueprint: return 12
+            case .athleteBlueprint: return 13
             default: return 1
             }
         }
@@ -1471,12 +1624,19 @@ private protocol OnboardingAIProvider {
     func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput
     func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async -> [GoalCandidate]
     func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async -> GoalCandidate?
+    func generateAthleteBlueprint(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        snapshot: HealthFeatureSnapshot?,
+        fallback: AthleteBlueprintOutput
+    ) async -> AthleteBlueprintOutput
 }
 
 private enum OnboardingAITask: String, Codable {
     case generateSummary = "generate_summary"
     case generateGoalCandidates = "generate_goal_candidates"
     case generateBlendedCandidate = "generate_blended_candidate"
+    case generateAthleteBlueprint = "generate_athlete_blueprint"
 }
 
 private struct OnboardingAIHealthSnapshot: Codable {
@@ -1594,6 +1754,230 @@ private struct OnboardingAIFunctionRequest: Codable {
     let candidates: [GoalCandidatePayload]?
 }
 
+private struct AthleteBlueprintAIFunctionRequest: Codable {
+    let task: OnboardingAITask
+    let context: AthleteBlueprintAICompactContext
+}
+
+private struct AthleteBlueprintAICompactContext: Codable {
+    let intent: String
+    let normalizedGoal: AthleteBlueprintAIGoalPayload
+    let feasibleTrainingOptions: [RankedTrainingOptionPayload]
+    let onboardingSignals: AthleteBlueprintAIOnboardingSignals
+    let evidenceSummary: AthleteBlueprintAIEvidenceSummary
+    let sectionSeeds: AthleteBlueprintAISectionSeeds
+    let doNotClaim: [String]
+
+    init(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        snapshot: HealthFeatureSnapshot?,
+        fallback: AthleteBlueprintOutput
+    ) {
+        let goal = AthleteBlueprintBuilder.normalizedGoal(intent: intent, draft: draft)
+        let evidence = AthleteBlueprintEvidence(snapshot: snapshot)
+
+        self.intent = intent.rawValue
+        normalizedGoal = AthleteBlueprintAIGoalPayload(goal: goal)
+        feasibleTrainingOptions = draft.trainingOptions.enumerated().map { index, option in
+            RankedTrainingOptionPayload(option: option, priority: index + 1)
+        }
+        onboardingSignals = AthleteBlueprintAIOnboardingSignals(
+            goalPriority: draft.prioritySummary,
+            frequencyPreference: draft.frequency?.summary ?? "",
+            sessionLengthPreference: draft.sessionLength?.title ?? "",
+            blockers: draft.blockers.map(\.title).sorted(),
+            blockerNote: draft.blockerNote.trimmed,
+            supportStyle: draft.supportSummary,
+            badDayFloor: draft.floorSummary,
+            injuryNotes: draft.injuryNotes.trimmed
+        )
+        evidenceSummary = AthleteBlueprintAIEvidenceSummary(evidence: evidence)
+        sectionSeeds = AthleteBlueprintAISectionSeeds(output: fallback)
+        doNotClaim = [
+            "Do not treat body composition, VO2 max, or recovery metrics as current truth unless a section seed explicitly includes them.",
+            "Do not infer motivation, personality, or physiology beyond the section seeds and onboarding signals.",
+            "Do not reject the user's selected goal because historical dominant modalities differ from their chosen feasible training options."
+        ]
+    }
+}
+
+private struct AthleteBlueprintAIGoalPayload: Codable {
+    let displayText: String
+    let horizonWeeks: Int
+    let category: String
+
+    init(goal: AthleteBlueprintGoal) {
+        displayText = goal.displayText
+        horizonWeeks = goal.horizonWeeks
+        category = goal.category.rawValue
+    }
+}
+
+private struct AthleteBlueprintAIOnboardingSignals: Codable {
+    let goalPriority: String
+    let frequencyPreference: String
+    let sessionLengthPreference: String
+    let blockers: [String]
+    let blockerNote: String
+    let supportStyle: String
+    let badDayFloor: String
+    let injuryNotes: String
+}
+
+private struct AthleteBlueprintAIEvidenceSummary: Codable {
+    let totalImportedWorkouts: Int
+    let dominantModalities: [String]
+    let longestActiveWeekStreak: Int
+    let activeWeeks: Int
+    let longestGapDays: Int?
+    let workouts7Days: Int
+    let minutes7Days: Int
+    let workouts28Days: Int
+    let averageWeeklyMinutes28Days: Int
+    let strengthWorkouts90Days: Int
+    let strongestMonthLabel: String?
+    let longestWorkout: AthleteBlueprintAILongestWorkoutPayload?
+
+    init(evidence: AthleteBlueprintEvidence) {
+        totalImportedWorkouts = evidence.totalWorkouts
+        dominantModalities = evidence.dominantModalities
+        longestActiveWeekStreak = evidence.longestActiveWeekStreak
+        activeWeeks = evidence.activeWeeks
+        longestGapDays = evidence.longestGapDays
+        workouts7Days = evidence.windowWorkouts("7d")
+        minutes7Days = Int(evidence.windowMinutes("7d").rounded())
+        workouts28Days = evidence.windowWorkouts("28d")
+        averageWeeklyMinutes28Days = Int((evidence.windowMinutes("28d") / 4).rounded())
+        strengthWorkouts90Days = evidence.strengthWorkouts90Days
+        strongestMonthLabel = evidence.strongestMonth?.label
+        longestWorkout = evidence.longestWorkout.map(AthleteBlueprintAILongestWorkoutPayload.init(summary:))
+    }
+}
+
+private struct AthleteBlueprintAILongestWorkoutPayload: Codable {
+    let modality: String
+    let durationMinutes: Int
+    let distanceKilometers: Double?
+
+    init(summary: FitnessLongestWorkoutSummary) {
+        modality = summary.modality
+        durationMinutes = Int(summary.durationMinutes.rounded())
+        distanceKilometers = summary.distanceKilometers
+    }
+}
+
+private struct AthleteBlueprintAISectionSeeds: Codable {
+    let archetype: AthleteBlueprintAIArchetypeSeed
+    let currentTrainingState: AthleteBlueprintAICurrentStateSeed
+    let historyFindings: [AthleteBlueprintAIHistoryFindingSeed]
+    let goalFit: AthleteBlueprintAIGoalFitSeed
+
+    init(output: AthleteBlueprintOutput) {
+        archetype = AthleteBlueprintAIArchetypeSeed(
+            canonicalLabel: output.archetype.label,
+            evidence: output.archetype.detail.evidence
+        )
+        currentTrainingState = AthleteBlueprintAICurrentStateSeed(
+            canonicalLabel: output.currentTrainingState.label,
+            evidence: output.currentTrainingState.detail.evidence
+        )
+        historyFindings = output.historyFindings.map {
+            AthleteBlueprintAIHistoryFindingSeed(
+                id: $0.id,
+                evidence: $0.detail.evidence
+            )
+        }
+        goalFit = AthleteBlueprintAIGoalFitSeed(
+            canonicalHeadline: output.goalFit.headline,
+            supports: output.goalFit.supports,
+            gaps: output.goalFit.gaps
+        )
+    }
+}
+
+private struct AthleteBlueprintAIArchetypeSeed: Codable {
+    let canonicalLabel: String
+    let evidence: [String]
+}
+
+private struct AthleteBlueprintAICurrentStateSeed: Codable {
+    let canonicalLabel: String
+    let evidence: [String]
+}
+
+private struct AthleteBlueprintAITextPair: Codable {
+    let label: String
+    let summary: String
+}
+
+private struct AthleteBlueprintAIGoalFitSeed: Codable {
+    let canonicalHeadline: String
+    let supports: [String]
+    let gaps: [String]
+}
+
+private struct AthleteBlueprintAIPayload: Codable {
+    let coachRead: String
+    let athleteArchetype: AthleteBlueprintAITextPair
+    let currentTrainingState: AthleteBlueprintAITextPair
+    let historyFindings: [AthleteBlueprintAIHistoryFindingPayload]
+    let goalFit: AthleteBlueprintAIGoalFitPayload
+
+    func merged(with fallback: AthleteBlueprintOutput) -> AthleteBlueprintOutput {
+        let findingCopy = Dictionary(uniqueKeysWithValues: historyFindings.map { ($0.id, $0) })
+
+        return AthleteBlueprintOutput(
+            coachRead: AthleteBlueprintCoachRead(
+                text: coachRead.trimmed.isEmpty ? fallback.coachRead.text : coachRead.trimmed,
+                detail: fallback.coachRead.detail
+            ),
+            archetype: AthleteBlueprintArchetype(
+                label: athleteArchetype.label.trimmed.isEmpty ? fallback.archetype.label : athleteArchetype.label.trimmed,
+                explanation: athleteArchetype.summary.trimmed.isEmpty ? fallback.archetype.explanation : athleteArchetype.summary.trimmed,
+                detail: fallback.archetype.detail
+            ),
+            currentTrainingState: AthleteBlueprintCurrentState(
+                label: currentTrainingState.label.trimmed.isEmpty ? fallback.currentTrainingState.label : currentTrainingState.label.trimmed,
+                summary: currentTrainingState.summary.trimmed.isEmpty ? fallback.currentTrainingState.summary : currentTrainingState.summary.trimmed,
+                detail: fallback.currentTrainingState.detail
+            ),
+            historyFindings: fallback.historyFindings.map { finding in
+                guard let aiFinding = findingCopy[finding.id] else { return finding }
+                return AthleteBlueprintFinding(
+                    id: finding.id,
+                    title: aiFinding.title.trimmed.isEmpty ? finding.title : aiFinding.title.trimmed,
+                    summary: aiFinding.summary.trimmed.isEmpty ? finding.summary : aiFinding.summary.trimmed,
+                    detail: finding.detail
+                )
+            },
+            goalFit: AthleteBlueprintGoalFit(
+                headline: goalFit.headline.trimmed.isEmpty ? fallback.goalFit.headline : goalFit.headline.trimmed,
+                summary: goalFit.summary.trimmed.isEmpty ? fallback.goalFit.summary : goalFit.summary.trimmed,
+                supports: fallback.goalFit.supports,
+                gaps: fallback.goalFit.gaps,
+                detail: fallback.goalFit.detail
+            )
+        )
+    }
+}
+
+private struct AthleteBlueprintAIHistoryFindingPayload: Codable {
+    let id: String
+    let title: String
+    let summary: String
+}
+
+private struct AthleteBlueprintAIHistoryFindingSeed: Codable {
+    let id: String
+    let evidence: [String]
+}
+
+private struct AthleteBlueprintAIGoalFitPayload: Codable {
+    let headline: String
+    let summary: String
+}
+
 private struct OnboardingAISummaryFunctionResponse: Decodable {
     let output: OnboardingAISummaryPayload
 }
@@ -1604,6 +1988,10 @@ private struct OnboardingAIGoalCandidatesFunctionResponse: Decodable {
 
 private struct OnboardingAIBlendedCandidateFunctionResponse: Decodable {
     let output: GoalCandidatePayload
+}
+
+private struct OnboardingAIAthleteBlueprintFunctionResponse: Decodable {
+    let output: AthleteBlueprintAIPayload
 }
 
 private struct OnboardingAISummaryPayload: Codable {
@@ -1650,6 +2038,7 @@ private struct GoalCandidate: Identifiable, Equatable {
 
 private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
     private let supabase = SupabaseClientProvider.shared
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "HAYF", category: "onboarding.ai")
 
     func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput {
         do {
@@ -1693,7 +2082,38 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
         }
     }
 
+    func generateAthleteBlueprint(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        snapshot: HealthFeatureSnapshot?,
+        fallback: AthleteBlueprintOutput
+    ) async -> AthleteBlueprintOutput {
+        do {
+            let request = AthleteBlueprintAIFunctionRequest(
+                task: .generateAthleteBlueprint,
+                context: AthleteBlueprintAICompactContext(
+                    intent: intent,
+                    draft: draft,
+                    snapshot: snapshot,
+                    fallback: fallback
+                )
+            )
+            let response: OnboardingAIAthleteBlueprintFunctionResponse = try await invoke(request)
+            return response.output.merged(with: fallback)
+        } catch {
+            logger.error("Athlete Blueprint AI generation failed: \(error.localizedDescription, privacy: .public)")
+            return fallback
+        }
+    }
+
     private func invoke<Response: Decodable>(_ request: OnboardingAIFunctionRequest) async throws -> Response {
+        try await supabase.functions.invoke(
+            "onboarding-ai",
+            options: FunctionInvokeOptions(body: request)
+        )
+    }
+
+    private func invoke<Response: Decodable>(_ request: AthleteBlueprintAIFunctionRequest) async throws -> Response {
         try await supabase.functions.invoke(
             "onboarding-ai",
             options: FunctionInvokeOptions(body: request)
@@ -1715,6 +2135,16 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
     func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async -> GoalCandidate? {
         await mockDelay()
         return Self.blend(candidates: candidates, draft: draft)
+    }
+
+    func generateAthleteBlueprint(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        snapshot: HealthFeatureSnapshot?,
+        fallback: AthleteBlueprintOutput
+    ) async -> AthleteBlueprintOutput {
+        await mockDelay()
+        return fallback
     }
 
     private func mockDelay() async {
@@ -2853,6 +3283,882 @@ private struct CoachNote: View {
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
+        }
+    }
+}
+
+private struct AthleteBlueprintOutput {
+    let coachRead: AthleteBlueprintCoachRead
+    let archetype: AthleteBlueprintArchetype
+    let currentTrainingState: AthleteBlueprintCurrentState
+    let historyFindings: [AthleteBlueprintFinding]
+    let goalFit: AthleteBlueprintGoalFit
+}
+
+private struct AthleteBlueprintCoachRead {
+    let text: String
+    let detail: AthleteBlueprintDetail
+}
+
+private struct AthleteBlueprintArchetype {
+    let label: String
+    let explanation: String
+    let detail: AthleteBlueprintDetail
+}
+
+private struct AthleteBlueprintCurrentState {
+    let label: String
+    let summary: String
+    let detail: AthleteBlueprintDetail
+}
+
+private struct AthleteBlueprintFinding: Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+    let detail: AthleteBlueprintDetail
+}
+
+private struct AthleteBlueprintGoalFit {
+    let headline: String
+    let summary: String
+    let supports: [String]
+    let gaps: [String]
+    let detail: AthleteBlueprintDetail
+}
+
+private struct AthleteBlueprintDetail: Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+    let confidence: String
+    let observationWindow: String
+    let evidence: [String]
+    let caveat: String?
+}
+
+private enum AthleteBlueprintBuilder {
+    static func build(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        snapshot: HealthFeatureSnapshot?
+    ) -> AthleteBlueprintOutput {
+        let evidence = AthleteBlueprintEvidence(snapshot: snapshot)
+        let goal = normalizedGoal(intent: intent, draft: draft)
+        let archetype = buildArchetype(intent: intent, draft: draft, evidence: evidence)
+        let currentState = buildCurrentState(evidence: evidence)
+        let historyFindings = buildHistoryFindings(evidence: evidence)
+        let goalFit = buildGoalFit(goal: goal, draft: draft, evidence: evidence)
+        let coachRead = buildCoachRead(
+            archetype: archetype,
+            currentState: currentState,
+            goalFit: goalFit,
+            evidence: evidence
+        )
+
+        return AthleteBlueprintOutput(
+            coachRead: coachRead,
+            archetype: archetype,
+            currentTrainingState: currentState,
+            historyFindings: historyFindings,
+            goalFit: goalFit
+        )
+    }
+
+    static func normalizedGoal(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) -> AthleteBlueprintGoal {
+        switch intent {
+        case .stayConsistent:
+            return AthleteBlueprintGoal(
+                displayText: "build a consistent training rhythm",
+                horizonWeeks: 12,
+                category: .consistency
+            )
+        case .concreteGoal:
+            return AthleteBlueprintGoal(
+                displayText: normalizedGoalDisplayText(from: draft.goalSummary),
+                horizonWeeks: goalHorizonWeeks(from: draft.goalTimeline),
+                category: category(for: draft.goalSummary)
+            )
+        case .findGoal:
+            return AthleteBlueprintGoal(
+                displayText: normalizedGoalDisplayText(from: draft.goalSummary),
+                horizonWeeks: draft.chosenGoal?.timeline.weeks ?? goalHorizonWeeks(from: draft.goalTimeline),
+                category: category(for: draft.goalSummary)
+            )
+        }
+    }
+
+    private static func buildCoachRead(
+        archetype: AthleteBlueprintArchetype,
+        currentState: AthleteBlueprintCurrentState,
+        goalFit: AthleteBlueprintGoalFit,
+        evidence: AthleteBlueprintEvidence
+    ) -> AthleteBlueprintCoachRead {
+        let text: String
+        if evidence.hasWorkoutHistory {
+            text = "\(archetype.explanation) \(currentState.summary) \(goalFit.summary)"
+        } else {
+            text = "HAYF has a clear picture of what you want from training, but not enough Apple Health history yet to make strong claims about your past patterns. For now, the read leans on what you told us and will sharpen as you train."
+        }
+
+        return AthleteBlueprintCoachRead(
+            text: text,
+            detail: AthleteBlueprintDetail(
+                id: "coach_read",
+                title: "Coach's read",
+                summary: "This is the synthesis HAYF uses before it creates the strategy.",
+                confidence: evidence.hasWorkoutHistory ? "High" : "Provisional",
+                observationWindow: evidence.hasWorkoutHistory ? "Onboarding + imported workout history" : "Onboarding only",
+                evidence: evidence.hasWorkoutHistory
+                    ? archetype.detail.evidence
+                        + currentState.detail.evidence
+                        + goalFit.supports
+                    : [
+                        "You completed the onboarding profile.",
+                        "Apple Health history was not available in enough depth for a stronger read yet."
+                    ],
+                caveat: evidence.hasWorkoutHistory ? nil : "HAYF will refine this after it has more real training evidence."
+            )
+        )
+    }
+
+    private static func buildArchetype(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        evidence: AthleteBlueprintEvidence
+    ) -> AthleteBlueprintArchetype {
+        if let label = evidence.trainingIdentityLabel, !evidence.dominantModalities.isEmpty {
+            let friendlyLabel: String
+            switch label {
+            case "Hybrid athlete":
+                friendlyLabel = "Hybrid Athlete"
+            case "Strength-led":
+                friendlyLabel = "Strength-Led Athlete"
+            case "Endurance-led":
+                friendlyLabel = "Endurance-Led Athlete"
+            default:
+                friendlyLabel = titleCase(label)
+            }
+
+            let explanation = "Your history is led by \(joinedList(evidence.dominantModalities)), which makes you a \(friendlyLabel.lowercased())."
+            return AthleteBlueprintArchetype(
+                label: friendlyLabel,
+                explanation: explanation,
+                detail: AthleteBlueprintDetail(
+                    id: "athlete_archetype",
+                    title: "Athlete type",
+                    summary: "This label is based on repeated tracked behavior, not on the goal you selected today.",
+                    confidence: evidence.dominantModalities.count >= 2 ? "High" : "Medium",
+                    observationWindow: "6 years of imported workouts",
+                    evidence: [
+                        "Dominant modalities: \(joinedList(evidence.dominantModalities)).",
+                        "\(evidence.totalWorkouts) imported workouts were available for this read."
+                    ],
+                    caveat: nil
+                )
+            )
+        }
+
+        let fallbackLabel: String
+        if intent == .stayConsistent {
+            fallbackLabel = "Consistency Seeker"
+        } else if draft.trainingOptions.contains(.strength) && draft.trainingOptions.contains(where: { [.running, .cycling, .swimming].contains($0) }) {
+            fallbackLabel = "Hybrid Intent"
+        } else {
+            fallbackLabel = "Emerging Athlete"
+        }
+
+        return AthleteBlueprintArchetype(
+            label: fallbackLabel,
+            explanation: "Your self-reported preferences point toward \(fallbackLabel.lowercased()), but HAYF needs more tracked history before it treats that as a durable pattern.",
+            detail: AthleteBlueprintDetail(
+                id: "athlete_archetype",
+                title: "Athlete type",
+                summary: "This label currently comes from what you selected in onboarding, not from a repeated tracked pattern yet.",
+                confidence: "Provisional",
+                observationWindow: "Onboarding only",
+                evidence: [
+                    "Feasible training options: \(joinedList(draft.trainingOptions.map(\.title))).",
+                    "No rich HealthKit workout history was available for a stronger identity read."
+                ],
+                caveat: "This label should sharpen once HAYF has enough repeated training behavior to observe."
+            )
+        )
+    }
+
+    private static func buildCurrentState(evidence: AthleteBlueprintEvidence) -> AthleteBlueprintCurrentState {
+        guard evidence.hasWorkoutHistory else {
+            return AthleteBlueprintCurrentState(
+                label: "Still learning your baseline",
+                summary: "HAYF does not yet have enough tracked history to say where you are right now with confidence.",
+                detail: AthleteBlueprintDetail(
+                    id: "current_training_state",
+                    title: "Current state",
+                    summary: "There is not enough recent HealthKit evidence yet for a strong present-state call.",
+                    confidence: "Provisional",
+                    observationWindow: "Recent training evidence unavailable",
+                    evidence: ["Current-state claims are withheld when recent evidence is sparse."],
+                    caveat: "This protects against treating old or thin data as your current state."
+                )
+            )
+        }
+
+        let sevenDayMinutes = evidence.windowMinutes("7d")
+        let twentyEightDayMinutes = evidence.windowMinutes("28d")
+        let ninetyDayMinutes = evidence.windowMinutes("90d")
+        let weeklyAverage28 = twentyEightDayMinutes / 4
+        let recentVsBaseline = weeklyAverage28 > 0 ? sevenDayMinutes / weeklyAverage28 : 1
+        let label: String
+        let summary: String
+        let evidenceLines: [String]
+
+        if sevenDayMinutes == 0, ninetyDayMinutes > 0 {
+            label = "Rebuilding after a lull"
+            summary = "Your history shows a usable base, but the last week has gone quiet. HAYF should treat this as re-entry rather than a blank slate."
+            evidenceLines = [
+                "Last 7 days: no tracked training minutes.",
+                "Last 90 days: \(Int(ninetyDayMinutes.rounded())) tracked training minutes."
+            ]
+        } else if recentVsBaseline < 0.65, twentyEightDayMinutes > 0 {
+            label = "Recent rhythm has dipped"
+            summary = "Your current week is lighter than your recent baseline, which suggests HAYF should protect momentum before it adds ambition."
+            evidenceLines = [
+                "Last 7 days: \(Int(sevenDayMinutes.rounded())) minutes.",
+                "Typical recent week from the last 28 days: about \(Int(weeklyAverage28.rounded())) minutes."
+            ]
+        } else if recentVsBaseline > 1.35, weeklyAverage28 > 0 {
+            label = "Building momentum"
+            summary = "Your most recent week is running above your recent baseline, which suggests real momentum but also a reason to keep the first strategy controlled."
+            evidenceLines = [
+                "Last 7 days: \(Int(sevenDayMinutes.rounded())) minutes.",
+                "Typical recent week from the last 28 days: about \(Int(weeklyAverage28.rounded())) minutes."
+            ]
+        } else {
+            label = "Stable recent rhythm"
+            summary = "Your recent training load is close to your recent baseline, so HAYF can start from continuity rather than repair."
+            evidenceLines = [
+                "Last 7 days: \(Int(sevenDayMinutes.rounded())) minutes.",
+                "Typical recent week from the last 28 days: about \(Int(weeklyAverage28.rounded())) minutes."
+            ]
+        }
+
+        return AthleteBlueprintCurrentState(
+            label: label,
+            summary: summary,
+            detail: AthleteBlueprintDetail(
+                id: "current_training_state",
+                title: "Current state",
+                summary: "This is a present-state read built from recent load, not from your all-time history.",
+                confidence: twentyEightDayMinutes > 0 ? "High" : "Medium",
+                observationWindow: "Last 7 days vs prior 28-day baseline",
+                evidence: evidenceLines,
+                caveat: nil
+            )
+        )
+    }
+
+    private static func buildHistoryFindings(evidence: AthleteBlueprintEvidence) -> [AthleteBlueprintFinding] {
+        guard evidence.hasWorkoutHistory else {
+            return [
+                AthleteBlueprintFinding(
+                    id: "history_not_enough_yet",
+                    title: "Not enough training history yet",
+                    summary: "HAYF will add sharper findings once it has enough repeated behavior to trust.",
+                    detail: AthleteBlueprintDetail(
+                        id: "history_not_enough_yet",
+                        title: "What your history shows",
+                        summary: "The current data is too thin for strong historical claims.",
+                        confidence: "Provisional",
+                        observationWindow: "Available imported workouts",
+                        evidence: ["No repeated workout pattern cleared the confidence bar yet."],
+                        caveat: "Weak evidence is intentionally omitted instead of padded into a false read."
+                    )
+                )
+            ]
+        }
+
+        var findings: [AthleteBlueprintFinding] = []
+
+        if evidence.strengthWorkouts90Days > 0 {
+            findings.append(
+                AthleteBlueprintFinding(
+                    id: "strength_anchor",
+                    title: "Strength is a real anchor",
+                    summary: "You logged \(evidence.strengthWorkouts90Days) strength sessions in the last 90 days.",
+                    detail: AthleteBlueprintDetail(
+                        id: "strength_anchor",
+                        title: "Strength is a real anchor",
+                        summary: "Repeated strength work is one of the clearest durable patterns in your recent history.",
+                        confidence: "High",
+                        observationWindow: "Last 90 days",
+                        evidence: [
+                            "\(evidence.strengthWorkouts90Days) tracked strength sessions.",
+                            "\(Int(evidence.strengthMinutes90Days.rounded())) tracked strength minutes."
+                        ],
+                        caveat: nil
+                    )
+                )
+            )
+        }
+
+        if evidence.longestActiveWeekStreak >= 4 {
+            findings.append(
+                AthleteBlueprintFinding(
+                    id: "consistency_streak",
+                    title: "You have proved you can hold a rhythm",
+                    summary: "Your longest active streak is \(evidence.longestActiveWeekStreak) weeks.",
+                    detail: AthleteBlueprintDetail(
+                        id: "consistency_streak",
+                        title: "You have proved you can hold a rhythm",
+                        summary: "HAYF treats past sustained behavior as evidence that consistency is available to rebuild, not something you lack entirely.",
+                        confidence: "High",
+                        observationWindow: "6 years of imported workouts",
+                        evidence: [
+                            "Longest active-week streak: \(evidence.longestActiveWeekStreak) weeks.",
+                            "Active weeks observed: \(evidence.activeWeeks)."
+                        ],
+                        caveat: nil
+                    )
+                )
+            )
+        }
+
+        if let longest = evidence.longestWorkout {
+            findings.append(
+                AthleteBlueprintFinding(
+                    id: "long_session_tolerance",
+                    title: "You can handle one longer session",
+                    summary: "Your history includes a \(Int(longest.durationMinutes.rounded()))-minute \(longest.modality) session.",
+                    detail: AthleteBlueprintDetail(
+                        id: "long_session_tolerance",
+                        title: "You can handle one longer session",
+                        summary: "The longest repeated-capacity clue in your history gives HAYF room to use one bigger weekly anchor when the goal calls for it.",
+                        confidence: "High",
+                        observationWindow: "6 years of imported workouts",
+                        evidence: [
+                            "Longest recorded \(longest.modality) session: \(Int(longest.durationMinutes.rounded())) minutes.",
+                            longest.distanceKilometers.map { "Distance in that session: \(String(format: "%.1f", $0)) km." } ?? "Distance was not recorded for that session."
+                        ],
+                        caveat: nil
+                    )
+                )
+            )
+        }
+
+        if let strongestMonth = evidence.strongestMonth {
+            findings.append(
+                AthleteBlueprintFinding(
+                    id: "strongest_month",
+                    title: "\(strongestMonth.label) is your strongest month",
+                    summary: "Historically, \(strongestMonth.label) carries your highest training volume.",
+                    detail: AthleteBlueprintDetail(
+                        id: "strongest_month",
+                        title: "\(strongestMonth.label) is your strongest month",
+                        summary: "Seasonality matters because some athletes reliably train better in certain parts of the year.",
+                        confidence: "Medium",
+                        observationWindow: "6 years of imported workouts",
+                        evidence: [
+                            "\(strongestMonth.label): \(Int(strongestMonth.totalMinutes.rounded())) total tracked minutes.",
+                            "\(strongestMonth.workouts) tracked workouts in that month across imported history."
+                        ],
+                        caveat: nil
+                    )
+                )
+            )
+        }
+
+        if findings.isEmpty, let firstModality = evidence.dominantModalities.first {
+            findings.append(
+                AthleteBlueprintFinding(
+                    id: "dominant_modality",
+                    title: "\(titleCase(firstModality)) leads your history",
+                    summary: "\(titleCase(firstModality)) is the clearest repeated modality in your imported record.",
+                    detail: AthleteBlueprintDetail(
+                        id: "dominant_modality",
+                        title: "\(titleCase(firstModality)) leads your history",
+                        summary: "HAYF uses repeated behavior before it trusts self-description alone.",
+                        confidence: "Medium",
+                        observationWindow: "6 years of imported workouts",
+                        evidence: ["Dominant modality: \(titleCase(firstModality))."],
+                        caveat: nil
+                    )
+                )
+            )
+        }
+
+        return Array(findings.prefix(4))
+    }
+
+    private static func buildGoalFit(
+        goal: AthleteBlueprintGoal,
+        draft: ConsistencyOnboardingDraft,
+        evidence: AthleteBlueprintEvidence
+    ) -> AthleteBlueprintGoalFit {
+        let result: (headline: String, summary: String, supports: [String], gaps: [String], detailEvidence: [String])
+
+        switch goal.category {
+        case .consistency:
+            let hasProof = evidence.longestActiveWeekStreak >= 4 || evidence.windowWorkouts("90d") >= 8
+            result = hasProof
+                ? (
+                    "A very natural fit",
+                    "Consistency is not a vague aspiration for you; your history already shows periods where a rhythm holds. The work is making that rhythm easier to repeat over the next 12 weeks.",
+                    [
+                        evidence.longestActiveWeekStreak >= 4
+                            ? "You have already sustained a \(evidence.longestActiveWeekStreak)-week active streak."
+                            : "You trained repeatedly across the last 90 days."
+                    ],
+                    evidence.longestGapDays.map { ["Your history still includes a gap of \($0) days, so durability matters more than intensity."] } ?? [],
+                    [
+                        "Assessment horizon: 12 weeks.",
+                        "Consistency is treated as a real goal, not a placeholder."
+                    ]
+                )
+                : (
+                    "A coherent first target",
+                    "A 12-week consistency goal fits because the most important first adaptation is proving that training can repeat before the plan asks for more.",
+                    ["Your onboarding answers explicitly prioritized a sustainable rhythm."],
+                    ["HealthKit does not yet show a long enough repeated pattern to call this natural fit with high confidence."],
+                    ["Assessment horizon: 12 weeks."]
+                )
+        case .endurance:
+            let selectedEnduranceOptions = draft.trainingOptions.filter { [.running, .cycling, .swimming].contains($0) }
+            let hasSelectedEndurancePath = !selectedEnduranceOptions.isEmpty
+            result = hasSelectedEndurancePath
+                ? (
+                    "Coherent with your chosen path",
+                    "Your goal to \(goal.displayText) is coherent with the training menu you chose, because \(joinedList(selectedEnduranceOptions.map(\.title))) can directly support that adaptation.",
+                    ["You selected \(joinedList(selectedEnduranceOptions.map(\.title))) as feasible training options for this goal."],
+                    evidence.dominantModalities.contains(where: { ["running", "cycling", "swimming"].contains($0) })
+                        ? []
+                        : ["Your recent history does not yet show endurance work as the dominant pattern, so the first block should build the bridge deliberately."],
+                    ["Goal horizon: \(goal.horizonWeeks) weeks."]
+                )
+                : (
+                    "Coherent, but under-specified",
+                    "Your goal to \(goal.displayText) is valid, but your selected training menu does not yet name a clear endurance vehicle for it.",
+                    ["You explicitly chose the goal."],
+                    ["No selected feasible training option directly maps to endurance development yet."],
+                    ["Goal horizon: \(goal.horizonWeeks) weeks."]
+                )
+        case .strength:
+            let selectedStrengthPath = draft.trainingOptions.contains(.strength)
+            result = selectedStrengthPath
+                ? (
+                    "Coherent with your chosen path",
+                    "Your goal to \(goal.displayText) is coherent with the training menu you chose, because strength work is already part of the path you said is feasible.",
+                    ["You selected Strength as a feasible training option for this goal."],
+                    evidence.dominantModalities.contains("strength") ? [] : ["Strength is not yet one of the clearest tracked patterns in your history."],
+                    ["Goal horizon: \(goal.horizonWeeks) weeks."]
+                )
+                : (
+                    "Coherent, but under-specified",
+                    "Your goal to \(goal.displayText) is valid, but your selected training menu does not yet name a direct strength path for it.",
+                    ["You explicitly chose the goal."],
+                    ["No selected feasible training option directly maps to strength development yet."],
+                    ["Goal horizon: \(goal.horizonWeeks) weeks."]
+                )
+        case .bodyComposition, .sportPerformance, .generalFitness, .custom:
+            let selectedOptions = draft.trainingOptions.map(\.title)
+            result = (
+                selectedOptions.isEmpty ? "Coherent with what you asked for" : "Coherent with your chosen path",
+                selectedOptions.isEmpty
+                    ? "Your goal to \(goal.displayText) is a reasonable direction from the information you gave HAYF. The first strategy should be judged by whether it matches your real training behavior once it is underway."
+                    : "Your goal to \(goal.displayText) is coherent with the training path you chose: \(joinedList(selectedOptions)). Historical strengths are useful context, but they do not override the sports you said you want to use now.",
+                selectedOptions.isEmpty
+                    ? ["The goal came directly from your onboarding choices."]
+                    : ["You selected \(joinedList(selectedOptions)) as feasible training options for this goal."],
+                evidence.hasWorkoutHistory ? [] : ["There is not yet enough tracked history to assess fit more sharply."],
+                ["Goal horizon: \(goal.horizonWeeks) weeks."]
+            )
+        }
+
+        return AthleteBlueprintGoalFit(
+            headline: result.headline,
+            summary: result.summary,
+            supports: result.supports,
+            gaps: result.gaps,
+            detail: AthleteBlueprintDetail(
+                id: "goal_fit",
+                title: "Goal fit",
+                summary: "This checks whether the goal and the training path you chose make sense together; it does not require your past history to already look like the goal.",
+                confidence: evidence.hasWorkoutHistory ? "High" : "Medium",
+                observationWindow: "Goal + onboarding + available athlete evidence",
+                evidence: result.supports + result.gaps + result.detailEvidence,
+                caveat: nil
+            )
+        )
+    }
+
+    private static func goalHorizonWeeks(from timeline: GoalTimeline?) -> Int {
+        timeline?.weeks ?? 12
+    }
+
+    private static func normalizedGoalDisplayText(from value: String) -> String {
+        var text = value.trimmed
+        let lowercase = text.lowercased()
+        let prefixes = [
+            "i want to ",
+            "i'd like to ",
+            "i would like to ",
+            "my goal is to "
+        ]
+
+        if let prefix = prefixes.first(where: { lowercase.hasPrefix($0) }) {
+            text = String(text.dropFirst(prefix.count))
+        }
+
+        guard let first = text.first else { return "make progress" }
+        return first.lowercased() + text.dropFirst()
+    }
+
+    private static func category(for text: String) -> AthleteBlueprintGoalCategory {
+        let normalized = text.lowercased()
+        if normalized.contains("run") || normalized.contains("marathon") || normalized.contains("10k") || normalized.contains("5k") || normalized.contains("endurance") {
+            return .endurance
+        }
+        if normalized.contains("strength") || normalized.contains("lift") || normalized.contains("gym") {
+            return .strength
+        }
+        if normalized.contains("body fat") || normalized.contains("lean") || normalized.contains("weight") || normalized.contains("composition") {
+            return .bodyComposition
+        }
+        if normalized.contains("tennis") || normalized.contains("football") || normalized.contains("basketball") || normalized.contains("sport") {
+            return .sportPerformance
+        }
+        return .generalFitness
+    }
+
+    private static func titleCase(_ value: String) -> String {
+        value
+            .split(separator: "_")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+
+    private static func joinedList(_ values: [String]) -> String {
+        let clean = values.map(titleCase)
+        switch clean.count {
+        case 0:
+            return "your recent training"
+        case 1:
+            return clean[0]
+        case 2:
+            return "\(clean[0]) and \(clean[1])"
+        default:
+            return "\(clean.dropLast().joined(separator: ", ")), and \(clean.last ?? "")"
+        }
+    }
+}
+
+private struct AthleteBlueprintGoal {
+    let displayText: String
+    let horizonWeeks: Int
+    let category: AthleteBlueprintGoalCategory
+}
+
+private enum AthleteBlueprintGoalCategory: String {
+    case consistency
+    case endurance
+    case strength
+    case bodyComposition
+    case sportPerformance
+    case generalFitness
+    case custom
+}
+
+private struct AthleteBlueprintEvidence {
+    let snapshot: HealthFeatureSnapshot?
+
+    var hasWorkoutHistory: Bool {
+        totalWorkouts > 0
+    }
+
+    var totalWorkouts: Int {
+        snapshot?.workoutLedger.totalWorkouts ?? 0
+    }
+
+    var trainingIdentityLabel: String? {
+        snapshot?.fitnessHistory.trainingIdentity.label
+    }
+
+    var dominantModalities: [String] {
+        snapshot?.fitnessHistory.trainingIdentity.dominantModalities ?? []
+    }
+
+    var longestActiveWeekStreak: Int {
+        snapshot?.fitnessHistory.consistency.longestActiveWeekStreak ?? 0
+    }
+
+    var activeWeeks: Int {
+        snapshot?.fitnessHistory.consistency.activeWeeks ?? 0
+    }
+
+    var longestGapDays: Int? {
+        snapshot?.fitnessHistory.consistency.longestGapDays
+    }
+
+    var strengthWorkouts90Days: Int {
+        snapshot?.fitnessHistory.strengthContinuity.strengthWorkouts90Days ?? 0
+    }
+
+    var strengthMinutes90Days: Double {
+        snapshot?.fitnessHistory.strengthContinuity.strengthMinutes90Days ?? 0
+    }
+
+    var longestWorkout: FitnessLongestWorkoutSummary? {
+        snapshot?.fitnessHistory.performance.longestWorkoutsByModality.first
+    }
+
+    var strongestMonth: FitnessMonthlyActivitySummary? {
+        snapshot?.fitnessHistory.seasonality.strongestMonth
+    }
+
+    func windowMinutes(_ label: String) -> Double {
+        snapshot?.workoutLedger.windows.first { $0.window == label }?.totalMinutes ?? 0
+    }
+
+    func windowWorkouts(_ label: String) -> Int {
+        snapshot?.workoutLedger.windows.first { $0.window == label }?.workouts ?? 0
+    }
+}
+
+private struct AthleteBlueprintSummaryRow: View {
+    let systemImage: String
+    let eyebrow: String
+    let title: String
+    let summary: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 14) {
+                HAYFIcon(systemImage: systemImage, isSelected: true, size: 36, iconSize: 18)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(eyebrow)
+                        .font(.system(size: 10, weight: .medium))
+                        .kerning(1.2)
+                        .foregroundStyle(HAYFColor.secondary)
+
+                    Text(title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Text(summary)
+                        .font(.system(size: 14, weight: .regular))
+                        .lineSpacing(3)
+                        .foregroundStyle(HAYFColor.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 10)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+                    .padding(.top, 20)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AthleteBlueprintFindingRow: View {
+    let finding: AthleteBlueprintFinding
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 14) {
+                Circle()
+                    .fill(HAYFColor.orange)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 8)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(finding.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Text(finding.summary)
+                        .font(.system(size: 14, weight: .regular))
+                        .lineSpacing(3)
+                        .foregroundStyle(HAYFColor.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 10)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+                    .padding(.top, 8)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AthleteBlueprintGoalFitCard: View {
+    let goalFit: AthleteBlueprintGoalFit
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text(goalFit.headline)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(HAYFColor.muted)
+                }
+
+                Text(goalFit.summary)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(4)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                BlueprintEvidenceHint()
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct BlueprintEvidenceHint: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Why HAYF thinks this")
+                .font(.system(size: 12, weight: .medium))
+
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundStyle(HAYFColor.muted)
+    }
+}
+
+private struct AthleteBlueprintDetailSheet: View {
+    let detail: AthleteBlueprintDetail
+
+    var body: some View {
+        ZStack {
+            HAYFColor.neutral
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(detail.title.uppercased())
+                        .font(.system(size: 11, weight: .medium))
+                        .kerning(1.2)
+                        .foregroundStyle(HAYFColor.secondary)
+
+                    Text(detail.summary)
+                        .font(.system(size: 20, weight: .semibold))
+                        .lineSpacing(4)
+                        .foregroundStyle(HAYFColor.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(spacing: 10) {
+                    BlueprintMetaPill(label: "Confidence", value: detail.confidence)
+                    BlueprintMetaPill(label: "Window", value: detail.observationWindow)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(detail.evidence, id: \.self) { item in
+                        HStack(alignment: .top, spacing: 10) {
+                            Circle()
+                                .fill(HAYFColor.orange)
+                                .frame(width: 7, height: 7)
+                                .padding(.top, 7)
+
+                            Text(item)
+                                .font(.system(size: 15, weight: .regular))
+                                .lineSpacing(4)
+                                .foregroundStyle(HAYFColor.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                if let caveat = detail.caveat {
+                    Text(caveat)
+                        .font(.system(size: 14, weight: .regular))
+                        .lineSpacing(4)
+                        .foregroundStyle(HAYFColor.muted)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(HAYFColor.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(HAYFColor.border, lineWidth: 1)
+                        }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
+        }
+    }
+}
+
+private struct BlueprintMetaPill: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .medium))
+                .kerning(1.0)
+                .foregroundStyle(HAYFColor.muted)
+
+            Text(value)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
         }
     }
 }

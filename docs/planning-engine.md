@@ -156,6 +156,7 @@ HealthKit is the first source, but the database model is source-agnostic. Manual
 Product decisions:
 
 - The AI should receive labelled evidence and compact insight summaries, not raw HealthKit samples.
+- Athlete Blueprint work should use the stricter evidence contract in `docs/health-evidence-spec.md`: raw HealthKit samples stay on device, deterministic transforms classify recency / density / confidence, and AI generation sees only approved evidence summaries.
 - Calculations should stay broad and reusable. Running and cycling can have extra helpers, but the foundation should not need a rebuild for every new goal idea.
 - Active blocks can have a primary goal and supporting sub-goals.
 - Goal status language should be simple: on track, lagging, achieved, or needs review.
