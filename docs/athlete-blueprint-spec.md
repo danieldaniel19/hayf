@@ -15,8 +15,9 @@ The user-facing Athlete Blueprint shows:
 1. `coach_read`
 2. `athlete_archetype`
 3. `current_training_state`
-4. `history_findings`
-5. `goal_fit`
+4. `physical_baseline`
+5. `history_findings`
+6. `goal_fit`
 
 The coach-side model may also maintain:
 
@@ -48,14 +49,15 @@ The AI never sees raw HealthKit samples. It sees:
 1. Every visible claim must be evidence-backed.
 2. Each section should do one distinct job.
 3. The report should feel specific, not encyclopedic.
-4. Workout history should dominate when available; body and recovery metrics should enrich, not hijack, the read.
-5. The report should distinguish:
+4. A fresh onboarding body baseline is the current truth for body composition; imported body metrics may enrich it only as qualified trend context.
+5. Repeated body-change trends are part of athlete identity when they clear evidence thresholds, not merely a side note for body-composition goals.
+6. The report should distinguish:
    - who the athlete appears to be
    - where they are now
    - what their history shows
    - how well the chosen goal fits them
-6. Goal-aware does not mean goal-dependent. The durable athlete read should remain useful even if the goal later changes.
-7. Every visible section should be able to open a compact detail card later with the evidence behind the claim: "why HAYF thinks this."
+7. Goal-aware does not mean goal-dependent. The durable athlete read should remain useful even if the goal later changes.
+8. Every visible section should be able to open a compact detail card later with the evidence behind the claim: "why HAYF thinks this."
 
 ## Section Contracts
 
@@ -114,11 +116,13 @@ Give the user a memorable, legible label for the kind of athlete HAYF believes t
 #### Input findings allowed
 
 - approved `training_identity`
+- approved `body_change_trend`
 - approved onboarding identity signals
 
 #### Allowed claim types
 
 - modality-led identity
+- body-change modifiers such as leaning, building, or steady when repeated measurements support them
 - training-style identity
 - return / rebuilding identity when evidence supports it
 
@@ -199,7 +203,29 @@ Describe where the athlete is **now**, independently from who they are in genera
 }
 ```
 
-### 4. `history_findings`
+### 4. `physical_baseline`
+
+#### Job
+
+Show the body-composition baseline HAYF is actually planning from today.
+
+#### Must answer
+
+- current self-reported weight
+- current self-reported height
+- current estimated body-fat band
+
+#### Allowed claim types
+
+- "current self-reported baseline"
+- imported body-trend context only when deterministic evidence says the trend is recent enough
+
+#### Forbidden claim types
+
+- treating a stale HealthKit body-fat or weight sample as current truth
+- implying that an estimated band is a lab-grade measurement
+
+### 5. `history_findings`
 
 #### Job
 

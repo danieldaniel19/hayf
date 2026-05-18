@@ -5,6 +5,7 @@ import SwiftUI
 struct AccountProfile {
     let name: String
     let birthdate: Date
+    let physiologyReference: PhysiologyReference
     let mainCity: String
     let profilePhotoData: Data?
     let profilePhotoURL: URL?
@@ -20,6 +21,7 @@ struct AccountCreationView: View {
     @State private var step: AccountCreationStep = .setup
     @State private var name: String
     @State private var birthdate: Date?
+    @State private var physiologyReference: PhysiologyReference?
     @State private var mainCity = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var selectedPhotoData: Data?
@@ -43,6 +45,7 @@ struct AccountCreationView: View {
         self.onFinish = onFinish
         _name = State(initialValue: existingProfile?.name ?? prefilledName ?? "")
         _birthdate = State(initialValue: existingProfile.flatMap { Self.storedBirthdateFormatter.date(from: $0.birthdate) })
+        _physiologyReference = State(initialValue: existingProfile?.physiologyReference.flatMap(PhysiologyReference.init(rawValue:)))
         _mainCity = State(initialValue: existingProfile?.mainCity ?? "")
     }
 
@@ -108,6 +111,8 @@ struct AccountCreationView: View {
             nameScreen
         case .birthdate:
             birthdateScreen
+        case .physiology:
+            physiologyScreen
         case .city:
             cityScreen
         case .review:
@@ -155,6 +160,17 @@ struct AccountCreationView: View {
                     errorMessage: attemptedSetupSubmit && birthdate == nil ? "Please select your birthdate." : nil
                 ) {
                     step = .birthdate
+                }
+
+                AccountFieldButton(
+                    title: "Physiology reference",
+                    value: physiologyReference?.title ?? "Select a reference",
+                    systemImage: "figure",
+                    isPlaceholder: physiologyReference == nil,
+                    isComplete: physiologyReference != nil,
+                    errorMessage: attemptedSetupSubmit && physiologyReference == nil ? "Please select a physiology reference." : nil
+                ) {
+                    step = .physiology
                 }
 
                 AccountFieldButton(
@@ -279,6 +295,36 @@ struct AccountCreationView: View {
                 if birthdate == nil {
                     birthdate = defaultBirthdate
                 }
+                step = .physiology
+            }
+        }
+    }
+
+    private var physiologyScreen: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            AccountIntro(
+                eyebrow: "ACCOUNT SETUP",
+                title: "Which physiology\nreference should HAYF use?",
+                copy: "HAYF uses this for body-composition ranges and physiology-aware recommendations."
+            )
+
+            VStack(spacing: 12) {
+                ForEach(PhysiologyReference.allCases) { reference in
+                    DetailedAccountChoiceRow(
+                        title: reference.title,
+                        subtitle: reference.subtitle,
+                        systemImage: reference.systemImage,
+                        isSelected: physiologyReference == reference
+                    ) {
+                        physiologyReference = reference
+                    }
+                }
+            }
+            .padding(.top, 34)
+
+            Spacer(minLength: 18)
+
+            AccountPrimaryButton(title: "Continue", isEnabled: physiologyReference != nil) {
                 step = .city
             }
         }
@@ -384,6 +430,7 @@ struct AccountCreationView: View {
 
                 ReviewRow(systemImage: "person", label: "Name", value: name.trimmed, action: { step = .name })
                 ReviewRow(systemImage: "calendar", label: "Birthdate", value: Self.birthdateFormatter.string(from: birthdate ?? defaultBirthdate), action: { step = .birthdate })
+                ReviewRow(systemImage: "figure", label: "Physiology", value: physiologyReference?.title ?? "Not set", action: { step = .physiology })
                 ReviewRow(systemImage: "mappin.and.ellipse", label: "Main city", value: mainCity.trimmed, action: { step = .city })
             }
             .padding(.top, 32)
@@ -441,7 +488,7 @@ struct AccountCreationView: View {
     }
 
     private var isProfileComplete: Bool {
-        !name.trimmed.isEmpty && birthdate != nil && !mainCity.trimmed.isEmpty
+        !name.trimmed.isEmpty && birthdate != nil && physiologyReference != nil && !mainCity.trimmed.isEmpty
     }
 
     private var saveButtonTitle: String {
@@ -459,6 +506,8 @@ struct AccountCreationView: View {
             step = .name
         } else if birthdate == nil {
             step = .birthdate
+        } else if physiologyReference == nil {
+            step = .physiology
         } else if mainCity.trimmed.isEmpty {
             step = .city
         } else {
@@ -467,7 +516,7 @@ struct AccountCreationView: View {
     }
 
     private func createAccount() {
-        guard let birthdate, isProfileComplete else {
+        guard let birthdate, let physiologyReference, isProfileComplete else {
             attemptedSetupSubmit = true
             step = .setup
             return
@@ -476,6 +525,7 @@ struct AccountCreationView: View {
         let profile = AccountProfile(
             name: name.trimmed,
             birthdate: birthdate,
+            physiologyReference: physiologyReference,
             mainCity: mainCity.trimmed,
             profilePhotoData: selectedPhotoData,
             profilePhotoURL: prefilledAvatarURL
@@ -514,6 +564,7 @@ private enum AccountCreationStep {
     case setup
     case name
     case birthdate
+    case physiology
     case city
     case review
     case success
@@ -530,10 +581,40 @@ private enum AccountCreationStep {
             return .setup
         case .birthdate:
             return .name
-        case .city:
+        case .physiology:
             return .birthdate
+        case .city:
+            return .physiology
         case .review:
             return .city
+        }
+    }
+}
+
+enum PhysiologyReference: String, CaseIterable, Identifiable {
+    case male
+    case female
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .male: return "Male"
+        case .female: return "Female"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .male: return "Use male physiology reference ranges."
+        case .female: return "Use female physiology reference ranges."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .male: return "figure"
+        case .female: return "figure"
         }
     }
 }
@@ -837,6 +918,59 @@ private struct AccountPrimaryButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
+    }
+}
+
+private struct DetailedAccountChoiceRow: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 15) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.secondary)
+                    .frame(width: 42, height: 42)
+                    .background(HAYFColor.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Text(subtitle)
+                        .font(.system(size: 14, weight: .regular))
+                        .lineSpacing(3)
+                        .foregroundStyle(HAYFColor.secondary)
+                }
+
+                Spacer()
+
+                Circle()
+                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.borderStrong, lineWidth: 1.4)
+                    .frame(width: 22, height: 22)
+                    .overlay {
+                        if isSelected {
+                            Circle()
+                                .fill(HAYFColor.orange)
+                                .frame(width: 10, height: 10)
+                        }
+                    }
+            }
+            .padding(16)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.4 : 1)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 

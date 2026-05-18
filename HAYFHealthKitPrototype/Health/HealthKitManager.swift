@@ -162,12 +162,43 @@ struct RecoveryFeatureSummary: Codable {
 
 struct BodyFeatureSummary: Codable {
     let heightCentimeters: Double?
+    let heightLatestSampleDate: Date?
     let bodyMassKilograms: Double?
+    let bodyMassLatestSampleDate: Date?
     let bodyMass28DayAverageKilograms: Double?
     let bodyFatPercentage: Double?
+    let bodyFatLatestSampleDate: Date?
     let bodyFat28DayAveragePercentage: Double?
     let leanBodyMassKilograms: Double?
     let waistCircumferenceCentimeters: Double?
+    let bodyMassHistory: BodyMetricTrendSummary
+    let bodyFatHistory: BodyMetricTrendSummary
+}
+
+struct BodyMetricTrendSummary: Codable {
+    let sampleCount: Int
+    let firstSampleDate: Date?
+    let latestSampleDate: Date?
+    let firstValue: Double?
+    let latestValue: Double?
+    let change: Double?
+    let daysCovered: Int
+    let average28Days: Double?
+    let average90Days: Double?
+    let average180Days: Double?
+    let change28Days: Double?
+    let change90Days: Double?
+    let change180Days: Double?
+    let weeklyChangeRate: Double?
+    let trend: BodyMetricTrendDirection
+    let confidence: String
+}
+
+enum BodyMetricTrendDirection: String, Codable {
+    case rising
+    case falling
+    case stable
+    case insufficient
 }
 
 struct NutritionFeatureSummary: Codable {
@@ -296,10 +327,14 @@ struct FitnessRecoveryContextSummary: Codable {
 
 struct FitnessBodyTrendSummary: Codable {
     let bodyMassLatestKilograms: Double?
+    let bodyMassLatestSampleDate: Date?
     let bodyMass28DayAverageKilograms: Double?
     let bodyFatLatestPercentage: Double?
+    let bodyFatLatestSampleDate: Date?
     let bodyFat28DayAveragePercentage: Double?
     let waistCircumferenceCentimeters: Double?
+    let bodyMassHistory: BodyMetricTrendSummary
+    let bodyFatHistory: BodyMetricTrendSummary
 }
 
 struct FitnessActivityFloorSummary: Codable {
@@ -450,6 +485,8 @@ final class HealthKitManager {
         async let bodyFat28 = fetchAverageQuantity(identifier: .bodyFatPercentage, unit: .percent(), days: 28)
         async let leanBodyMass = fetchLatestQuantity(identifier: .leanBodyMass, unit: .gramUnit(with: .kilo))
         async let waist = fetchLatestQuantity(identifier: .waistCircumference, unit: .meterUnit(with: .centi))
+        async let bodyMassHistory = fetchBodyMetricTrend(identifier: .bodyMass, unit: .gramUnit(with: .kilo), days: 365, minimumSamples: 4, minimumDaysCovered: 21, stableThreshold: 0.8)
+        async let bodyFatHistory = fetchBodyMetricTrend(identifier: .bodyFatPercentage, unit: .percent(), days: 365, minimumSamples: 3, minimumDaysCovered: 30, stableThreshold: 1.5, valueScale: 100)
         async let nutrition = fetchNutritionSummary(days: 28)
 
         let workoutSamples = try await workouts
@@ -486,12 +523,17 @@ final class HealthKitManager {
         )
         let body = try await BodyFeatureSummary(
             heightCentimeters: height.flatMap(\.value),
+            heightLatestSampleDate: height.flatMap(\.date),
             bodyMassKilograms: bodyMass.flatMap(\.value),
+            bodyMassLatestSampleDate: bodyMass.flatMap(\.date),
             bodyMass28DayAverageKilograms: bodyMass28,
             bodyFatPercentage: bodyFat.flatMap(\.value).map { $0 * 100 },
+            bodyFatLatestSampleDate: bodyFat.flatMap(\.date),
             bodyFat28DayAveragePercentage: bodyFat28.map { $0 * 100 },
             leanBodyMassKilograms: leanBodyMass.flatMap(\.value),
-            waistCircumferenceCentimeters: waist.flatMap(\.value)
+            waistCircumferenceCentimeters: waist.flatMap(\.value),
+            bodyMassHistory: bodyMassHistory,
+            bodyFatHistory: bodyFatHistory
         )
         let nutritionSummary = try await nutrition
         let fitnessHistory = buildFitnessHistoryProfile(
@@ -659,10 +701,14 @@ final class HealthKitManager {
         )
         let bodyTrend = FitnessBodyTrendSummary(
             bodyMassLatestKilograms: body.bodyMassKilograms,
+            bodyMassLatestSampleDate: body.bodyMassLatestSampleDate,
             bodyMass28DayAverageKilograms: body.bodyMass28DayAverageKilograms,
             bodyFatLatestPercentage: body.bodyFatPercentage,
+            bodyFatLatestSampleDate: body.bodyFatLatestSampleDate,
             bodyFat28DayAveragePercentage: body.bodyFat28DayAveragePercentage,
-            waistCircumferenceCentimeters: body.waistCircumferenceCentimeters
+            waistCircumferenceCentimeters: body.waistCircumferenceCentimeters,
+            bodyMassHistory: body.bodyMassHistory,
+            bodyFatHistory: body.bodyFatHistory
         )
         let activityFloor = FitnessActivityFloorSummary(
             averageSteps7Days: activity.averageSteps7Days,
@@ -1011,20 +1057,86 @@ final class HealthKitManager {
             )
         }
 
-        if bodyTrend.bodyMassLatestKilograms != nil || bodyTrend.bodyFatLatestPercentage != nil {
+        if hasRecentBodyMetrics(bodyTrend) {
             insights.append(
                 FitnessHistoryInsightCandidate(
                     key: "body_metrics_available",
                     category: "body",
-                    title: "Body trend available",
-                    summary: "HealthKit has body metrics HAYF can use cautiously for body-composition goals.",
+                    title: "Recent body trend available",
+                    summary: "HealthKit has recent body metrics HAYF can use as trend context for body-composition goals.",
                     confidence: "medium",
                     evidence: ["hasBodyMass": "\(bodyTrend.bodyMassLatestKilograms != nil)", "hasBodyFat": "\(bodyTrend.bodyFatLatestPercentage != nil)"]
                 )
             )
         }
 
+        if let bodyMassTrendInsight = bodyTrendInsightCandidate(
+            key: "body_mass_trend",
+            metricLabel: "Body mass",
+            unitLabel: "kg",
+            trend: bodyTrend.bodyMassHistory,
+            requiresRecentSample: true
+        ) {
+            insights.append(bodyMassTrendInsight)
+        }
+
+        if let bodyFatTrendInsight = bodyTrendInsightCandidate(
+            key: "body_fat_trend",
+            metricLabel: "Body fat",
+            unitLabel: "percentage points",
+            trend: bodyTrend.bodyFatHistory,
+            requiresRecentSample: true
+        ) {
+            insights.append(bodyFatTrendInsight)
+        }
+
         return insights
+    }
+
+    private func bodyTrendInsightCandidate(
+        key: String,
+        metricLabel: String,
+        unitLabel: String,
+        trend: BodyMetricTrendSummary,
+        requiresRecentSample: Bool
+    ) -> FitnessHistoryInsightCandidate? {
+        guard trend.trend != .insufficient,
+              let change = trend.change,
+              let latestSampleDate = trend.latestSampleDate else {
+            return nil
+        }
+
+        if requiresRecentSample {
+            let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantFuture
+            guard latestSampleDate >= cutoff else { return nil }
+        }
+
+        let roundedChange = abs(change) >= 10 ? String(format: "%.0f", abs(change)) : String(format: "%.1f", abs(change))
+        let summary: String
+        switch trend.trend {
+        case .rising:
+            summary = "\(metricLabel) is up \(roundedChange) \(unitLabel) across \(trend.daysCovered) tracked days."
+        case .falling:
+            summary = "\(metricLabel) is down \(roundedChange) \(unitLabel) across \(trend.daysCovered) tracked days."
+        case .stable:
+            summary = "\(metricLabel) has stayed broadly stable across \(trend.daysCovered) tracked days."
+        case .insufficient:
+            return nil
+        }
+
+        return FitnessHistoryInsightCandidate(
+            key: key,
+            category: "body",
+            title: "\(metricLabel) trend",
+            summary: summary,
+            confidence: trend.confidence == "high" ? "high" : "medium",
+            evidence: [
+                "trend": trend.trend.rawValue,
+                "change": String(format: "%.2f", change),
+                "daysCovered": "\(trend.daysCovered)",
+                "sampleCount": "\(trend.sampleCount)"
+            ]
+        )
     }
 
     private func workoutWindowSummary(label: String, days: Int?, workouts: [HKWorkout]) -> WorkoutWindowSummary {
@@ -1048,6 +1160,13 @@ final class HealthKitManager {
             totalEnergyKilocalories: totalEnergy > 0 ? totalEnergy : nil,
             activityTypes: activityTypes
         )
+    }
+
+    private func hasRecentBodyMetrics(_ bodyTrend: FitnessBodyTrendSummary) -> Bool {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantFuture
+        return [bodyTrend.bodyMassLatestSampleDate, bodyTrend.bodyFatLatestSampleDate]
+            .compactMap { $0 }
+            .contains { $0 >= cutoff }
     }
 
     private func workoutSummary(_ workout: HKWorkout) -> WorkoutSummary {
@@ -1387,6 +1506,107 @@ final class HealthKitManager {
         }
 
         return (sample.quantity.doubleValue(for: unit), sample.endDate)
+    }
+
+    private func fetchBodyMetricTrend(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        days: Int,
+        minimumSamples: Int,
+        minimumDaysCovered: Int,
+        stableThreshold: Double,
+        valueScale: Double = 1
+    ) async throws -> BodyMetricTrendSummary {
+        guard let quantityType = HKQuantityType.quantityType(forIdentifier: identifier),
+              let startDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else {
+            return Self.emptyBodyMetricTrend()
+        }
+
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: Date())
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierEndDate, ascending: true)
+        let samples: [HKQuantitySample] = try await fetchSamples(
+            sampleType: quantityType,
+            predicate: predicate,
+            limit: HKObjectQueryNoLimit,
+            sortDescriptors: [sortDescriptor]
+        )
+        let points = samples.map { ($0.endDate, $0.quantity.doubleValue(for: unit) * valueScale) }
+        guard let first = points.first, let latest = points.last else {
+            return Self.emptyBodyMetricTrend()
+        }
+
+        let daysCovered = Calendar.current.dateComponents([.day], from: first.0, to: latest.0).day ?? 0
+        let totalChange = latest.1 - first.1
+        let weeklyRate = daysCovered > 0 ? totalChange / Double(daysCovered) * 7 : nil
+        let hasUsableTrend = points.count >= minimumSamples && daysCovered >= minimumDaysCovered
+        let trend: BodyMetricTrendDirection
+        if !hasUsableTrend {
+            trend = .insufficient
+        } else if abs(totalChange) <= stableThreshold {
+            trend = .stable
+        } else {
+            trend = totalChange > 0 ? .rising : .falling
+        }
+
+        return BodyMetricTrendSummary(
+            sampleCount: points.count,
+            firstSampleDate: first.0,
+            latestSampleDate: latest.0,
+            firstValue: first.1,
+            latestValue: latest.1,
+            change: totalChange,
+            daysCovered: daysCovered,
+            average28Days: average(points: points, withinDays: 28),
+            average90Days: average(points: points, withinDays: 90),
+            average180Days: average(points: points, withinDays: 180),
+            change28Days: change(points: points, withinDays: 28),
+            change90Days: change(points: points, withinDays: 90),
+            change180Days: change(points: points, withinDays: 180),
+            weeklyChangeRate: weeklyRate,
+            trend: trend,
+            confidence: hasUsableTrend ? (points.count >= minimumSamples * 2 ? "high" : "medium") : "insufficient"
+        )
+    }
+
+    private func average(points: [(Date, Double)], withinDays days: Int) -> Double? {
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else {
+            return nil
+        }
+        let values = points.filter { $0.0 >= cutoff }.map(\.1)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    private func change(points: [(Date, Double)], withinDays days: Int) -> Double? {
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else {
+            return nil
+        }
+        let window = points.filter { $0.0 >= cutoff }
+        guard let first = window.first, let latest = window.last, window.count >= 2 else {
+            return nil
+        }
+        return latest.1 - first.1
+    }
+
+    private static func emptyBodyMetricTrend() -> BodyMetricTrendSummary {
+        BodyMetricTrendSummary(
+            sampleCount: 0,
+            firstSampleDate: nil,
+            latestSampleDate: nil,
+            firstValue: nil,
+            latestValue: nil,
+            change: nil,
+            daysCovered: 0,
+            average28Days: nil,
+            average90Days: nil,
+            average180Days: nil,
+            change28Days: nil,
+            change90Days: nil,
+            change180Days: nil,
+            weeklyChangeRate: nil,
+            trend: .insufficient,
+            confidence: "insufficient"
+        )
     }
 
     private func fetchNutritionSummary(days: Int) async throws -> NutritionFeatureSummary {

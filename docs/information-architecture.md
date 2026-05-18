@@ -144,7 +144,7 @@ Core tables:
 - `replan_proposals`: reviewable repair proposals after meaningful planning changes
 - `planning_ai_generations`: compact AI request/response traces and failures
 
-HealthKit remains the source of truth for Apple health data. HAYF stores compact derived features and evidence, not raw HealthKit sample history.
+HealthKit remains the source of truth for Apple health data. HAYF stores compact derived features and evidence, not raw HealthKit sample history. Workout history and body history follow the same rule: the raw archive stays on-device, while durable planning memory is represented through snapshots, labelled metric observations, and coach-readable history insights.
 
 ## Current Product State
 

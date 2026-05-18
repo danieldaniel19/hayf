@@ -16,7 +16,7 @@ struct AppRootView: View {
                 if accountProfileStore.isLoading || onboardingProfileStore.isLoading {
                     AccountProfileLoadingView()
                 } else if let accountProfile = accountProfileStore.profile {
-                    if isRestartingAccountCreation {
+                    if isRestartingAccountCreation || accountProfile.physiologyReference == nil {
                         AccountCreationView(
                             existingProfile: accountProfile,
                             onCreate: { profile in
@@ -32,7 +32,10 @@ struct AppRootView: View {
                             }
                         )
                     } else if shouldShowOnboarding(for: accountProfile) {
-                        OnboardingFlowView(onboardingProfileStore: onboardingProfileStore) {
+                        OnboardingFlowView(
+                            physiologyReference: accountProfile.physiologyReference.flatMap(PhysiologyReference.init(rawValue:)) ?? .male,
+                            onboardingProfileStore: onboardingProfileStore
+                        ) {
                             shouldPresentActiveBlockOnPlanLanding = true
                         }
                     } else {

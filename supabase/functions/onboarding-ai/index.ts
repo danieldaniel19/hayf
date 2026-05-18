@@ -51,11 +51,12 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
   generate_athlete_blueprint: {
     type: "object",
     additionalProperties: false,
-    required: ["coachRead", "athleteArchetype", "currentTrainingState", "historyFindings", "goalFit"],
+    required: ["coachRead", "athleteArchetype", "currentTrainingState", "physicalBaseline", "historyFindings", "goalFit"],
     properties: {
       coachRead: { type: "string" },
       athleteArchetype: blueprintTextPairSchema(),
       currentTrainingState: blueprintTextPairSchema(),
+      physicalBaseline: blueprintTextPairSchema(),
       historyFindings: {
         type: "array",
         items: {
@@ -207,19 +208,20 @@ function validateRequest(value: OnboardingAIRequest | null): asserts value is On
 function taskRules(task: OnboardingTask) {
   switch (task) {
     case "generate_summary":
-      return "Return one concise sentence addressed to the user, like a coach reflecting back what a new client just told them. Describe what the user wants or selected in natural second-person language, such as 'You selected a goal that will help you build power and raise your threshold over 12 weeks.' Do not use imperative planner language like 'Create', 'Build a plan', or 'Track'. Do not explain how HAYF will execute it, and do not list or repeat every answer.";
+      return "Return one concise sentence addressed to the user, like a coach reflecting back what a new client just told them. Describe the user's target or selected direction in natural second-person language, and mention constraints like availability, access, or support style only when they materially shape the read. Do not use imperative planner language like 'Create', 'Build a plan', or 'Track'. Do not explain how HAYF will execute it, and do not list or repeat every answer.";
     case "generate_goal_candidates":
       return "Return exactly three distinct goal candidates. Each candidate must have a concrete title that includes its timeframe, a short tracking field, and timeframeWeeks set to 4, 8, or 12.";
     case "generate_blended_candidate":
       return "Blend the two selected candidates into one candidate that keeps the clearer target, borrows useful support structure, and chooses a concrete 4-, 8-, or 12-week timeframe.";
     case "generate_athlete_blueprint":
       return [
-        "Return authored copy for the five Athlete Blueprint sections only.",
+        "Return authored copy for the six Athlete Blueprint sections only.",
         "Use sectionSeeds as factual constraints, not as sample copy to lightly paraphrase.",
         "Do not add new factual claims and preserve every historyFindings id exactly.",
         "coachRead is a read of the athlete, not a restatement of the goal: lead with identity, current state, repeatable patterns, and coaching-relevant tendencies visible in the evidence. Mention the goal only if it creates a meaningful tension or fit. Use 2 to 4 short sentences.",
-        "athleteArchetype may verbalize the canonical label naturally. Label length: 2 to 5 words. Summary: one sentence, 12 to 28 words.",
+        "athleteArchetype may verbalize the canonical label naturally. It should treat approved body-change trends as part of athlete identity when sectionSeeds support that, rather than only naming modalities. Label length: 2 to 5 words. Summary: one sentence, 12 to 28 words.",
         "currentTrainingState may verbalize the canonical state naturally. Label length: 2 to 5 words. Summary: one sentence, 12 to 28 words.",
+        "physicalBaseline should state the fresh onboarding baseline plainly and should not imply imported body metrics are current truth. Label length: 2 to 6 words. Summary: one sentence, 12 to 28 words.",
         "Each history finding should keep its id but may use fresh natural language. Title: at most 8 words. Summary: one sentence, at most 22 words.",
         "goalFit should assess whether the selected goal and chosen feasible training options make sense together, with historical modalities used as context rather than veto power. Headline: 2 to 6 words. Summary: 1 to 2 sentences, 25 to 55 words.",
         "Do not turn goalFit into a mini-plan: no prescriptions, no weekly session counts, no exercise programming.",
@@ -233,6 +235,7 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     return pick(context, [
       "intent",
       "trainingOptions",
+      "infrastructureAccess",
       "goalDirection",
       "challengeStyle",
       "goalAvoidances",
@@ -244,6 +247,7 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     return pick(context, [
       "intent",
       "trainingOptions",
+      "infrastructureAccess",
       "goalDirection",
       "challengeStyle",
       "goalAvoidances",
@@ -267,14 +271,18 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     return pick(context, [
       "intent",
       "trainingOptions",
+      "infrastructureAccess",
       "motivationAnchors",
       "motivationNote",
       "frequency",
       "sessionLength",
+      "availableDays",
+      "availableDayParts",
       "blockers",
       "blockerNote",
       "supportStyle",
       "badDayFloor",
+      "bodyBaseline",
     ]);
   }
 
@@ -287,12 +295,16 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "goalTimeline",
       "goalPriority",
       "trainingOptions",
+      "infrastructureAccess",
       "frequency",
       "sessionLength",
+      "availableDays",
+      "availableDayParts",
       "blockers",
       "blockerNote",
       "supportStyle",
       "badDayFloor",
+      "bodyBaseline",
     ]);
   }
 
@@ -300,6 +312,7 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     "intent",
     "chosenGoal",
     "trainingOptions",
+    "infrastructureAccess",
     "goalDirection",
     "challengeStyle",
     "goalAvoidances",
@@ -307,10 +320,13 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     "goalTimeline",
     "frequency",
     "sessionLength",
+    "availableDays",
+    "availableDayParts",
     "blockers",
     "blockerNote",
     "supportStyle",
     "badDayFloor",
+    "bodyBaseline",
   ]);
 }
 

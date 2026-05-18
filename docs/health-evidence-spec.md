@@ -46,8 +46,9 @@ The user-facing blueprint should show:
 1. `coach_read`
 2. `athlete_archetype`
 3. `current_training_state`
-4. `history_findings`
-5. `goal_fit`
+4. `physical_baseline`
+5. `history_findings`
+6. `goal_fit`
 
 The section-level output contract is defined in `docs/athlete-blueprint-spec.md`.
 
@@ -403,6 +404,7 @@ To emit a strained-recovery finding, require either:
 
 - current body mass, only when recent
 - rising / stable / falling trend, only with repeated measurements
+- athlete-identity modifiers when repeated body-mass trends clear the confidence threshold
 
 #### Forbidden claims
 

@@ -3,6 +3,7 @@ import Supabase
 import OSLog
 
 struct OnboardingFlowView: View {
+    let physiologyReference: PhysiologyReference
     let onComplete: () -> Void
 
     @State private var step: OnboardingStep = .intent
@@ -27,7 +28,12 @@ struct OnboardingFlowView: View {
     private let planningAIProvider = PlanningAIProvider()
     private let onboardingProfileStore: OnboardingProfileStore
 
-    init(onboardingProfileStore: OnboardingProfileStore, onComplete: @escaping () -> Void) {
+    init(
+        physiologyReference: PhysiologyReference,
+        onboardingProfileStore: OnboardingProfileStore,
+        onComplete: @escaping () -> Void
+    ) {
+        self.physiologyReference = physiologyReference
         self.onboardingProfileStore = onboardingProfileStore
         self.onComplete = onComplete
     }
@@ -125,10 +131,16 @@ struct OnboardingFlowView: View {
             intentScreen
         case .goalBrief:
             concreteGoalBriefScreen
-        case .goalClarification:
-            concreteGoalClarificationScreen
+        case .goalExperience:
+            goalExperienceScreen
+        case .goalTimeline:
+            goalTimelineScreen
+        case .goalPriority:
+            goalPriorityScreen
         case .options:
             trainingOptionsScreen
+        case .infrastructure:
+            infrastructureScreen
         case .anchor:
             motivationAnchorScreen
         case .findDirection:
@@ -149,10 +161,20 @@ struct OnboardingFlowView: View {
             loadingScreen(title: "Blending those goals.", copy: "HAYF is combining the useful parts into one direction.")
         case .blendPreview:
             blendPreviewScreen
-        case .rhythm:
-            rhythmScreen
+        case .weeklyCommitment:
+            weeklyCommitmentScreen
+        case .sessionCapacity:
+            sessionCapacityScreen
+        case .weeklyAvailability:
+            weeklyAvailabilityScreen
         case .friction:
             frictionScreen
+        case .injuries:
+            injuryScreen
+        case .bodyBasics:
+            bodyBasicsScreen
+        case .bodyFatEstimate:
+            bodyFatEstimateScreen
         case .support:
             supportStyleScreen
         case .floor:
@@ -235,11 +257,11 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var concreteGoalClarificationScreen: some View {
-        VStack(alignment: .leading, spacing: 28) {
+    private var goalExperienceScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: "Let's make that\ncoachable.",
-                copy: "HAYF will read your workout history from Apple Health later. Here, add the experience and constraints only you can tell us."
+                title: "How long have\nyou trained?",
+                copy: "HAYF will read your workout history from Apple Health later. Your own answer still matters when tracked history is patchy."
             )
 
             OptionGroup(title: "How experienced are you with training?") {
@@ -257,10 +279,19 @@ struct OnboardingFlowView: View {
                 }
             }
 
-            Text("Apple Health will help HAYF estimate your recent training load. Your answer here takes priority if your tracked history is sparse or incomplete.")
+            Text("Apple Health can show what was tracked. This tells HAYF how much lived experience may sit outside the import.")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(HAYFColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var goalTimelineScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "What horizon\nare we coaching?",
+                copy: "If you do not have a fixed date, HAYF will default to a 12-week horizon whenever it needs one."
+            )
 
             OptionGroup(title: "Timeline") {
                 VStack(alignment: .leading, spacing: 12) {
@@ -280,6 +311,15 @@ struct OnboardingFlowView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var goalPriorityScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "When tradeoffs show up,\nwhat should win?",
+                copy: "This gives HAYF a clear rule for tight weeks before it starts making plan decisions."
+            )
 
             OptionGroup(title: "If the week gets tight, protect...") {
                 VStack(spacing: 10) {
@@ -295,13 +335,6 @@ struct OnboardingFlowView: View {
                     }
                 }
             }
-
-            OnboardingTextArea(
-                title: "Any injuries or discomforts?",
-                placeholder: "Knee pain on descents, shoulder discomfort overhead, returning from an ankle issue, or anything HAYF should plan around...",
-                text: $draft.injuryNotes,
-                characterLimit: 220
-            )
         }
     }
 
@@ -396,12 +429,29 @@ struct OnboardingFlowView: View {
                 }
             }
 
-            OnboardingTextArea(
-                title: "Any injuries or discomforts?",
-                placeholder: "Knee pain on descents, shoulder discomfort overhead, returning from an ankle issue, or anything HAYF should avoid building around...",
-                text: $draft.injuryNotes,
-                characterLimit: 220
+        }
+    }
+
+    private var infrastructureScreen: some View {
+        let options = draft.requiredInfrastructureOptions
+
+        return VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "What do you\nactually have access to?",
+                copy: "HAYF should only build around equipment and environments you can reliably use."
             )
+
+            VStack(spacing: 10) {
+                ForEach(options) { option in
+                    SelectableRow(
+                        title: option.title,
+                        systemImage: option.systemImage,
+                        isSelected: draft.infrastructureAccess.contains(option)
+                    ) {
+                        draft.infrastructureAccess.toggle(option)
+                    }
+                }
+            }
         }
     }
 
@@ -532,8 +582,8 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var rhythmScreen: some View {
-        VStack(alignment: .leading, spacing: 28) {
+    private var weeklyCommitmentScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: currentIntent == .concreteGoal ? "How many days can\nyou train?" : "What feels realistic\nmost weeks?",
                 copy: currentIntent == .concreteGoal ? "This is your total weekly exercise budget: goal sessions plus support work." : "This helps HAYF protect consistency before ambition."
@@ -552,8 +602,15 @@ struct OnboardingFlowView: View {
                 }
             }
 
-            Divider()
-                .background(HAYFColor.border)
+        }
+    }
+
+    private var sessionCapacityScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "How much time\nfits one session?",
+                copy: "This tells HAYF how large a normal training unit can be before the week becomes unrealistic."
+            )
 
             OptionGroup(title: "Typical session length") {
                 HStack(spacing: 10) {
@@ -566,6 +623,23 @@ struct OnboardingFlowView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private var weeklyAvailabilityScreen: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            OnboardingIntro(
+                title: "When can training\nusually happen?",
+                copy: "Pick every day and time window that is genuinely available most weeks."
+            )
+
+            OptionGroup(title: "Available days") {
+                FlexibleChoiceGrid(items: Weekday.allCases, selection: $draft.availableDays)
+            }
+
+            OptionGroup(title: "Available times") {
+                FlexibleChoiceGrid(items: DayPart.allCases, selection: $draft.availableDayParts)
             }
         }
     }
@@ -595,6 +669,69 @@ struct OnboardingFlowView: View {
                 text: $draft.blockerNote,
                 characterLimit: 220
             )
+        }
+    }
+
+    private var injuryScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "Anything HAYF\nshould protect?",
+                copy: "Even minor discomforts matter if they should change load, exercise choices, or progression."
+            )
+
+            OnboardingTextArea(
+                title: "Injuries or discomforts",
+                placeholder: "Knee pain on descents, shoulder discomfort overhead, returning from an ankle issue, or anything HAYF should plan around...",
+                text: $draft.injuryNotes,
+                characterLimit: 220
+            )
+        }
+    }
+
+    private var bodyBasicsScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "Let's set your\ncurrent baseline.",
+                copy: "Health imports can be stale. These answers become the first body-composition baseline HAYF can trust today."
+            )
+
+            HStack(spacing: 12) {
+                NumericInputField(
+                    title: "Weight",
+                    placeholder: "70",
+                    unit: "kg",
+                    text: $draft.bodyMassKilogramsInput
+                )
+
+                NumericInputField(
+                    title: "Height",
+                    placeholder: "173",
+                    unit: "cm",
+                    text: $draft.heightCentimetersInput
+                )
+            }
+        }
+    }
+
+    private var bodyFatEstimateScreen: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            OnboardingIntro(
+                title: "Estimate your\nbody-fat range.",
+                copy: "A range is enough. HAYF will use it as an estimated baseline, not as a lab measurement."
+            )
+
+            VStack(spacing: 10) {
+                ForEach(BodyFatBand.options(for: physiologyReference)) { band in
+                    DetailedSelectableRow(
+                        title: band.title,
+                        subtitle: band.subtitle,
+                        systemImage: "figure",
+                        isSelected: draft.bodyFatBand == band
+                    ) {
+                        draft.bodyFatBand = band
+                    }
+                }
+            }
         }
     }
 
@@ -670,9 +807,13 @@ struct OnboardingFlowView: View {
         case .stayConsistent:
             return [
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
                 SummaryItem(systemImage: "bolt.heart", label: "Anchor", value: draft.motivationInputSummary),
-                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
+                SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
                 SummaryItem(systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerInputSummary),
+                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
+                SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
                 SummaryItem(systemImage: "figure.cooldown", label: "Support", value: draft.supportSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
@@ -684,7 +825,10 @@ struct OnboardingFlowView: View {
                 SummaryItem(systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
                 SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
-                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
+                SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
+                SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
         case .findGoal:
@@ -696,7 +840,10 @@ struct OnboardingFlowView: View {
                 SummaryItem(systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
                 SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
-                SummaryItem(systemImage: "timer", label: "Rhythm", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
+                SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
+                SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
+                SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
         }
@@ -816,6 +963,15 @@ struct OnboardingFlowView: View {
                     summary: blueprint.currentTrainingState.summary
                 ) {
                     selectedBlueprintDetail = blueprint.currentTrainingState.detail
+                }
+
+                AthleteBlueprintSummaryRow(
+                    systemImage: "figure",
+                    eyebrow: "PHYSICAL BASELINE",
+                    title: blueprint.physicalBaseline.label,
+                    summary: blueprint.physicalBaseline.summary
+                ) {
+                    selectedBlueprintDetail = blueprint.physicalBaseline.detail
                 }
             }
 
@@ -954,10 +1110,16 @@ struct OnboardingFlowView: View {
             return selectedIntent != nil
         case .goalBrief:
             return !draft.goalBrief.trimmed.isEmpty
-        case .goalClarification:
-            return draft.goalExperience != nil && draft.goalTimeline != nil && draft.goalPriority != nil
+        case .goalExperience:
+            return draft.goalExperience != nil
+        case .goalTimeline:
+            return draft.goalTimeline != nil
+        case .goalPriority:
+            return draft.goalPriority != nil
         case .options:
             return !draft.trainingOptions.isEmpty
+        case .infrastructure:
+            return !draft.infrastructureAccess.isEmpty
         case .anchor:
             return !draft.motivationAnchors.isEmpty
         case .findDirection:
@@ -974,10 +1136,20 @@ struct OnboardingFlowView: View {
             return blendCandidateIDs.count == 2
         case .blendPreview:
             return blendedCandidate != nil
-        case .rhythm:
-            return draft.frequency != nil && draft.sessionLength != nil
+        case .weeklyCommitment:
+            return draft.frequency != nil
+        case .sessionCapacity:
+            return draft.sessionLength != nil
+        case .weeklyAvailability:
+            return !draft.availableDays.isEmpty && !draft.availableDayParts.isEmpty
         case .friction:
             return !draft.blockers.isEmpty
+        case .injuries:
+            return true
+        case .bodyBasics:
+            return draft.hasValidBodyBasics
+        case .bodyFatEstimate:
+            return draft.bodyFatBand != nil
         case .support:
             return draft.supportStyle != nil
         case .floor:
@@ -1002,19 +1174,25 @@ struct OnboardingFlowView: View {
                 step = .options
             }
         case .goalBrief:
-            step = .goalClarification
-        case .goalClarification:
+            step = .goalExperience
+        case .goalExperience:
+            step = .goalTimeline
+        case .goalTimeline:
+            step = .goalPriority
+        case .goalPriority:
             step = .options
         case .options:
+            step = .infrastructure
+        case .infrastructure:
             if selectedIntent == .findGoal {
                 step = .findDirection
             } else if selectedIntent == .concreteGoal {
-                step = .rhythm
+                step = .weeklyCommitment
             } else {
                 step = .anchor
             }
         case .anchor:
-            step = .rhythm
+            step = .weeklyCommitment
         case .findDirection:
             step = .findChallenge
         case .findChallenge:
@@ -1026,7 +1204,7 @@ struct OnboardingFlowView: View {
                 draft.chosenGoal = selectedCandidate
                 draft.goalTimeline = selectedCandidate.timeline
             }
-            step = .rhythm
+            step = .weeklyCommitment
         case .editCandidate:
             draft.chosenGoal = GoalCandidate(
                 id: "edited-goal",
@@ -1037,16 +1215,26 @@ struct OnboardingFlowView: View {
                 systemImage: "pencil"
             )
             draft.goalTimeline = editingGoalTimeline
-            step = .rhythm
+            step = .weeklyCommitment
         case .blendCandidates:
             step = .generatingBlend
         case .blendPreview:
             draft.chosenGoal = blendedCandidate
             draft.goalTimeline = blendedCandidate?.timeline
-            step = .rhythm
-        case .rhythm:
+            step = .weeklyCommitment
+        case .weeklyCommitment:
+            step = .sessionCapacity
+        case .sessionCapacity:
+            step = .weeklyAvailability
+        case .weeklyAvailability:
             step = .friction
         case .friction:
+            step = .injuries
+        case .injuries:
+            step = .bodyBasics
+        case .bodyBasics:
+            step = .bodyFatEstimate
+        case .bodyFatEstimate:
             step = .support
         case .support:
             step = .floor
@@ -1075,10 +1263,16 @@ struct OnboardingFlowView: View {
             break
         case .goalBrief:
             step = .intent
-        case .goalClarification:
+        case .goalExperience:
             step = .goalBrief
+        case .goalTimeline:
+            step = .goalExperience
+        case .goalPriority:
+            step = .goalTimeline
         case .options:
-            step = selectedIntent == .concreteGoal ? .goalClarification : .intent
+            step = selectedIntent == .concreteGoal ? .goalPriority : .intent
+        case .infrastructure:
+            step = .options
         case .anchor:
             step = .options
         case .findDirection:
@@ -1099,18 +1293,28 @@ struct OnboardingFlowView: View {
             step = .blendCandidates
         case .blendPreview:
             step = .blendCandidates
-        case .rhythm:
+        case .weeklyCommitment:
             if selectedIntent == .stayConsistent {
                 step = .anchor
             } else if selectedIntent == .findGoal {
                 step = .goalCandidates
             } else {
-                step = .options
+                step = .infrastructure
             }
+        case .sessionCapacity:
+            step = .weeklyCommitment
+        case .weeklyAvailability:
+            step = .sessionCapacity
         case .friction:
-            step = .rhythm
-        case .support:
+            step = .weeklyAvailability
+        case .injuries:
             step = .friction
+        case .bodyBasics:
+            step = .injuries
+        case .bodyFatEstimate:
+            step = .bodyBasics
+        case .support:
+            step = .bodyFatEstimate
         case .floor:
             step = .support
         case .generatingSummary:
@@ -1337,8 +1541,11 @@ struct OnboardingFlowView: View {
 private enum OnboardingStep: Equatable {
     case intent
     case goalBrief
-    case goalClarification
+    case goalExperience
+    case goalTimeline
+    case goalPriority
     case options
+    case infrastructure
     case anchor
     case findDirection
     case findChallenge
@@ -1349,8 +1556,13 @@ private enum OnboardingStep: Equatable {
     case blendCandidates
     case generatingBlend
     case blendPreview
-    case rhythm
+    case weeklyCommitment
+    case sessionCapacity
+    case weeklyAvailability
     case friction
+    case injuries
+    case bodyBasics
+    case bodyFatEstimate
     case support
     case floor
     case generatingSummary
@@ -1371,11 +1583,11 @@ private enum OnboardingStep: Equatable {
     static func totalSegments(for intent: OnboardingIntent) -> Int {
         switch intent {
         case .stayConsistent:
-            return 10
+            return 16
         case .concreteGoal:
-            return 11
+            return 19
         case .findGoal:
-            return 13
+            return 19
         }
     }
 
@@ -1385,46 +1597,66 @@ private enum OnboardingStep: Equatable {
             switch self {
             case .intent: return 1
             case .options: return 2
-            case .anchor: return 3
-            case .rhythm: return 4
-            case .friction: return 5
-            case .support: return 6
-            case .floor, .generatingSummary: return 7
-            case .summary: return 8
-            case .health, .generatingBlueprint: return 9
-            case .athleteBlueprint: return 10
+            case .infrastructure: return 3
+            case .anchor: return 4
+            case .weeklyCommitment: return 5
+            case .sessionCapacity: return 6
+            case .weeklyAvailability: return 7
+            case .friction: return 8
+            case .injuries: return 9
+            case .bodyBasics: return 10
+            case .bodyFatEstimate: return 11
+            case .support: return 12
+            case .floor, .generatingSummary: return 13
+            case .summary: return 14
+            case .health, .generatingBlueprint: return 15
+            case .athleteBlueprint: return 16
             default: return 1
             }
         case .concreteGoal:
             switch self {
             case .intent: return 1
             case .goalBrief: return 2
-            case .goalClarification: return 3
-            case .options: return 4
-            case .rhythm: return 5
-            case .friction: return 6
-            case .support: return 7
-            case .floor, .generatingSummary: return 8
-            case .summary: return 9
-            case .health, .generatingBlueprint: return 10
-            case .athleteBlueprint: return 11
+            case .goalExperience: return 3
+            case .goalTimeline: return 4
+            case .goalPriority: return 5
+            case .options: return 6
+            case .infrastructure: return 7
+            case .weeklyCommitment: return 8
+            case .sessionCapacity: return 9
+            case .weeklyAvailability: return 10
+            case .friction: return 11
+            case .injuries: return 12
+            case .bodyBasics: return 13
+            case .bodyFatEstimate: return 14
+            case .support: return 15
+            case .floor, .generatingSummary: return 16
+            case .summary: return 17
+            case .health, .generatingBlueprint: return 18
+            case .athleteBlueprint: return 19
             default: return 1
             }
         case .findGoal:
             switch self {
             case .intent: return 1
             case .options: return 2
-            case .findDirection: return 3
-            case .findChallenge: return 4
-            case .findAvoids, .generatingCandidates: return 5
-            case .goalCandidates, .editCandidate, .blendCandidates, .generatingBlend, .blendPreview: return 6
-            case .rhythm: return 7
-            case .friction: return 8
-            case .support: return 9
-            case .floor, .generatingSummary: return 10
-            case .summary: return 11
-            case .health, .generatingBlueprint: return 12
-            case .athleteBlueprint: return 13
+            case .infrastructure: return 3
+            case .findDirection: return 4
+            case .findChallenge: return 5
+            case .findAvoids, .generatingCandidates: return 6
+            case .goalCandidates, .editCandidate, .blendCandidates, .generatingBlend, .blendPreview: return 7
+            case .weeklyCommitment: return 8
+            case .sessionCapacity: return 9
+            case .weeklyAvailability: return 10
+            case .friction: return 11
+            case .injuries: return 12
+            case .bodyBasics: return 13
+            case .bodyFatEstimate: return 14
+            case .support: return 15
+            case .floor, .generatingSummary: return 16
+            case .summary: return 17
+            case .health, .generatingBlueprint: return 18
+            case .athleteBlueprint: return 19
             default: return 1
             }
         }
@@ -1488,6 +1720,7 @@ private enum OnboardingIntent: String, CaseIterable, Identifiable {
 
 private struct ConsistencyOnboardingDraft {
     var trainingOptions: [TrainingOption] = []
+    var infrastructureAccess: Set<InfrastructureAccess> = []
     var motivationAnchors: Set<MotivationAnchor> = []
     var motivationNote = ""
     var goalBrief = ""
@@ -1502,8 +1735,13 @@ private struct ConsistencyOnboardingDraft {
     var chosenGoal: GoalCandidate?
     var frequency: TrainingFrequency?
     var sessionLength: SessionLength?
+    var availableDays: Set<Weekday> = []
+    var availableDayParts: Set<DayPart> = []
     var blockers: Set<ConsistencyBlocker> = []
     var blockerNote = ""
+    var bodyMassKilogramsInput = ""
+    var heightCentimetersInput = ""
+    var bodyFatBand: BodyFatBand?
     var supportStyle: CoachingSupportStyle?
     var badDayFloor: BadDayFloor?
 
@@ -1523,6 +1761,16 @@ private struct ConsistencyOnboardingDraft {
     var rhythmSummary: String {
         guard let frequency, let sessionLength else { return "Not set" }
         return "\(frequency.summary), usually \(sessionLength.title)"
+    }
+
+    var infrastructureSummary: String {
+        summary(for: infrastructureAccess.map(\.title), fallback: "Not set")
+    }
+
+    var availabilitySummary: String {
+        let days = summary(for: availableDays.map(\.shortTitle), fallback: "No days set")
+        let dayParts = summary(for: availableDayParts.map(\.title), fallback: "no times set")
+        return "\(days); \(dayParts)"
     }
 
     var blockerSummary: String {
@@ -1557,6 +1805,26 @@ private struct ConsistencyOnboardingDraft {
     var injurySummary: String {
         let trimmedInjuryNotes = injuryNotes.trimmed
         return trimmedInjuryNotes.isEmpty ? "None noted" : trimmedInjuryNotes
+    }
+
+    var bodyMassKilograms: Double? {
+        Double(bodyMassKilogramsInput.replacingOccurrences(of: ",", with: "."))
+    }
+
+    var heightCentimeters: Double? {
+        Double(heightCentimetersInput.replacingOccurrences(of: ",", with: "."))
+    }
+
+    var hasValidBodyBasics: Bool {
+        guard let bodyMassKilograms, let heightCentimeters else { return false }
+        return (25...350).contains(bodyMassKilograms) && (100...250).contains(heightCentimeters)
+    }
+
+    var bodyBaselineSummary: String {
+        let bodyMass = bodyMassKilograms.map { String(format: "%.1f kg", $0) } ?? "weight not set"
+        let height = heightCentimeters.map { "\(Int($0.rounded())) cm" } ?? "height not set"
+        let bodyFat = bodyFatBand?.title ?? "body fat not set"
+        return "\(bodyMass), \(height), \(bodyFat)"
     }
 
     var timelineSummary: String {
@@ -1610,6 +1878,11 @@ private struct ConsistencyOnboardingDraft {
         }
     }
 
+    var requiredInfrastructureOptions: [InfrastructureAccess] {
+        let options = trainingOptions.flatMap(\.infrastructureOptions)
+        return Array(Set(options)).sorted { $0.title < $1.title }
+    }
+
     private static let goalDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -1661,6 +1934,7 @@ private struct OnboardingAICompactContext: Codable {
     let intent: String
     let intentTitle: String
     let trainingOptions: [RankedTrainingOptionPayload]
+    let infrastructureAccess: [String]
     let motivationAnchors: [String]
     let motivationNote: String
     let goalBrief: String
@@ -1674,10 +1948,13 @@ private struct OnboardingAICompactContext: Codable {
     let chosenGoal: GoalCandidatePayload?
     let frequency: String
     let sessionLength: String
+    let availableDays: [String]
+    let availableDayParts: [String]
     let blockers: [String]
     let blockerNote: String
     let supportStyle: String
     let badDayFloor: String
+    let bodyBaseline: BodyBaselinePayload?
     let healthSnapshot: OnboardingAIHealthSnapshot?
 
     init(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft, healthSnapshot: OnboardingAIHealthSnapshot? = nil) {
@@ -1686,6 +1963,7 @@ private struct OnboardingAICompactContext: Codable {
         trainingOptions = draft.trainingOptions.enumerated().map { index, option in
             RankedTrainingOptionPayload(option: option, priority: index + 1)
         }
+        infrastructureAccess = draft.infrastructureAccess.map(\.title).sorted()
         motivationAnchors = draft.motivationAnchors.map(\.title).sorted()
         motivationNote = draft.motivationNote.trimmed
         goalBrief = draft.goalBrief.trimmed
@@ -1699,11 +1977,36 @@ private struct OnboardingAICompactContext: Codable {
         chosenGoal = draft.chosenGoal.map(GoalCandidatePayload.init(candidate:))
         frequency = draft.frequency?.summary ?? ""
         sessionLength = draft.sessionLength?.title ?? ""
+        availableDays = draft.availableDays.map(\.title).sorted()
+        availableDayParts = draft.availableDayParts.map(\.title).sorted()
         blockers = draft.blockers.map(\.title).sorted()
         blockerNote = draft.blockerNote.trimmed
         supportStyle = draft.supportSummary
         badDayFloor = draft.floorSummary
+        bodyBaseline = BodyBaselinePayload(draft: draft)
         self.healthSnapshot = healthSnapshot
+    }
+}
+
+private struct BodyBaselinePayload: Codable {
+    let heightCentimeters: Double
+    let bodyMassKilograms: Double
+    let bodyFatBand: String
+    let bodyFatEstimateMidpoint: Double
+    let source: String
+
+    init?(draft: ConsistencyOnboardingDraft) {
+        guard let heightCentimeters = draft.heightCentimeters,
+              let bodyMassKilograms = draft.bodyMassKilograms,
+              let bodyFatBand = draft.bodyFatBand else {
+            return nil
+        }
+
+        self.heightCentimeters = heightCentimeters
+        self.bodyMassKilograms = bodyMassKilograms
+        self.bodyFatBand = bodyFatBand.title
+        bodyFatEstimateMidpoint = bodyFatBand.midpointEstimate
+        source = "onboarding_self_report"
     }
 }
 
@@ -1786,16 +2089,20 @@ private struct AthleteBlueprintAICompactContext: Codable {
             goalPriority: draft.prioritySummary,
             frequencyPreference: draft.frequency?.summary ?? "",
             sessionLengthPreference: draft.sessionLength?.title ?? "",
+            availableDays: draft.availableDays.map(\.title).sorted(),
+            availableDayParts: draft.availableDayParts.map(\.title).sorted(),
+            infrastructureAccess: draft.infrastructureAccess.map(\.title).sorted(),
             blockers: draft.blockers.map(\.title).sorted(),
             blockerNote: draft.blockerNote.trimmed,
             supportStyle: draft.supportSummary,
             badDayFloor: draft.floorSummary,
-            injuryNotes: draft.injuryNotes.trimmed
+            injuryNotes: draft.injuryNotes.trimmed,
+            bodyBaseline: BodyBaselinePayload(draft: draft)
         )
         evidenceSummary = AthleteBlueprintAIEvidenceSummary(evidence: evidence)
         sectionSeeds = AthleteBlueprintAISectionSeeds(output: fallback)
         doNotClaim = [
-            "Do not treat body composition, VO2 max, or recovery metrics as current truth unless a section seed explicitly includes them.",
+            "Treat onboarding bodyBaseline as the current body-composition truth. Treat imported HealthKit body metrics as trend context only when section seeds explicitly include them.",
             "Do not infer motivation, personality, or physiology beyond the section seeds and onboarding signals.",
             "Do not reject the user's selected goal because historical dominant modalities differ from their chosen feasible training options."
         ]
@@ -1818,11 +2125,15 @@ private struct AthleteBlueprintAIOnboardingSignals: Codable {
     let goalPriority: String
     let frequencyPreference: String
     let sessionLengthPreference: String
+    let availableDays: [String]
+    let availableDayParts: [String]
+    let infrastructureAccess: [String]
     let blockers: [String]
     let blockerNote: String
     let supportStyle: String
     let badDayFloor: String
     let injuryNotes: String
+    let bodyBaseline: BodyBaselinePayload?
 }
 
 private struct AthleteBlueprintAIEvidenceSummary: Codable {
@@ -1838,6 +2149,11 @@ private struct AthleteBlueprintAIEvidenceSummary: Codable {
     let strengthWorkouts90Days: Int
     let strongestMonthLabel: String?
     let longestWorkout: AthleteBlueprintAILongestWorkoutPayload?
+    let hasRecentBodyTrend: Bool
+    let bodyMass28DayAverageKilograms: Double?
+    let bodyFat28DayAveragePercentage: Double?
+    let bodyMassTrend: BodyMetricTrendSummary?
+    let bodyFatTrend: BodyMetricTrendSummary?
 
     init(evidence: AthleteBlueprintEvidence) {
         totalImportedWorkouts = evidence.totalWorkouts
@@ -1852,6 +2168,11 @@ private struct AthleteBlueprintAIEvidenceSummary: Codable {
         strengthWorkouts90Days = evidence.strengthWorkouts90Days
         strongestMonthLabel = evidence.strongestMonth?.label
         longestWorkout = evidence.longestWorkout.map(AthleteBlueprintAILongestWorkoutPayload.init(summary:))
+        hasRecentBodyTrend = evidence.hasRecentBodyTrend
+        bodyMass28DayAverageKilograms = evidence.snapshot?.body.bodyMass28DayAverageKilograms
+        bodyFat28DayAveragePercentage = evidence.snapshot?.body.bodyFat28DayAveragePercentage
+        bodyMassTrend = evidence.bodyMassTrend
+        bodyFatTrend = evidence.bodyFatTrend
     }
 }
 
@@ -1870,6 +2191,7 @@ private struct AthleteBlueprintAILongestWorkoutPayload: Codable {
 private struct AthleteBlueprintAISectionSeeds: Codable {
     let archetype: AthleteBlueprintAIArchetypeSeed
     let currentTrainingState: AthleteBlueprintAICurrentStateSeed
+    let physicalBaseline: AthleteBlueprintAIPhysicalBaselineSeed
     let historyFindings: [AthleteBlueprintAIHistoryFindingSeed]
     let goalFit: AthleteBlueprintAIGoalFitSeed
 
@@ -1881,6 +2203,10 @@ private struct AthleteBlueprintAISectionSeeds: Codable {
         currentTrainingState = AthleteBlueprintAICurrentStateSeed(
             canonicalLabel: output.currentTrainingState.label,
             evidence: output.currentTrainingState.detail.evidence
+        )
+        physicalBaseline = AthleteBlueprintAIPhysicalBaselineSeed(
+            canonicalLabel: output.physicalBaseline.label,
+            evidence: output.physicalBaseline.detail.evidence
         )
         historyFindings = output.historyFindings.map {
             AthleteBlueprintAIHistoryFindingSeed(
@@ -1906,6 +2232,11 @@ private struct AthleteBlueprintAICurrentStateSeed: Codable {
     let evidence: [String]
 }
 
+private struct AthleteBlueprintAIPhysicalBaselineSeed: Codable {
+    let canonicalLabel: String
+    let evidence: [String]
+}
+
 private struct AthleteBlueprintAITextPair: Codable {
     let label: String
     let summary: String
@@ -1921,6 +2252,7 @@ private struct AthleteBlueprintAIPayload: Codable {
     let coachRead: String
     let athleteArchetype: AthleteBlueprintAITextPair
     let currentTrainingState: AthleteBlueprintAITextPair
+    let physicalBaseline: AthleteBlueprintAITextPair
     let historyFindings: [AthleteBlueprintAIHistoryFindingPayload]
     let goalFit: AthleteBlueprintAIGoalFitPayload
 
@@ -1941,6 +2273,11 @@ private struct AthleteBlueprintAIPayload: Codable {
                 label: currentTrainingState.label.trimmed.isEmpty ? fallback.currentTrainingState.label : currentTrainingState.label.trimmed,
                 summary: currentTrainingState.summary.trimmed.isEmpty ? fallback.currentTrainingState.summary : currentTrainingState.summary.trimmed,
                 detail: fallback.currentTrainingState.detail
+            ),
+            physicalBaseline: AthleteBlueprintPhysicalBaseline(
+                label: physicalBaseline.label.trimmed.isEmpty ? fallback.physicalBaseline.label : physicalBaseline.label.trimmed,
+                summary: physicalBaseline.summary.trimmed.isEmpty ? fallback.physicalBaseline.summary : physicalBaseline.summary.trimmed,
+                detail: fallback.physicalBaseline.detail
             ),
             historyFindings: fallback.historyFindings.map { finding in
                 guard let aiFinding = findingCopy[finding.id] else { return finding }
@@ -2300,6 +2637,194 @@ private enum TrainingOption: String, CaseIterable, Identifiable {
         case .mobility: return "figure.cooldown"
         case .walking: return "figure.walk"
         case .yoga: return "figure.mind.and.body"
+        }
+    }
+
+    var infrastructureOptions: [InfrastructureAccess] {
+        switch self {
+        case .strength:
+            return [.gym, .homeWeights]
+        case .running, .walking:
+            return [.outdoorRoutes, .treadmill]
+        case .cycling:
+            return [.outdoorBike, .indoorBike]
+        case .swimming:
+            return [.pool]
+        case .tennis:
+            return [.tennisCourt]
+        case .football:
+            return [.field]
+        case .basketball:
+            return [.court]
+        case .mobility, .yoga:
+            return [.homeSpace]
+        }
+    }
+}
+
+private enum InfrastructureAccess: String, CaseIterable, Identifiable {
+    case gym
+    case homeWeights
+    case outdoorRoutes
+    case treadmill
+    case outdoorBike
+    case indoorBike
+    case pool
+    case tennisCourt
+    case field
+    case court
+    case homeSpace
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .gym: return "Gym"
+        case .homeWeights: return "Weights at home"
+        case .outdoorRoutes: return "Outdoor routes"
+        case .treadmill: return "Treadmill"
+        case .outdoorBike: return "Outdoor bike"
+        case .indoorBike: return "Indoor bike"
+        case .pool: return "Pool"
+        case .tennisCourt: return "Tennis court"
+        case .field: return "Field"
+        case .court: return "Basketball court"
+        case .homeSpace: return "Space at home"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .gym: return "dumbbell"
+        case .homeWeights: return "figure.strengthtraining.traditional"
+        case .outdoorRoutes: return "figure.run"
+        case .treadmill: return "figure.run.treadmill"
+        case .outdoorBike: return "bicycle"
+        case .indoorBike: return "bicycle.circle"
+        case .pool: return "figure.pool.swim"
+        case .tennisCourt: return "tennis.racket"
+        case .field: return "soccerball"
+        case .court: return "basketball"
+        case .homeSpace: return "house"
+        }
+    }
+}
+
+private enum Weekday: String, CaseIterable, Identifiable {
+    case monday, tuesday, wednesday, thursday, friday, saturday, sunday
+
+    var id: String { rawValue }
+
+    var title: String { rawValue.capitalized }
+
+    var shortTitle: String {
+        switch self {
+        case .monday: return "Mon"
+        case .tuesday: return "Tue"
+        case .wednesday: return "Wed"
+        case .thursday: return "Thu"
+        case .friday: return "Fri"
+        case .saturday: return "Sat"
+        case .sunday: return "Sun"
+        }
+    }
+}
+
+private enum DayPart: String, CaseIterable, Identifiable {
+    case morning
+    case midday
+    case afternoon
+    case evening
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+private enum BodyFatBand: String, CaseIterable, Identifiable {
+    case maleUnder10
+    case male10To12
+    case male12To15
+    case male15To17
+    case male17To20
+    case maleAbove20
+    case femaleUnder18
+    case female18To21
+    case female21To25
+    case female25To28
+    case female28To32
+    case femaleAbove32
+
+    var id: String { rawValue }
+
+    static func options(for reference: PhysiologyReference) -> [BodyFatBand] {
+        switch reference {
+        case .male:
+            return [.maleUnder10, .male10To12, .male12To15, .male15To17, .male17To20, .maleAbove20]
+        case .female:
+            return [.femaleUnder18, .female18To21, .female21To25, .female25To28, .female28To32, .femaleAbove32]
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .maleUnder10: return "<10%"
+        case .male10To12: return "10-12%"
+        case .male12To15: return "12-15%"
+        case .male15To17: return "15-17%"
+        case .male17To20: return "17-20%"
+        case .maleAbove20: return "20%+"
+        case .femaleUnder18: return "<18%"
+        case .female18To21: return "18-21%"
+        case .female21To25: return "21-25%"
+        case .female25To28: return "25-28%"
+        case .female28To32: return "28-32%"
+        case .femaleAbove32: return "32%+"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .maleUnder10:
+            return "Athlete-level leanness; uncommon outside serious training or physique focus."
+        case .male10To12:
+            return "Visibly lean with clear abs and vascularity; usually demands sustained discipline."
+        case .male12To15:
+            return "Lean around major muscle groups; some vascularity, with abs depending on genetics and diet."
+        case .male15To17:
+            return "Strong and sporty without necessarily looking lean; muscle outlines remain clear."
+        case .male17To20:
+            return "Athletic build with softer definition; strength can show more than leanness."
+        case .maleAbove20:
+            return "Less visible definition day to day; body-composition goals may matter more than appearance cues."
+        case .femaleUnder18:
+            return "Very lean and athletic; uncommon without high training load or physique focus."
+        case .female18To21:
+            return "Visibly lean and athletic with clear muscle shape and some definition."
+        case .female21To25:
+            return "Fit and toned; muscle definition shows, especially with regular training."
+        case .female25To28:
+            return "Strong and healthy-looking with softer definition but clear athletic potential."
+        case .female28To32:
+            return "Active-looking with less visible definition; performance can still be strong."
+        case .femaleAbove32:
+            return "Less visible definition day to day; body-composition goals may matter more than appearance cues."
+        }
+    }
+
+    var midpointEstimate: Double {
+        switch self {
+        case .maleUnder10: return 9
+        case .male10To12: return 11
+        case .male12To15: return 13.5
+        case .male15To17: return 16
+        case .male17To20: return 18.5
+        case .maleAbove20: return 22
+        case .femaleUnder18: return 17
+        case .female18To21: return 19.5
+        case .female21To25: return 23
+        case .female25To28: return 26.5
+        case .female28To32: return 30
+        case .femaleAbove32: return 34
         }
     }
 }
@@ -3030,6 +3555,73 @@ private struct CompactChoiceButton: View {
     }
 }
 
+private struct FlexibleChoiceGrid<Item: Identifiable & Hashable>: View where Item: ChoiceDisplayable {
+    let items: [Item]
+    @Binding var selection: Set<Item>
+
+    private let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(items) { item in
+                CompactChoiceButton(
+                    title: item.choiceTitle,
+                    isSelected: selection.contains(item)
+                ) {
+                    selection.toggle(item)
+                }
+            }
+        }
+    }
+}
+
+private protocol ChoiceDisplayable {
+    var choiceTitle: String { get }
+}
+
+extension Weekday: ChoiceDisplayable {
+    var choiceTitle: String { shortTitle }
+}
+
+extension DayPart: ChoiceDisplayable {
+    var choiceTitle: String { title }
+}
+
+private struct NumericInputField: View {
+    let title: String
+    let placeholder: String
+    let unit: String
+    @Binding var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(HAYFColor.secondary)
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                TextField(placeholder, text: $text)
+                    .keyboardType(.decimalPad)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text(unit)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .frame(height: 82)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
 private struct GoalDatePicker: View {
     @Binding var date: Date
 
@@ -3291,6 +3883,7 @@ private struct AthleteBlueprintOutput {
     let coachRead: AthleteBlueprintCoachRead
     let archetype: AthleteBlueprintArchetype
     let currentTrainingState: AthleteBlueprintCurrentState
+    let physicalBaseline: AthleteBlueprintPhysicalBaseline
     let historyFindings: [AthleteBlueprintFinding]
     let goalFit: AthleteBlueprintGoalFit
 }
@@ -3307,6 +3900,12 @@ private struct AthleteBlueprintArchetype {
 }
 
 private struct AthleteBlueprintCurrentState {
+    let label: String
+    let summary: String
+    let detail: AthleteBlueprintDetail
+}
+
+private struct AthleteBlueprintPhysicalBaseline {
     let label: String
     let summary: String
     let detail: AthleteBlueprintDetail
@@ -3347,11 +3946,13 @@ private enum AthleteBlueprintBuilder {
         let goal = normalizedGoal(intent: intent, draft: draft)
         let archetype = buildArchetype(intent: intent, draft: draft, evidence: evidence)
         let currentState = buildCurrentState(evidence: evidence)
+        let physicalBaseline = buildPhysicalBaseline(draft: draft, evidence: evidence)
         let historyFindings = buildHistoryFindings(evidence: evidence)
         let goalFit = buildGoalFit(goal: goal, draft: draft, evidence: evidence)
         let coachRead = buildCoachRead(
             archetype: archetype,
             currentState: currentState,
+            physicalBaseline: physicalBaseline,
             goalFit: goalFit,
             evidence: evidence
         )
@@ -3360,6 +3961,7 @@ private enum AthleteBlueprintBuilder {
             coachRead: coachRead,
             archetype: archetype,
             currentTrainingState: currentState,
+            physicalBaseline: physicalBaseline,
             historyFindings: historyFindings,
             goalFit: goalFit
         )
@@ -3391,12 +3993,13 @@ private enum AthleteBlueprintBuilder {
     private static func buildCoachRead(
         archetype: AthleteBlueprintArchetype,
         currentState: AthleteBlueprintCurrentState,
+        physicalBaseline: AthleteBlueprintPhysicalBaseline,
         goalFit: AthleteBlueprintGoalFit,
         evidence: AthleteBlueprintEvidence
     ) -> AthleteBlueprintCoachRead {
         let text: String
         if evidence.hasWorkoutHistory {
-            text = "\(archetype.explanation) \(currentState.summary) \(goalFit.summary)"
+            text = "\(archetype.explanation) \(currentState.summary) \(evidence.bodyMemoryCoachLine ?? physicalBaseline.summary) \(goalFit.summary)"
         } else {
             text = "HAYF has a clear picture of what you want from training, but not enough Apple Health history yet to make strong claims about your past patterns. For now, the read leans on what you told us and will sharpen as you train."
         }
@@ -3428,19 +4031,21 @@ private enum AthleteBlueprintBuilder {
         evidence: AthleteBlueprintEvidence
     ) -> AthleteBlueprintArchetype {
         if let label = evidence.trainingIdentityLabel, !evidence.dominantModalities.isEmpty {
-            let friendlyLabel: String
+            let baseLabel: String
             switch label {
             case "Hybrid athlete":
-                friendlyLabel = "Hybrid Athlete"
+                baseLabel = "Hybrid Athlete"
             case "Strength-led":
-                friendlyLabel = "Strength-Led Athlete"
+                baseLabel = "Strength-Led Athlete"
             case "Endurance-led":
-                friendlyLabel = "Endurance-Led Athlete"
+                baseLabel = "Endurance-Led Athlete"
             default:
-                friendlyLabel = titleCase(label)
+                baseLabel = titleCase(label)
             }
 
-            let explanation = "Your history is led by \(joinedList(evidence.dominantModalities)), which makes you a \(friendlyLabel.lowercased())."
+            let friendlyLabel = evidence.bodyMemoryArchetypePrefix.map { "\($0) \(baseLabel)" } ?? baseLabel
+            let bodyClause = evidence.bodyMemoryArchetypeClause.map { " \($0)" } ?? ""
+            let explanation = "Your history is led by \(joinedList(evidence.dominantModalities)), which makes you a \(baseLabel.lowercased()).\(bodyClause)"
             return AthleteBlueprintArchetype(
                 label: friendlyLabel,
                 explanation: explanation,
@@ -3453,8 +4058,8 @@ private enum AthleteBlueprintBuilder {
                     evidence: [
                         "Dominant modalities: \(joinedList(evidence.dominantModalities)).",
                         "\(evidence.totalWorkouts) imported workouts were available for this read."
-                    ],
-                    caveat: nil
+                    ] + evidence.bodyMemoryEvidenceLines,
+                    caveat: evidence.bodyMemoryArchetypeClause == nil ? nil : "Body-change modifiers appear only when repeated measurements clear the trend threshold."
                 )
             )
         }
@@ -3557,6 +4162,53 @@ private enum AthleteBlueprintBuilder {
         )
     }
 
+    private static func buildPhysicalBaseline(
+        draft: ConsistencyOnboardingDraft,
+        evidence: AthleteBlueprintEvidence
+    ) -> AthleteBlueprintPhysicalBaseline {
+        guard let bodyMassKilograms = draft.bodyMassKilograms,
+              let heightCentimeters = draft.heightCentimeters,
+              let bodyFatBand = draft.bodyFatBand else {
+            return AthleteBlueprintPhysicalBaseline(
+                label: "Baseline not set",
+                summary: "HAYF is missing a current body baseline from onboarding.",
+                detail: AthleteBlueprintDetail(
+                    id: "physical_baseline",
+                    title: "Physical baseline",
+                    summary: "A current self-reported baseline was not available.",
+                    confidence: "Missing",
+                    observationWindow: "Onboarding",
+                    evidence: ["No complete self-reported baseline was captured."],
+                    caveat: "This should be collected before planning body-composition-sensitive goals."
+                )
+            )
+        }
+
+        var evidenceLines = [
+            "Current self-reported body mass: \(String(format: "%.1f", bodyMassKilograms)) kg.",
+            "Current self-reported height: \(Int(heightCentimeters.rounded())) cm.",
+            "Estimated body-fat band: \(bodyFatBand.title)."
+        ]
+        if evidence.hasRecentBodyTrend {
+            evidenceLines.append("Recent HealthKit body trend data is available as supporting context.")
+        }
+        evidenceLines.append(contentsOf: evidence.bodyMemoryEvidenceLines)
+
+        return AthleteBlueprintPhysicalBaseline(
+            label: "\(String(format: "%.1f", bodyMassKilograms)) kg at \(bodyFatBand.title)",
+            summary: "HAYF has a fresh self-reported baseline for weight, height, and estimated body fat before it reads imported trend data.",
+            detail: AthleteBlueprintDetail(
+                id: "physical_baseline",
+                title: "Physical baseline",
+                summary: "This baseline comes from what you entered today, so it outranks older imported body metrics as the current state.",
+                confidence: "Current self-report",
+                observationWindow: "Onboarding today",
+                evidence: evidenceLines,
+                caveat: evidence.hasRecentBodyTrend ? "Imported body trends can add context, but do not replace the baseline you gave today." : nil
+            )
+        )
+    }
+
     private static func buildHistoryFindings(evidence: AthleteBlueprintEvidence) -> [AthleteBlueprintFinding] {
         guard evidence.hasWorkoutHistory else {
             return [
@@ -3578,6 +4230,10 @@ private enum AthleteBlueprintBuilder {
         }
 
         var findings: [AthleteBlueprintFinding] = []
+
+        if let bodyFinding = buildBodyMemoryFinding(evidence: evidence) {
+            findings.append(bodyFinding)
+        }
 
         if evidence.strengthWorkouts90Days > 0 {
             findings.append(
@@ -3689,6 +4345,45 @@ private enum AthleteBlueprintBuilder {
         return Array(findings.prefix(4))
     }
 
+    private static func buildBodyMemoryFinding(evidence: AthleteBlueprintEvidence) -> AthleteBlueprintFinding? {
+        guard let direction = evidence.bodyMassTrendDirection,
+              let change = evidence.bodyMassTrendChange,
+              let days = evidence.bodyMassTrendDaysCovered else {
+            return nil
+        }
+
+        let title: String
+        let summary: String
+        switch direction {
+        case .falling:
+            title = "Your weight has been trending down"
+            summary = "Tracked weight is down \(String(format: "%.1f", abs(change))) kg across \(days) days."
+        case .rising:
+            title = "Your weight has been trending up"
+            summary = "Tracked weight is up \(String(format: "%.1f", abs(change))) kg across \(days) days."
+        case .stable:
+            title = "Your weight has been steady"
+            summary = "Tracked weight has stayed broadly stable across \(days) days."
+        case .insufficient:
+            return nil
+        }
+
+        return AthleteBlueprintFinding(
+            id: "body_mass_trend",
+            title: title,
+            summary: summary,
+            detail: AthleteBlueprintDetail(
+                id: "body_mass_trend",
+                title: title,
+                summary: "This is a repeated-measurement trend, not a single imported reading.",
+                confidence: evidence.bodyMassTrendConfidence.capitalized,
+                observationWindow: "Last \(days) days of tracked weight",
+                evidence: evidence.bodyMemoryEvidenceLines,
+                caveat: evidence.bodyFatTrendDirection == nil ? "Body-fat history is not dense enough to confirm whether the change is fat mass, lean mass, or both." : nil
+            )
+        )
+    }
+
     private static func buildGoalFit(
         goal: AthleteBlueprintGoal,
         draft: ConsistencyOnboardingDraft,
@@ -3758,7 +4453,17 @@ private enum AthleteBlueprintBuilder {
                     ["No selected feasible training option directly maps to strength development yet."],
                     ["Goal horizon: \(goal.horizonWeeks) weeks."]
                 )
-        case .bodyComposition, .sportPerformance, .generalFitness, .custom:
+        case .bodyComposition:
+            let selectedOptions = draft.trainingOptions.map(\.title)
+            let support = evidence.bodyCompositionGoalSupport
+            result = (
+                support.headline,
+                support.summary(goal: goal.displayText, selectedOptions: selectedOptions),
+                support.supports + (selectedOptions.isEmpty ? [] : ["You selected \(joinedList(selectedOptions)) as feasible training options for this goal."]),
+                support.gaps,
+                ["Goal horizon: \(goal.horizonWeeks) weeks."]
+            )
+        case .sportPerformance, .generalFitness, .custom:
             let selectedOptions = draft.trainingOptions.map(\.title)
             result = (
                 selectedOptions.isEmpty ? "Coherent with what you asked for" : "Coherent with your chosen path",
@@ -3820,7 +4525,13 @@ private enum AthleteBlueprintBuilder {
         if normalized.contains("strength") || normalized.contains("lift") || normalized.contains("gym") {
             return .strength
         }
-        if normalized.contains("body fat") || normalized.contains("lean") || normalized.contains("weight") || normalized.contains("composition") {
+        if normalized.contains("body fat")
+            || normalized.contains("lean")
+            || normalized.contains("weight")
+            || normalized.contains("composition")
+            || normalized.contains("kg")
+            || normalized.contains("lose ")
+            || normalized.contains("drop ") {
             return .bodyComposition
         }
         if normalized.contains("tennis") || normalized.contains("football") || normalized.contains("basketball") || normalized.contains("sport") {
@@ -3914,12 +4625,163 @@ private struct AthleteBlueprintEvidence {
         snapshot?.fitnessHistory.seasonality.strongestMonth
     }
 
+    var hasRecentBodyTrend: Bool {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantFuture
+        return [
+            snapshot?.body.bodyMassLatestSampleDate,
+            snapshot?.body.bodyFatLatestSampleDate
+        ]
+        .compactMap { $0 }
+        .contains { $0 >= cutoff }
+    }
+
+    var bodyMassTrend: BodyMetricTrendSummary? {
+        let trend = snapshot?.body.bodyMassHistory
+        return trend?.trend == .insufficient ? nil : trend
+    }
+
+    var bodyFatTrend: BodyMetricTrendSummary? {
+        let trend = snapshot?.body.bodyFatHistory
+        return trend?.trend == .insufficient ? nil : trend
+    }
+
+    var bodyMassTrendDirection: BodyMetricTrendDirection? {
+        bodyMassTrend?.trend
+    }
+
+    var bodyFatTrendDirection: BodyMetricTrendDirection? {
+        bodyFatTrend?.trend
+    }
+
+    var bodyMassTrendChange: Double? {
+        bodyMassTrend?.change
+    }
+
+    var bodyMassTrendDaysCovered: Int? {
+        bodyMassTrend?.daysCovered
+    }
+
+    var bodyMassTrendConfidence: String {
+        bodyMassTrend?.confidence ?? "insufficient"
+    }
+
+    var bodyMemoryArchetypePrefix: String? {
+        switch bodyMassTrendDirection {
+        case .falling:
+            return "Leaning"
+        case .rising:
+            return [.falling, .stable].contains(bodyFatTrendDirection) ? "Building" : nil
+        case .stable:
+            return "Steady"
+        case .insufficient, .none:
+            return nil
+        }
+    }
+
+    var bodyMemoryArchetypeClause: String? {
+        guard let change = bodyMassTrendChange,
+              let days = bodyMassTrendDaysCovered else {
+            return nil
+        }
+
+        switch bodyMassTrendDirection {
+        case .falling:
+            return "Repeated weight entries show you have been leaning out: down \(String(format: "%.1f", abs(change))) kg across \(days) days."
+        case .rising:
+            if [.falling, .stable].contains(bodyFatTrendDirection) {
+                return "Repeated weight entries show a likely building phase: up \(String(format: "%.1f", abs(change))) kg across \(days) days without body-fat moving upward."
+            }
+            return "Repeated weight entries show body mass rising by \(String(format: "%.1f", abs(change))) kg across \(days) days."
+        case .stable:
+            return "Repeated weight entries show a steady body baseline across \(days) days."
+        case .insufficient, .none:
+            return nil
+        }
+    }
+
+    var bodyMemoryCoachLine: String? {
+        guard let clause = bodyMemoryArchetypeClause else { return nil }
+        return clause
+    }
+
+    var bodyMemoryEvidenceLines: [String] {
+        guard let bodyMassTrend else { return [] }
+        var lines = [
+            "Tracked body-mass samples: \(bodyMassTrend.sampleCount).",
+            "Body-mass trend window: \(bodyMassTrend.daysCovered) days.",
+            "Body-mass change across window: \(String(format: "%.1f", bodyMassTrend.change ?? 0)) kg."
+        ]
+        if let bodyFatTrend {
+            lines.append("Tracked body-fat samples: \(bodyFatTrend.sampleCount); trend: \(bodyFatTrend.trend.rawValue).")
+        }
+        return lines
+    }
+
+    var bodyCompositionGoalSupport: BodyCompositionGoalSupport {
+        switch bodyMassTrendDirection {
+        case .falling:
+            return BodyCompositionGoalSupport(
+                headline: "Already moving that way",
+                summaryStem: "Your goal to %@ is already aligned with a measurable downward weight trend.",
+                supports: bodyMemoryEvidenceLines,
+                gaps: bodyFatTrendDirection == nil ? ["Body-fat history is not dense enough yet to confirm composition change directly."] : []
+            )
+        case .rising:
+            return BodyCompositionGoalSupport(
+                headline: "Clear change in direction",
+                summaryStem: "Your goal to %@ is coherent, but it asks HAYF to reverse the body-mass direction seen in recent measurements.",
+                supports: bodyMemoryEvidenceLines,
+                gaps: ["Recent tracked weight has been rising, so the plan must create a real change in trajectory."]
+            )
+        case .stable:
+            return BodyCompositionGoalSupport(
+                headline: "Coherent, but not underway",
+                summaryStem: "Your goal to %@ is coherent, but recent tracked weight has been broadly stable rather than already moving toward it.",
+                supports: bodyMemoryEvidenceLines,
+                gaps: ["The body-composition goal requires a new trend, not just continuation."]
+            )
+        case .insufficient, .none:
+            return BodyCompositionGoalSupport(
+                headline: "Coherent with limited history",
+                summaryStem: "Your goal to %@ is coherent, but HAYF has too little repeated body-history data to judge whether it continues or changes your current trajectory.",
+                supports: [],
+                gaps: ["Repeated body-composition history is not yet strong enough for a trend call."]
+            )
+        }
+    }
+
     func windowMinutes(_ label: String) -> Double {
         snapshot?.workoutLedger.windows.first { $0.window == label }?.totalMinutes ?? 0
     }
 
     func windowWorkouts(_ label: String) -> Int {
         snapshot?.workoutLedger.windows.first { $0.window == label }?.workouts ?? 0
+    }
+}
+
+private struct BodyCompositionGoalSupport {
+    let headline: String
+    let summaryStem: String
+    let supports: [String]
+    let gaps: [String]
+
+    func summary(goal: String, selectedOptions: [String]) -> String {
+        let body = String(format: summaryStem, goal)
+        guard !selectedOptions.isEmpty else { return body }
+        return "\(body) The training path you chose is \(joinedList(selectedOptions))."
+    }
+
+    private func joinedList(_ values: [String]) -> String {
+        switch values.count {
+        case 0:
+            return "your selected training"
+        case 1:
+            return values[0]
+        case 2:
+            return "\(values[0]) and \(values[1])"
+        default:
+            return "\(values.dropLast().joined(separator: ", ")), and \(values.last ?? "")"
+        }
     }
 }
 
@@ -4285,6 +5147,28 @@ private struct CompletedOnboardingProfileRequest: Encodable {
     }
 }
 
+private struct BodyMeasurementInsertRequest: Encodable {
+    let userID: UUID
+    let measuredAt: String
+    let source: String
+    let heightCentimeters: Double
+    let bodyMassKilograms: Double
+    let bodyFatBand: String
+    let bodyFatEstimateMidpoint: Double
+    let confidence: String
+
+    enum CodingKeys: String, CodingKey {
+        case userID = "user_id"
+        case measuredAt = "measured_at"
+        case source
+        case heightCentimeters = "height_centimeters"
+        case bodyMassKilograms = "body_mass_kilograms"
+        case bodyFatBand = "body_fat_band"
+        case bodyFatEstimateMidpoint = "body_fat_estimate_midpoint"
+        case confidence
+    }
+}
+
 @MainActor
 final class OnboardingProfileStore: ObservableObject {
     @Published private(set) var profile: StoredOnboardingProfile?
@@ -4330,6 +5214,26 @@ final class OnboardingProfileStore: ObservableObject {
             .single()
             .execute()
             .value
+
+        if let heightCentimeters = draft.heightCentimeters,
+           let bodyMassKilograms = draft.bodyMassKilograms,
+           let bodyFatBand = draft.bodyFatBand {
+            let baseline = BodyMeasurementInsertRequest(
+                userID: user.id,
+                measuredAt: request.completedAt,
+                source: "onboarding_self_report",
+                heightCentimeters: heightCentimeters,
+                bodyMassKilograms: bodyMassKilograms,
+                bodyFatBand: bodyFatBand.rawValue,
+                bodyFatEstimateMidpoint: bodyFatBand.midpointEstimate,
+                confidence: "estimated_band"
+            )
+
+            try await supabase
+                .from("body_measurements")
+                .insert(baseline)
+                .execute()
+        }
 
         errorMessage = nil
         return completedProfile
@@ -4416,5 +5320,5 @@ private extension HealthRequestState {
 }
 
 #Preview {
-    OnboardingFlowView(onboardingProfileStore: OnboardingProfileStore()) {}
+    OnboardingFlowView(physiologyReference: .male, onboardingProfileStore: OnboardingProfileStore()) {}
 }

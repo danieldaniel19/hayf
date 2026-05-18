@@ -41,7 +41,7 @@ Core tables:
 - `health_feature_snapshots`: compact derived HealthKit feature snapshots.
 - `actual_workouts`: recent HealthKit-derived workout summaries.
 - `fitness_metric_observations`: source-agnostic derived facts from HealthKit now, manual logs / feedback later.
-- `fitness_history_insights`: coach-readable history patterns for goal suggestion and the future Fitness Profile.
+- `fitness_history_insights`: coach-readable history patterns for goal suggestion and the future Fitness Profile, including approved longitudinal body-trend findings when HealthKit evidence clears the threshold.
 - `fitness_goal_targets`: primary active-block goals and supporting sub-goals.
 - `fitness_goal_evaluations`: append-only goal status evaluations.
 - `workout_debrief_requests`: feedback prompts created after completed workouts are detected.

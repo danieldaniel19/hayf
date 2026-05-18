@@ -47,7 +47,7 @@ The app asks for read-only access to:
 
 This validates the HealthKit path for long training history, daily movement, recovery, cardio fitness, body context, and available nutrition context without turning Supabase into a raw HealthKit warehouse.
 
-The current feature builder also creates a broader `fitnessHistory` profile. It converts long-running HealthKit history into reusable, labelled context such as training identity, modality mix, consistency, seasonality, load windows, strength continuity, body trends, and insight candidates. This profile is designed for planning, onboarding goal suggestions, the future Athlete Blueprint / Profile surfaces, and coach conversations.
+The current feature builder also creates a broader `fitnessHistory` profile. It converts long-running HealthKit history into reusable, labelled context such as training identity, modality mix, consistency, seasonality, load windows, strength continuity, body trends, and insight candidates. Body history follows the same architecture as workout history: raw samples stay in HealthKit, while HAYF persists compact derived observations and coach-readable insights such as recent body-mass/body-fat trend direction and measured change windows. This profile is designed for planning, onboarding goal suggestions, the future Athlete Blueprint / Profile surfaces, and coach conversations.
 
 The next evidence-contract layer is specified in `docs/health-evidence-spec.md`. That document defines the deterministic device-side transforms, quality gates, and AI guardrails required before HealthKit-derived facts can appear in an Athlete Blueprint.
 

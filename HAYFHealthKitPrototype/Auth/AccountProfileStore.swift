@@ -5,6 +5,7 @@ struct StoredAccountProfile: Codable, Identifiable {
     let id: UUID
     let name: String
     let birthdate: String
+    let physiologyReference: String?
     let mainCity: String
     let profilePhotoPath: String?
     let profilePhotoURL: String?
@@ -13,6 +14,7 @@ struct StoredAccountProfile: Codable, Identifiable {
         case id
         case name
         case birthdate
+        case physiologyReference = "physiology_reference"
         case mainCity = "main_city"
         case profilePhotoPath = "profile_photo_path"
         case profilePhotoURL = "profile_photo_url"
@@ -23,6 +25,7 @@ private struct CreateAccountProfileRequest: Encodable {
     let id: UUID
     let name: String
     let birthdate: String
+    let physiologyReference: String
     let mainCity: String
     let profilePhotoPath: String?
     let profilePhotoURL: String?
@@ -31,6 +34,7 @@ private struct CreateAccountProfileRequest: Encodable {
         case id
         case name
         case birthdate
+        case physiologyReference = "physiology_reference"
         case mainCity = "main_city"
         case profilePhotoPath = "profile_photo_path"
         case profilePhotoURL = "profile_photo_url"
@@ -40,6 +44,7 @@ private struct CreateAccountProfileRequest: Encodable {
 private struct UpdateAccountProfileRequest: Encodable {
     let name: String
     let birthdate: String
+    let physiologyReference: String
     let mainCity: String
     let profilePhotoPath: String?
     let profilePhotoURL: String?
@@ -47,6 +52,7 @@ private struct UpdateAccountProfileRequest: Encodable {
     enum CodingKeys: String, CodingKey {
         case name
         case birthdate
+        case physiologyReference = "physiology_reference"
         case mainCity = "main_city"
         case profilePhotoPath = "profile_photo_path"
         case profilePhotoURL = "profile_photo_url"
@@ -89,6 +95,7 @@ final class AccountProfileStore: ObservableObject {
             id: user.id,
             name: draft.name,
             birthdate: birthdateFormatter.string(from: draft.birthdate),
+            physiologyReference: draft.physiologyReference.rawValue,
             mainCity: draft.mainCity,
             profilePhotoPath: profilePhotoPath,
             profilePhotoURL: profilePhotoURL
@@ -114,6 +121,7 @@ final class AccountProfileStore: ObservableObject {
         let request = UpdateAccountProfileRequest(
             name: draft.name,
             birthdate: birthdateFormatter.string(from: draft.birthdate),
+            physiologyReference: draft.physiologyReference.rawValue,
             mainCity: draft.mainCity,
             profilePhotoPath: profilePhotoPath,
             profilePhotoURL: profilePhotoURL

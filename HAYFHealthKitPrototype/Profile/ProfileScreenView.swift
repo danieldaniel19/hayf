@@ -896,6 +896,7 @@ private enum ProfileDisplay {
             id: UUID(),
             name: "Daniel Loureiro",
             birthdate: "1990-01-01",
+            physiologyReference: "male",
             mainCity: "Lisbon",
             profilePhotoPath: nil,
             profilePhotoURL: nil

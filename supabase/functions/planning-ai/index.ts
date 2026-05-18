@@ -3513,6 +3513,7 @@ function fitnessMetricObservations(
     unit: string | null,
     dimensions: Record<string, unknown> = {},
     evidence: Record<string, unknown> = {},
+    confidence = "high",
   ) => {
     if (typeof value !== "number" || Number.isNaN(value)) {
       return;
@@ -3530,7 +3531,7 @@ function fitnessMetricObservations(
       observed_end: observedAt,
       dimensions_json: dimensions,
       evidence_json: evidence,
-      confidence: "high",
+      confidence,
     });
   };
 
@@ -3547,10 +3548,12 @@ function fitnessMetricObservations(
   push("walking_running_distance_28d_km", "Walking/running distance 28d", "volume", snapshot.activity?.walkingRunningDistance28DaysKilometers, "km", { modality: "walking_running", window: "28d" });
   push("steps_7d_avg", "Average steps 7d", "activity_floor", snapshot.activity?.averageSteps7Days, "steps/day", { window: "7d" });
   push("active_energy_7d_kcal", "Active energy 7d", "activity_floor", snapshot.activity?.activeEnergy7DaysKilocalories, "kcal", { window: "7d" });
-  push("body_mass_latest_kg", "Body mass latest", "body", snapshot.body?.bodyMassKilograms, "kg");
+  push("body_mass_latest_kg", "Body mass latest", "body", recentBodyMetricValue(snapshot.body?.bodyMassKilograms, snapshot.body?.bodyMassLatestSampleDate), "kg");
   push("body_mass_28d_avg_kg", "Body mass 28d average", "body", snapshot.body?.bodyMass28DayAverageKilograms, "kg", { window: "28d" });
-  push("body_fat_latest_percentage", "Body fat latest", "body", snapshot.body?.bodyFatPercentage, "%");
+  pushBodyTrendObservations(rows, userID, activeBlockID, observedAt, "body_mass", "Body mass", "kg", snapshot.body?.bodyMassHistory ?? profile.bodyTrend?.bodyMassHistory);
+  push("body_fat_latest_percentage", "Body fat latest", "body", recentBodyMetricValue(snapshot.body?.bodyFatPercentage, snapshot.body?.bodyFatLatestSampleDate), "%");
   push("body_fat_28d_avg_percentage", "Body fat 28d average", "body", snapshot.body?.bodyFat28DayAveragePercentage, "%", { window: "28d" });
+  pushBodyTrendObservations(rows, userID, activeBlockID, observedAt, "body_fat", "Body fat", "percentage_points", snapshot.body?.bodyFatHistory ?? profile.bodyTrend?.bodyFatHistory);
   push("vo2_max_latest", "VO2 max latest", "recovery", snapshot.recovery?.vo2MaxLatest, "mL/kg/min");
   push("active_weeks", "Active training weeks", "consistency", profile.consistency?.activeWeeks, "weeks");
   push("longest_active_week_streak", "Longest active week streak", "consistency", profile.consistency?.longestActiveWeekStreak, "weeks");
@@ -3573,6 +3576,72 @@ function fitnessMetricObservations(
   }
 
   return rows;
+}
+
+function pushBodyTrendObservations(
+  rows: Array<Record<string, unknown>>,
+  userID: string,
+  activeBlockID: string,
+  observedAt: string,
+  metricPrefix: "body_mass" | "body_fat",
+  metricLabel: string,
+  changeUnit: string,
+  trend: Record<string, any> | null | undefined,
+) {
+  if (!trend || trend.trend === "insufficient") return;
+
+  const confidence = trend.confidence === "high" ? "high" : "medium";
+  const commonEvidence = {
+    trend: trend.trend ?? null,
+    sampleCount: trend.sampleCount ?? null,
+    firstSampleDate: trend.firstSampleDate ?? null,
+    latestSampleDate: trend.latestSampleDate ?? null,
+    firstValue: trend.firstValue ?? null,
+    latestValue: trend.latestValue ?? null,
+    daysCovered: trend.daysCovered ?? null,
+  };
+
+  const push = (
+    metricKey: string,
+    label: string,
+    value: unknown,
+    unit: string,
+    dimensions: Record<string, unknown>,
+  ) => {
+    if (typeof value !== "number" || Number.isNaN(value)) return;
+    rows.push({
+      user_id: userID,
+      active_block_id: activeBlockID,
+      source: "healthkit",
+      metric_key: metricKey,
+      metric_label: label,
+      metric_category: "body",
+      value,
+      unit,
+      observed_start: trend.firstSampleDate ?? null,
+      observed_end: trend.latestSampleDate ?? observedAt,
+      dimensions_json: dimensions,
+      evidence_json: commonEvidence,
+      confidence,
+    });
+  };
+
+  push(`${metricPrefix}_change_tracked`, `${metricLabel} change tracked`, trend.change, changeUnit, { window: "tracked" });
+  push(`${metricPrefix}_weekly_change_rate`, `${metricLabel} weekly change rate`, trend.weeklyChangeRate, changeUnit, { cadence: "weekly" });
+  push(`${metricPrefix}_change_28d`, `${metricLabel} change 28d`, trend.change28Days, changeUnit, { window: "28d" });
+  push(`${metricPrefix}_change_90d`, `${metricLabel} change 90d`, trend.change90Days, changeUnit, { window: "90d" });
+  push(`${metricPrefix}_change_180d`, `${metricLabel} change 180d`, trend.change180Days, changeUnit, { window: "180d" });
+}
+
+function recentBodyMetricValue(value: unknown, sampleDate: unknown) {
+  if (typeof value !== "number" || Number.isNaN(value) || typeof sampleDate !== "string") {
+    return null;
+  }
+  const parsed = new Date(sampleDate);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - 90);
+  return parsed >= cutoff ? value : null;
 }
 
 async function createInitialGoalTargets(
@@ -3991,10 +4060,20 @@ function metricValueFor(snapshot: Record<string, any>, metricKey: string): numbe
     recovery_minutes_7d: null,
     steps_7d_avg: snapshot.activity?.averageSteps7Days,
     active_energy_7d_kcal: snapshot.activity?.activeEnergy7DaysKilocalories,
-    body_mass_latest_kg: snapshot.body?.bodyMassKilograms,
+    body_mass_latest_kg: recentBodyMetricValue(snapshot.body?.bodyMassKilograms, snapshot.body?.bodyMassLatestSampleDate),
     body_mass_28d_avg_kg: snapshot.body?.bodyMass28DayAverageKilograms,
-    body_fat_latest_percentage: snapshot.body?.bodyFatPercentage,
+    body_mass_change_tracked: snapshot.body?.bodyMassHistory?.change,
+    body_mass_weekly_change_rate: snapshot.body?.bodyMassHistory?.weeklyChangeRate,
+    body_mass_change_28d: snapshot.body?.bodyMassHistory?.change28Days,
+    body_mass_change_90d: snapshot.body?.bodyMassHistory?.change90Days,
+    body_mass_change_180d: snapshot.body?.bodyMassHistory?.change180Days,
+    body_fat_latest_percentage: recentBodyMetricValue(snapshot.body?.bodyFatPercentage, snapshot.body?.bodyFatLatestSampleDate),
     body_fat_28d_avg_percentage: snapshot.body?.bodyFat28DayAveragePercentage,
+    body_fat_change_tracked: snapshot.body?.bodyFatHistory?.change,
+    body_fat_weekly_change_rate: snapshot.body?.bodyFatHistory?.weeklyChangeRate,
+    body_fat_change_28d: snapshot.body?.bodyFatHistory?.change28Days,
+    body_fat_change_90d: snapshot.body?.bodyFatHistory?.change90Days,
+    body_fat_change_180d: snapshot.body?.bodyFatHistory?.change180Days,
     vo2_max_latest: snapshot.recovery?.vo2MaxLatest,
     active_weeks: profile.consistency?.activeWeeks,
     longest_active_week_streak: profile.consistency?.longestActiveWeekStreak,

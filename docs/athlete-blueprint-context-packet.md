@@ -149,6 +149,7 @@ Carry user-declared information that is valid even when HealthKit is sparse.
       "priority": 1
     }
   ],
+  "infrastructure_access": ["Gym", "Outdoor bike"],
   "motivation_anchors": ["string"],
   "motivation_note": "string",
   "goal_brief": "string",
@@ -161,10 +162,19 @@ Carry user-declared information that is valid even when HealthKit is sparse.
   "injury_notes": "string",
   "frequency_preference": "string",
   "session_length_preference": "string",
+  "available_days": ["Monday", "Wednesday", "Saturday"],
+  "available_day_parts": ["Morning", "Evening"],
   "blockers": ["string"],
   "blocker_note": "string",
   "support_style": "string",
-  "bad_day_floor": "string"
+  "bad_day_floor": "string",
+  "body_baseline": {
+    "height_centimeters": 173,
+    "body_mass_kilograms": 70,
+    "body_fat_band": "15-17%",
+    "body_fat_estimate_midpoint": 16,
+    "source": "onboarding_self_report"
+  }
 }
 ```
 

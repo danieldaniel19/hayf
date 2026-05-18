@@ -125,7 +125,7 @@ The planning and profile systems now share one evidence layer instead of creatin
 Remote evidence should be compact and labelled:
 
 - `fitness_metric_observations`: numeric or categorical facts with metric keys, units, source labels, windows, and confidence
-- `fitness_history_insights`: coach-readable patterns such as training identity, seasonality, consistency, active streaks, and body metric availability
+- `fitness_history_insights`: coach-readable patterns such as training identity, seasonality, consistency, active streaks, body metric availability, and body-trend history
 - `fitness_goal_targets`: the primary active-block goal plus supporting sub-goals
 - `fitness_goal_evaluations`: append-only goal status checks such as on track, lagging, achieved, or needs review
 - `workout_debrief_requests` and `workout_feedback`: the feedback loop after completed workouts
