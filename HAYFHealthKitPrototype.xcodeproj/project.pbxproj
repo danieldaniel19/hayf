@@ -32,6 +32,8 @@
 		B00000040000000000000001 /* PlanScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000140000000000000001 /* PlanScreenView.swift */; };
 		C00000010000000000000001 /* ProfileDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000001 /* ProfileDataStore.swift */; };
 		C00000020000000000000001 /* ProfileScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000120000000000000001 /* ProfileScreenView.swift */; };
+		D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000110000000000000001 /* HealthFeatureSnapshotFixtureStore.swift */; };
+		D00000020000000000000001 /* daniel-health-snapshot.json in Resources */ = {isa = PBXBuildFile; fileRef = D00000120000000000000001 /* daniel-health-snapshot.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -62,6 +64,8 @@
 		B00000140000000000000001 /* PlanScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanScreenView.swift; sourceTree = "<group>"; };
 		C00000110000000000000001 /* ProfileDataStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileDataStore.swift; sourceTree = "<group>"; };
 		C00000120000000000000001 /* ProfileScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileScreenView.swift; sourceTree = "<group>"; };
+		D00000110000000000000001 /* HealthFeatureSnapshotFixtureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthFeatureSnapshotFixtureStore.swift; sourceTree = "<group>"; };
+		D00000120000000000000001 /* daniel-health-snapshot.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "daniel-health-snapshot.json"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -165,10 +169,20 @@
 			children = (
 				A00000130000000000000001 /* HealthKitManager.swift */,
 				B00000110000000000000001 /* HealthSyncService.swift */,
+				D00000110000000000000001 /* HealthFeatureSnapshotFixtureStore.swift */,
 				A000001E000000000000001 /* HealthPermissionsPrototypeView.swift */,
 				A0000028000000000000001 /* HealthDebugView.swift */,
+				D000003D000000000000001 /* Fixtures */,
 			);
 			path = Health;
+			sourceTree = "<group>";
+		};
+		D000003D000000000000001 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				D00000120000000000000001 /* daniel-health-snapshot.json */,
+			);
+			path = Fixtures;
 			sourceTree = "<group>";
 		};
 		B000003B000000000000001 /* Planning */ = {
@@ -264,6 +278,7 @@
 			files = (
 				A00000040000000000000001 /* Assets.xcassets in Resources */,
 				A00000050000000000000001 /* Preview Assets.xcassets in Resources */,
+				D00000020000000000000001 /* daniel-health-snapshot.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -288,6 +303,7 @@
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
+				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,
 				A000000B000000000000001 /* HealthPermissionsPrototypeView.swift in Sources */,
 				A000001300000000000001 /* HealthDebugView.swift in Sources */,
 				B00000020000000000000001 /* PlanningAIProvider.swift in Sources */,

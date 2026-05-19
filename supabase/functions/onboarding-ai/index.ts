@@ -293,7 +293,7 @@ function taskRules(task: OnboardingTask) {
         "strategyPillars should explain the few steering rules HAYF will prioritize. Keep every seeded id and write concrete user-facing copy.",
         "For consistency goals, phaseOutline must stay empty and operatingRhythm must be present.",
         "For non-consistency goals, phaseOutline should preserve the seeded ids and operatingRhythm should be null.",
-        "strategyTargets should explain what HAYF will watch to know whether the strategy is working. They are not workout prescriptions.",
+        "strategyTargets should explain what HAYF will watch to know whether the strategy is working. They are not workout prescriptions. Keep titles consistent with seeded metricKey, targetValue, unit, scope, and kind because deterministic code owns the measurement contract.",
         "Do not create new athlete facts beyond the supplied blueprint summary and onboarding signals.",
       ].join(" ");
   }

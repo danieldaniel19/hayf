@@ -4,6 +4,7 @@ import OSLog
 
 struct OnboardingFlowView: View {
     let physiologyReference: PhysiologyReference
+    let onExit: () -> Void
     let onComplete: () -> Void
 
     @State private var step: OnboardingStep = .intent
@@ -22,6 +23,9 @@ struct OnboardingFlowView: View {
     @State private var pendingHealthSnapshot: HealthFeatureSnapshot?
     @State private var selectedBlueprintDetail: AthleteBlueprintDetail?
     @State private var completionErrorMessage: String?
+    @State private var aiGenerationFailure: OnboardingAIGenerationFailure?
+    @State private var useMockHealthData = false
+    @State private var mockHealthDataMessage: String?
     @State private var isCompleting = false
 
     private let healthKitManager = HealthKitManager()
@@ -32,10 +36,12 @@ struct OnboardingFlowView: View {
     init(
         physiologyReference: PhysiologyReference,
         onboardingProfileStore: OnboardingProfileStore,
+        onExit: @escaping () -> Void = {},
         onComplete: @escaping () -> Void
     ) {
         self.physiologyReference = physiologyReference
         self.onboardingProfileStore = onboardingProfileStore
+        self.onExit = onExit
         self.onComplete = onComplete
     }
 
@@ -105,23 +111,24 @@ struct OnboardingFlowView: View {
 
                 Spacer()
 
-                if step.showsBackButton {
+                HStack(spacing: 8) {
+                    if step.showsBackButton {
+                        Button {
+                            goBack()
+                        } label: {
+                            OnboardingHeaderIcon(systemName: "arrow.left")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back")
+                    }
+
                     Button {
-                        goBack()
+                        onExit()
                     } label: {
-                        Image(systemName: "arrow.left")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(HAYFColor.primary)
-                            .frame(width: 42, height: 42)
-                            .background(HAYFColor.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(HAYFColor.border, lineWidth: 1)
-                            }
+                        OnboardingHeaderIcon(systemName: "xmark")
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
+                    .accessibilityLabel("Exit onboarding")
                 }
             }
         }
@@ -558,33 +565,85 @@ struct OnboardingFlowView: View {
     private func loadingScreen(title: String, copy: String) -> some View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                eyebrow: "HAYF IS THINKING",
-                title: title,
-                copy: copy
+                eyebrow: aiGenerationFailure(for: step) == nil ? "HAYF IS THINKING" : "AI FAILED",
+                title: aiGenerationFailure(for: step)?.title ?? title,
+                copy: aiGenerationFailure(for: step)?.copy ?? copy
             )
 
-            HStack(spacing: 14) {
-                ProgressView()
-                    .tint(HAYFColor.orange)
-                    .frame(width: 34, height: 34)
+            if let failure = aiGenerationFailure(for: step) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top, spacing: 14) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(HAYFColor.orange)
+                            .frame(width: 34, height: 34)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Personalizing your setup")
-                        .font(.system(size: 15, weight: .semibold))
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("HAYF could not reach its AI coach.")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(HAYFColor.primary)
+
+                            Text(failure.detail)
+                                .font(.system(size: 14, weight: .regular))
+                                .lineSpacing(3)
+                                .foregroundStyle(HAYFColor.secondary)
+                        }
+                    }
+
+                    Button {
+                        retryCurrentGeneration()
+                    } label: {
+                        HStack {
+                            Text("Try again")
+                                .font(.system(size: 15, weight: .semibold))
+                            Spacer()
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 15, weight: .semibold))
+                        }
                         .foregroundStyle(HAYFColor.primary)
-
-                    Text("HAYF is turning your answers into a compact coach profile.")
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 46)
+                        .padding(.horizontal, 16)
+                        .background(HAYFColor.surface)
+                        .clipShape(Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
-            }
-            .padding(16)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
+                .padding(16)
+                .background(HAYFColor.orange.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
+                }
+            } else {
+                HStack(spacing: 14) {
+                    ProgressView()
+                        .tint(HAYFColor.orange)
+                        .frame(width: 34, height: 34)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Personalizing your setup")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+
+                        Text("HAYF is turning your answers into a compact coach profile.")
+                            .font(.system(size: 14, weight: .regular))
+                            .lineSpacing(3)
+                            .foregroundStyle(HAYFColor.secondary)
+                    }
+                }
+                .padding(16)
+                .background(HAYFColor.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(HAYFColor.border, lineWidth: 1)
+                }
             }
         }
     }
@@ -895,6 +954,46 @@ struct OnboardingFlowView: View {
                 }
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(HAYFColor.muted)
+            }
+
+            Toggle(isOn: $useMockHealthData) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Add mock Health data")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Text("Use Daniel's fixture snapshot instead of asking the Simulator for Apple Health data.")
+                        .font(.system(size: 14, weight: .regular))
+                        .lineSpacing(3)
+                        .foregroundStyle(HAYFColor.secondary)
+                }
+            }
+            .toggleStyle(SwitchToggleStyle(tint: HAYFColor.orange))
+            .padding(16)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+            .onChange(of: useMockHealthData) { _, isEnabled in
+                if isEnabled {
+                    loadMockHealthSnapshot()
+                } else {
+                    pendingHealthSnapshot = nil
+                    mockHealthDataMessage = nil
+                    if healthRequestState == .connected {
+                        healthRequestState = .idle
+                    }
+                }
+            }
+
+            if let mockHealthDataMessage {
+                Text(mockHealthDataMessage)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let message = healthRequestState.message {
@@ -1318,6 +1417,11 @@ struct OnboardingFlowView: View {
         case .summary:
             step = .health
         case .health:
+            if useMockHealthData {
+                loadMockHealthSnapshot()
+                prepareAthleteBlueprint()
+                return
+            }
             if healthRequestState == .connected || healthRequestState == .unavailable {
                 prepareAthleteBlueprint()
             } else {
@@ -1455,7 +1559,8 @@ struct OnboardingFlowView: View {
         fitnessStrategy ?? FitnessStrategyBuilder.build(
             intent: currentIntent,
             draft: draft,
-            blueprint: currentAthleteBlueprint
+            blueprint: currentAthleteBlueprint,
+            snapshot: pendingHealthSnapshot
         )
     }
 
@@ -1473,6 +1578,7 @@ struct OnboardingFlowView: View {
         blendedCandidate = nil
         athleteBlueprint = nil
         fitnessStrategy = nil
+        aiGenerationFailure = nil
     }
 
     private func prepareCandidateEdit() {
@@ -1504,28 +1610,54 @@ struct OnboardingFlowView: View {
     }
 
     private func generateSummary() async {
-        let output = await aiProvider.generateSummary(intent: currentIntent, draft: draft)
-        summaryOutput = output.isValid ? output : MockOnboardingAIProvider.fallbackSummary(intent: currentIntent, draft: draft)
-        step = .summary
+        aiGenerationFailure = nil
+        do {
+            let output = try await aiProvider.generateSummary(intent: currentIntent, draft: draft)
+            guard output.isValid else {
+                throw OnboardingAIError.emptyOutput
+            }
+            summaryOutput = output
+            step = .summary
+        } catch {
+            aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingSummary, error: error)
+        }
     }
 
     private func generateGoalCandidates() async {
-        let candidates = await aiProvider.generateGoalCandidates(draft: draft)
-        goalCandidates = candidates.count == 3 ? candidates : MockOnboardingAIProvider.fallbackGoalCandidates(for: draft)
-        selectedGoalCandidateID = nil
-        step = .goalCandidates
+        aiGenerationFailure = nil
+        do {
+            let candidates = try await aiProvider.generateGoalCandidates(draft: draft)
+            guard candidates.count == 3 else {
+                throw OnboardingAIError.invalidCandidateCount
+            }
+            goalCandidates = candidates
+            selectedGoalCandidateID = nil
+            step = .goalCandidates
+        } catch {
+            aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingCandidates, error: error)
+        }
     }
 
     private func generateBlendedCandidate() async {
+        aiGenerationFailure = nil
         let candidates = displayGoalCandidates.filter { blendCandidateIDs.contains($0.id) }
-        blendedCandidate = await aiProvider.generateBlendedCandidate(from: candidates, draft: draft)
-        if blendedCandidate == nil {
-            blendedCandidate = MockOnboardingAIProvider.blend(candidates: candidates, draft: draft)
+        do {
+            blendedCandidate = try await aiProvider.generateBlendedCandidate(from: candidates, draft: draft)
+            guard blendedCandidate != nil else {
+                throw OnboardingAIError.emptyOutput
+            }
+            step = .blendPreview
+        } catch {
+            aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingBlend, error: error)
         }
-        step = .blendPreview
     }
 
     private func refreshHealthState() async {
+        guard !useMockHealthData else {
+            loadMockHealthSnapshot()
+            return
+        }
+
         let state = await healthKitManager.requestStatus()
         switch state {
         case .unnecessary:
@@ -1540,6 +1672,12 @@ struct OnboardingFlowView: View {
     }
 
     private func requestHealthAccess() {
+        if useMockHealthData {
+            loadMockHealthSnapshot()
+            prepareAthleteBlueprint()
+            return
+        }
+
         Task {
             healthRequestState = .requesting
             do {
@@ -1560,6 +1698,7 @@ struct OnboardingFlowView: View {
     }
 
     private func generateAthleteBlueprint() async {
+        aiGenerationFailure = nil
         let snapshot = await planningHealthSnapshot()
         pendingHealthSnapshot = snapshot
         let fallback = AthleteBlueprintBuilder.build(
@@ -1567,13 +1706,17 @@ struct OnboardingFlowView: View {
             draft: draft,
             snapshot: snapshot
         )
-        athleteBlueprint = await aiProvider.generateAthleteBlueprint(
-            intent: currentIntent,
-            draft: draft,
-            snapshot: snapshot,
-            fallback: fallback
-        )
-        step = .athleteBlueprint
+        do {
+            athleteBlueprint = try await aiProvider.generateAthleteBlueprint(
+                intent: currentIntent,
+                draft: draft,
+                snapshot: snapshot,
+                fallback: fallback
+            )
+            step = .athleteBlueprint
+        } catch {
+            aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingBlueprint, error: error)
+        }
     }
 
     private func prepareFitnessStrategy() {
@@ -1582,18 +1725,49 @@ struct OnboardingFlowView: View {
     }
 
     private func generateFitnessStrategy() async {
+        aiGenerationFailure = nil
         let fallback = FitnessStrategyBuilder.build(
             intent: currentIntent,
             draft: draft,
-            blueprint: currentAthleteBlueprint
-        )
-        fitnessStrategy = await aiProvider.generateFitnessStrategy(
-            intent: currentIntent,
-            draft: draft,
             blueprint: currentAthleteBlueprint,
-            fallback: fallback
+            snapshot: pendingHealthSnapshot
         )
-        step = .fitnessStrategy
+        do {
+            fitnessStrategy = try await aiProvider.generateFitnessStrategy(
+                intent: currentIntent,
+                draft: draft,
+                blueprint: currentAthleteBlueprint,
+                fallback: fallback
+            )
+            step = .fitnessStrategy
+        } catch {
+            aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingStrategy, error: error)
+        }
+    }
+
+    private func retryCurrentGeneration() {
+        aiGenerationFailure = nil
+        Task {
+            switch step {
+            case .generatingSummary:
+                await generateSummary()
+            case .generatingCandidates:
+                await generateGoalCandidates()
+            case .generatingBlend:
+                await generateBlendedCandidate()
+            case .generatingBlueprint:
+                await generateAthleteBlueprint()
+            case .generatingStrategy:
+                await generateFitnessStrategy()
+            default:
+                break
+            }
+        }
+    }
+
+    private func aiGenerationFailure(for step: OnboardingStep) -> OnboardingAIGenerationFailure? {
+        guard aiGenerationFailure?.step == step else { return nil }
+        return aiGenerationFailure
     }
 
     private func completeOnboarding() {
@@ -1635,6 +1809,13 @@ struct OnboardingFlowView: View {
     }
 
     private func planningHealthSnapshot() async -> HealthFeatureSnapshot? {
+        if useMockHealthData {
+            if let pendingHealthSnapshot {
+                return pendingHealthSnapshot
+            }
+            return HealthFeatureSnapshotFixtureStore.danielSnapshot()
+        }
+
         guard healthRequestState == .connected else { return nil }
 
         do {
@@ -1642,6 +1823,18 @@ struct OnboardingFlowView: View {
         } catch {
             return nil
         }
+    }
+
+    private func loadMockHealthSnapshot() {
+        guard let snapshot = HealthFeatureSnapshotFixtureStore.danielSnapshot() else {
+            healthRequestState = .failed("Could not load the mock Health data fixture.")
+            mockHealthDataMessage = nil
+            return
+        }
+
+        pendingHealthSnapshot = snapshot
+        healthRequestState = .connected
+        mockHealthDataMessage = "Mock Health data loaded: \(snapshot.fitnessHistory.trainingIdentity.label), \(snapshot.workoutLedger.totalWorkouts) workouts, longest cycling ride \(Int((snapshot.workoutLedger.longestCyclingDistanceKilometers ?? 0).rounded())) km."
     }
 }
 
@@ -1776,6 +1969,45 @@ private enum OnboardingStep: Equatable {
 
     var showsBackButton: Bool {
         self != .intent
+    }
+}
+
+private struct OnboardingAIGenerationFailure: Equatable {
+    let step: OnboardingStep
+    let technicalMessage: String
+
+    init(step: OnboardingStep, error: Error) {
+        self.step = step
+        technicalMessage = error.localizedDescription
+    }
+
+    var title: String {
+        switch step {
+        case .generatingCandidates:
+            return "Could not create goal options."
+        case .generatingBlend:
+            return "Could not blend those goals."
+        case .generatingSummary:
+            return "Could not write your readback."
+        case .generatingBlueprint:
+            return "Could not build your Athlete Blueprint."
+        case .generatingStrategy:
+            return "Could not build your strategy."
+        default:
+            return "AI step failed."
+        }
+    }
+
+    var copy: String {
+        "This part needs AI. HAYF will not show generic fallback copy here because it would be pretending to know more than it does."
+    }
+
+    var detail: String {
+        let trimmed = technicalMessage.trimmed
+        guard !trimmed.isEmpty else {
+            return "Check your connection and try again."
+        }
+        return "Check your connection and try again. Technical detail: \(trimmed)"
     }
 }
 
@@ -2006,21 +2238,35 @@ private struct ConsistencyOnboardingDraft {
 }
 
 private protocol OnboardingAIProvider {
-    func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput
-    func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async -> [GoalCandidate]
-    func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async -> GoalCandidate?
+    func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async throws -> OnboardingSummaryOutput
+    func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async throws -> [GoalCandidate]
+    func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async throws -> GoalCandidate?
     func generateAthleteBlueprint(
         intent: OnboardingIntent,
         draft: ConsistencyOnboardingDraft,
         snapshot: HealthFeatureSnapshot?,
         fallback: AthleteBlueprintOutput
-    ) async -> AthleteBlueprintOutput
+    ) async throws -> AthleteBlueprintOutput
     func generateFitnessStrategy(
         intent: OnboardingIntent,
         draft: ConsistencyOnboardingDraft,
         blueprint: AthleteBlueprintOutput,
         fallback: FitnessStrategyOutput
-    ) async -> FitnessStrategyOutput
+    ) async throws -> FitnessStrategyOutput
+}
+
+private enum OnboardingAIError: LocalizedError {
+    case emptyOutput
+    case invalidCandidateCount
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyOutput:
+            return "The AI response was empty."
+        case .invalidCandidateCount:
+            return "The AI response did not include the expected goal options."
+        }
+    }
 }
 
 private enum OnboardingAITask: String, Codable {
@@ -2540,11 +2786,21 @@ private struct FitnessStrategyAIOperatingRhythmSeed: Codable {
 
 private struct FitnessStrategyAITargetSeed: Codable {
     let id: String
+    let scope: String
+    let kind: String
     let title: String
+    let metricKey: String?
+    let targetValue: Double?
+    let unit: String?
 
     init(target: FitnessStrategyTarget) {
         id = target.id
+        scope = target.scope.rawValue
+        kind = target.kind.rawValue
         title = target.title
+        metricKey = target.metricKey
+        targetValue = target.targetValue
+        unit = target.unit
     }
 }
 
@@ -2590,8 +2846,15 @@ private struct FitnessStrategyAIPayload: Codable {
                 guard let aiTarget = targetCopy[target.id] else { return target }
                 return FitnessStrategyTarget(
                     id: target.id,
+                    scope: target.scope,
+                    kind: target.kind,
                     title: aiTarget.title.trimmed.isEmpty ? target.title : aiTarget.title.trimmed,
-                    summary: aiTarget.summary.trimmed.isEmpty ? target.summary : aiTarget.summary.trimmed
+                    summary: aiTarget.summary.trimmed.isEmpty ? target.summary : aiTarget.summary.trimmed,
+                    metricKey: target.metricKey,
+                    metricCategory: target.metricCategory,
+                    direction: target.direction,
+                    targetValue: target.targetValue,
+                    unit: target.unit
                 )
             }
         )
@@ -2688,7 +2951,7 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
     private let supabase = SupabaseClientProvider.shared
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "HAYF", category: "onboarding.ai")
 
-    func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput {
+    func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async throws -> OnboardingSummaryOutput {
         do {
             let request = OnboardingAIFunctionRequest(
                 task: .generateSummary,
@@ -2698,11 +2961,12 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
             let response: OnboardingAISummaryFunctionResponse = try await invoke(request)
             return response.output.summaryOutput()
         } catch {
-            return MockOnboardingAIProvider.fallbackSummary(intent: intent, draft: draft)
+            logger.error("Onboarding summary AI generation failed: \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
 
-    func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async -> [GoalCandidate] {
+    func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async throws -> [GoalCandidate] {
         do {
             let request = OnboardingAIFunctionRequest(
                 task: .generateGoalCandidates,
@@ -2712,11 +2976,12 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
             let response: OnboardingAIGoalCandidatesFunctionResponse = try await invoke(request)
             return response.output.candidates.map { $0.goalCandidate() }
         } catch {
-            return MockOnboardingAIProvider.fallbackGoalCandidates(for: draft)
+            logger.error("Goal candidate AI generation failed: \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
 
-    func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async -> GoalCandidate? {
+    func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async throws -> GoalCandidate? {
         do {
             let request = OnboardingAIFunctionRequest(
                 task: .generateBlendedCandidate,
@@ -2726,7 +2991,8 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
             let response: OnboardingAIBlendedCandidateFunctionResponse = try await invoke(request)
             return response.output.goalCandidate()
         } catch {
-            return MockOnboardingAIProvider.blend(candidates: candidates, draft: draft)
+            logger.error("Blended candidate AI generation failed: \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
 
@@ -2735,7 +3001,7 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
         draft: ConsistencyOnboardingDraft,
         snapshot: HealthFeatureSnapshot?,
         fallback: AthleteBlueprintOutput
-    ) async -> AthleteBlueprintOutput {
+    ) async throws -> AthleteBlueprintOutput {
         do {
             let request = AthleteBlueprintAIFunctionRequest(
                 task: .generateAthleteBlueprint,
@@ -2750,7 +3016,7 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
             return response.output.merged(with: fallback)
         } catch {
             logger.error("Athlete Blueprint AI generation failed: \(error.localizedDescription, privacy: .public)")
-            return fallback
+            throw error
         }
     }
 
@@ -2759,7 +3025,7 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
         draft: ConsistencyOnboardingDraft,
         blueprint: AthleteBlueprintOutput,
         fallback: FitnessStrategyOutput
-    ) async -> FitnessStrategyOutput {
+    ) async throws -> FitnessStrategyOutput {
         do {
             let request = FitnessStrategyAIFunctionRequest(
                 task: .generateFitnessStrategy,
@@ -2774,44 +3040,93 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
             return response.output.merged(with: fallback)
         } catch {
             logger.error("Fitness Strategy AI generation failed: \(error.localizedDescription, privacy: .public)")
-            return fallback
+            throw error
         }
     }
 
     private func invoke<Response: Decodable>(_ request: OnboardingAIFunctionRequest) async throws -> Response {
-        try await supabase.functions.invoke(
-            "onboarding-ai",
-            options: FunctionInvokeOptions(body: request)
-        )
+        do {
+            return try await supabase.functions.invoke(
+                "onboarding-ai",
+                options: FunctionInvokeOptions(body: request)
+            )
+        } catch {
+            throw Self.readableFunctionError(error)
+        }
     }
 
     private func invoke<Response: Decodable>(_ request: AthleteBlueprintAIFunctionRequest) async throws -> Response {
-        try await supabase.functions.invoke(
-            "onboarding-ai",
-            options: FunctionInvokeOptions(body: request)
-        )
+        do {
+            return try await supabase.functions.invoke(
+                "onboarding-ai",
+                options: FunctionInvokeOptions(body: request)
+            )
+        } catch {
+            throw Self.readableFunctionError(error)
+        }
     }
 
     private func invoke<Response: Decodable>(_ request: FitnessStrategyAIFunctionRequest) async throws -> Response {
-        try await supabase.functions.invoke(
-            "onboarding-ai",
-            options: FunctionInvokeOptions(body: request)
-        )
+        do {
+            return try await supabase.functions.invoke(
+                "onboarding-ai",
+                options: FunctionInvokeOptions(body: request)
+            )
+        } catch {
+            throw Self.readableFunctionError(error)
+        }
+    }
+
+    private static func readableFunctionError(_ error: Error) -> Error {
+        guard case let FunctionsError.httpError(code, data) = error else {
+            return error
+        }
+
+        let message: String
+        if
+            let payload = try? JSONDecoder().decode(OnboardingAIFunctionErrorPayload.self, from: data),
+            let errorMessage = payload.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !errorMessage.isEmpty
+        {
+            message = errorMessage
+        } else if
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !body.isEmpty
+        {
+            message = body
+        } else {
+            message = "Edge Function returned a non-2xx status code: \(code)"
+        }
+
+        return OnboardingAIFunctionError(statusCode: code, message: message)
     }
 }
 
+private struct OnboardingAIFunctionError: LocalizedError {
+    let statusCode: Int
+    let message: String
+
+    var errorDescription: String? {
+        "Onboarding AI error \(statusCode): \(message)"
+    }
+}
+
+private struct OnboardingAIFunctionErrorPayload: Decodable {
+    let error: String?
+}
+
 private struct MockOnboardingAIProvider: OnboardingAIProvider {
-    func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async -> OnboardingSummaryOutput {
+    func generateSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) async throws -> OnboardingSummaryOutput {
         await mockDelay()
         return Self.fallbackSummary(intent: intent, draft: draft)
     }
 
-    func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async -> [GoalCandidate] {
+    func generateGoalCandidates(draft: ConsistencyOnboardingDraft) async throws -> [GoalCandidate] {
         await mockDelay()
         return Self.fallbackGoalCandidates(for: draft)
     }
 
-    func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async -> GoalCandidate? {
+    func generateBlendedCandidate(from candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) async throws -> GoalCandidate? {
         await mockDelay()
         return Self.blend(candidates: candidates, draft: draft)
     }
@@ -2821,7 +3136,7 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         draft: ConsistencyOnboardingDraft,
         snapshot: HealthFeatureSnapshot?,
         fallback: AthleteBlueprintOutput
-    ) async -> AthleteBlueprintOutput {
+    ) async throws -> AthleteBlueprintOutput {
         await mockDelay()
         return fallback
     }
@@ -2831,7 +3146,7 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         draft: ConsistencyOnboardingDraft,
         blueprint: AthleteBlueprintOutput,
         fallback: FitnessStrategyOutput
-    ) async -> FitnessStrategyOutput {
+    ) async throws -> FitnessStrategyOutput {
         await mockDelay()
         return fallback
     }
@@ -2843,16 +3158,22 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
     static func fallbackSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) -> OnboardingSummaryOutput {
         switch intent {
         case .stayConsistent:
+            let frequency = draft.frequency?.summary ?? "a repeatable weekly rhythm"
             return OnboardingSummaryOutput(
-                readback: "You want a consistency-first rhythm that still feels realistic when life gets messy."
+                readback: "You want \(frequency) to become durable, with a realistic floor for weeks that get messy."
             )
         case .concreteGoal:
+            let goal = draft.goalSummary == "Not set" ? "a concrete target" : draft.goalSummary.lowercased()
             return OnboardingSummaryOutput(
-                readback: "You have a concrete target and want your training shaped around making steady progress toward it."
+                readback: "You want HAYF to coach toward \(goal), while respecting your available training menu and recovery constraints."
             )
         case .findGoal:
+            let goal = draft.goalSummary == "Not set" ? "a goal direction" : draft.goalSummary.lowercased()
+            let primary = draft.trainingOptions.first?.title.lowercased() ?? "your preferred training"
+            let support = draft.trainingOptions.dropFirst().prefix(2).map { $0.title.lowercased() }
+            let supportClause = support.isEmpty ? "" : ", with \(support.joined(separator: " and ")) as support"
             return OnboardingSummaryOutput(
-                readback: "You chose a goal direction that fits the kind of training you enjoy and the constraints you want respected."
+                readback: "You landed on \(goal), led by \(primary)\(supportClause), because that gives the next block a clear fitness direction without ignoring what you actually want to train."
             )
         }
     }
@@ -3702,6 +4023,23 @@ private struct OnboardingIntro: View {
     }
 }
 
+private struct OnboardingHeaderIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(HAYFColor.primary)
+            .frame(width: 42, height: 42)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+    }
+}
+
 private struct OnboardingOptionCard: View {
     let title: String
     let subtitle: String
@@ -4257,17 +4595,65 @@ private struct FitnessStrategyOperatingRhythm {
     let anchors: [String]
 }
 
+private enum FitnessStrategyTargetScope: String {
+    case strategy
+    case phase
+    case week
+}
+
+private enum FitnessStrategyTargetKind: String {
+    case primary
+    case supporting
+
+    var displayName: String {
+        switch self {
+        case .primary: return "Primary"
+        case .supporting: return "Supporting"
+        }
+    }
+}
+
+private enum FitnessStrategyTargetDirection: String {
+    case increase
+    case decrease
+    case maintain
+    case complete
+    case review
+}
+
 private struct FitnessStrategyTarget: Identifiable {
     let id: String
+    let scope: FitnessStrategyTargetScope
+    let kind: FitnessStrategyTargetKind
     let title: String
     let summary: String
+    let metricKey: String?
+    let metricCategory: String
+    let direction: FitnessStrategyTargetDirection
+    let targetValue: Double?
+    let unit: String?
+
+    var displayValue: String? {
+        guard let targetValue else { return nil }
+
+        let formatted: String
+        if targetValue.rounded() == targetValue {
+            formatted = "\(Int(targetValue))"
+        } else {
+            formatted = String(format: "%.1f", targetValue)
+        }
+
+        guard let unit, !unit.isEmpty else { return formatted }
+        return "\(formatted) \(unit)"
+    }
 }
 
 private enum FitnessStrategyBuilder {
     static func build(
         intent: OnboardingIntent,
         draft: ConsistencyOnboardingDraft,
-        blueprint: AthleteBlueprintOutput
+        blueprint: AthleteBlueprintOutput,
+        snapshot: HealthFeatureSnapshot?
     ) -> FitnessStrategyOutput {
         let goal = AthleteBlueprintBuilder.normalizedGoal(intent: intent, draft: draft)
         let usesPhases = goal.category != .consistency
@@ -4350,7 +4736,14 @@ private enum FitnessStrategyBuilder {
             ]
         )
 
-        let targets = buildTargets(goal: goal, draft: draft, usesPhases: usesPhases)
+        let targets = TargetEngine.buildTargets(
+            intent: intent,
+            goal: goal,
+            draft: draft,
+            blueprint: blueprint,
+            snapshot: snapshot,
+            usesPhases: usesPhases
+        )
 
         return FitnessStrategyOutput(
             read: read,
@@ -4378,74 +4771,384 @@ private enum FitnessStrategyBuilder {
         return "repeatable training"
     }
 
-    private static func buildTargets(
-        goal: AthleteBlueprintGoal,
-        draft: ConsistencyOnboardingDraft,
-        usesPhases: Bool
-    ) -> [FitnessStrategyTarget] {
-        let frequency = draft.frequency?.summary ?? "your planned weekly exposures"
-        var targets = [
-            FitnessStrategyTarget(
-                id: "weekly_exposures",
-                title: usesPhases ? "Weekly exposures" : "Weekly consistency",
-                summary: "Keep \(frequency) showing up before the strategy asks for more."
-            ),
-            FitnessStrategyTarget(
-                id: "bad_day_floor",
-                title: "Bad-day floor",
-                summary: "Use \(draft.floorSummary.lowercased()) to protect the week when a full session is not realistic."
-            )
-        ]
+    private enum TargetEngine {
+        static func buildTargets(
+            intent: OnboardingIntent,
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            blueprint: AthleteBlueprintOutput,
+            snapshot: HealthFeatureSnapshot?,
+            usesPhases: Bool
+        ) -> [FitnessStrategyTarget] {
+            if goal.category == .consistency {
+                return consistencyTargets(goal: goal, draft: draft, blueprint: blueprint, snapshot: snapshot)
+            }
 
-        switch goal.category {
-        case .endurance:
-            targets.insert(
+            var targets: [FitnessStrategyTarget] = []
+            if let bodyCompositionTarget = bodyCompositionTarget(goal: goal, draft: draft, snapshot: snapshot) {
+                targets.append(bodyCompositionTarget)
+            }
+
+            targets.append(goalSignalTarget(intent: intent, goal: goal, draft: draft, snapshot: snapshot))
+            targets.append(weeklyExposureTarget(goal: goal, draft: draft, usesPhases: usesPhases))
+            targets.append(recoveryOrFloorTarget(draft: draft))
+
+            return deduplicated(targets).prefixArray(4)
+        }
+
+        private static func consistencyTargets(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            blueprint: AthleteBlueprintOutput,
+            snapshot: HealthFeatureSnapshot?
+        ) -> [FitnessStrategyTarget] {
+            let weeklySessions = targetWeeklySessions(from: draft.frequency)
+            let strongWeeks = targetStrongWeeks(from: weeklySessions, snapshot: snapshot)
+            let primarySummary = "Over the hidden 12-week consistency block, HAYF wants at least \(strongWeeks) weeks where you complete \(weeklySessions)+ sessions. That turns consistency into a visible behavior target instead of a vague intention."
+
+            var targets = [
                 FitnessStrategyTarget(
-                    id: "endurance_exposure",
-                    title: "Endurance exposure",
-                    summary: "Keep enough recurring aerobic work in the week for \(goal.displayText) to become trainable."
+                    id: "strong_weeks_12w",
+                    scope: .strategy,
+                    kind: .primary,
+                    title: "\(strongWeeks) strong weeks",
+                    summary: primarySummary,
+                    metricKey: "weeks_with_min_sessions_12w",
+                    metricCategory: "consistency",
+                    direction: .increase,
+                    targetValue: Double(strongWeeks),
+                    unit: "weeks"
                 ),
-                at: 1
-            )
-        case .strength:
-            targets.insert(
                 FitnessStrategyTarget(
-                    id: "strength_exposure",
-                    title: "Strength exposure",
-                    summary: "Protect the strength sessions that directly support \(goal.displayText)."
+                    id: "weekly_min_sessions",
+                    scope: .week,
+                    kind: .supporting,
+                    title: "\(weeklySessions) sessions per week",
+                    summary: "A normal week is a win when it reaches \(weeklySessions) planned training exposures, with the exact mix shaped by your available days and preferred training.",
+                    metricKey: "planned_sessions_7d",
+                    metricCategory: "consistency",
+                    direction: .maintain,
+                    targetValue: Double(weeklySessions),
+                    unit: "sessions"
                 ),
-                at: 1
-            )
-        case .bodyComposition:
-            targets.insert(
                 FitnessStrategyTarget(
-                    id: "body_composition_signal",
-                    title: "Body trend",
-                    summary: "Use repeated body-composition evidence, not one-off readings, to judge whether the strategy is moving the right way."
-                ),
-                at: 1
-            )
-        case .consistency:
-            targets.insert(
-                FitnessStrategyTarget(
-                    id: "streak_recovery",
-                    title: "Streak recovery",
-                    summary: "When a week slips, return quickly instead of letting one miss become a longer gap."
-                ),
-                at: 1
-            )
-        case .sportPerformance, .generalFitness, .custom:
-            targets.insert(
-                FitnessStrategyTarget(
-                    id: "goal_specific_signal",
-                    title: "Goal-specific signal",
-                    summary: "Watch the most relevant training marker once the first weeks establish a stable base."
-                ),
-                at: 1
+                    id: "gap_recovery",
+                    scope: .strategy,
+                    kind: .supporting,
+                    title: "No long drop-offs",
+                    summary: "If a week slips, the target is to return within 7 days so one miss does not become the pattern HAYF is trying to break.",
+                    metricKey: "max_gap_days_12w",
+                    metricCategory: "consistency",
+                    direction: .decrease,
+                    targetValue: 7,
+                    unit: "days"
+                )
+            ]
+
+            if let mixTarget = modalityMixTarget(goal: goal, draft: draft, snapshot: snapshot, weeklySessions: weeklySessions) {
+                targets.insert(mixTarget, at: 2)
+            }
+
+            return targets.prefixArray(4)
+        }
+
+        private static func bodyCompositionTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?
+        ) -> FitnessStrategyTarget? {
+            guard goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText) else { return nil }
+
+            let requestedChange = requestedKilogramChange(in: goal.displayText)
+            let baseline = draft.bodyMassKilograms
+                ?? snapshot?.body.bodyMass28DayAverageKilograms
+                ?? snapshot?.body.bodyMassKilograms
+            let targetValue: Double?
+            if let baseline, let requestedChange {
+                targetValue = max(25, baseline + requestedChange)
+            } else {
+                targetValue = nil
+            }
+            let direction: FitnessStrategyTargetDirection = (requestedChange ?? -1) < 0 ? .decrease : .review
+
+            return FitnessStrategyTarget(
+                id: "body_mass_trend",
+                scope: .strategy,
+                kind: .primary,
+                title: requestedChange.map { abs($0) >= 1 ? "Body-mass change" : "Body trend" } ?? "Body trend",
+                summary: targetValue.map {
+                    "Use the repeated body-mass trend, not single weigh-ins, to judge whether training and recovery support a move toward \(String(format: "%.1f", $0)) kg."
+                } ?? "Use repeated body-composition evidence, not one-off readings, to judge whether the strategy is moving the right way.",
+                metricKey: "body_mass_28d_avg_kg",
+                metricCategory: "body_composition",
+                direction: direction,
+                targetValue: targetValue,
+                unit: "kg"
             )
         }
 
-        return Array(targets.prefix(4))
+        private static func goalSignalTarget(
+            intent: OnboardingIntent,
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?
+        ) -> FitnessStrategyTarget {
+            if let cyclingTarget = cyclingPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot) {
+                return cyclingTarget
+            }
+
+            if let runningTarget = runningPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot) {
+                return runningTarget
+            }
+
+            if goal.category == .strength || draft.trainingOptions.first == .strength {
+                let sessions = draft.frequency == .two ? 2 : 3
+                return FitnessStrategyTarget(
+                    id: "strength_exposure",
+                    scope: .week,
+                    kind: .primary,
+                    title: "\(sessions) strength exposures",
+                    summary: "Protect enough weekly strength work for \(goal.displayText) to become trainable without letting support cardio crowd it out.",
+                    metricKey: "strength_sessions_7d",
+                    metricCategory: "strength",
+                    direction: .maintain,
+                    targetValue: Double(sessions),
+                    unit: "sessions"
+                )
+            }
+
+            let aerobicMinutes = weeklyAerobicMinutes(from: draft)
+            return FitnessStrategyTarget(
+                id: "aerobic_base_minutes",
+                scope: .week,
+                kind: .primary,
+                title: "\(aerobicMinutes) aerobic minutes",
+                summary: "Hold a measurable aerobic dose each week so the strategy has a real fitness signal, even if the goal is broad.",
+                metricKey: "aerobic_minutes_7d",
+                metricCategory: "endurance",
+                direction: .maintain,
+                targetValue: Double(aerobicMinutes),
+                unit: "min"
+            )
+        }
+
+        private static func cyclingPerformanceTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?
+        ) -> FitnessStrategyTarget? {
+            guard goal.category == .endurance || draft.trainingOptions.contains(.cycling) || goal.displayText.lowercased().contains("cycl") else { return nil }
+            let longestRide = longestWorkout(containing: "cycling", snapshot: snapshot)
+            let targetDistance = longestRide?.distanceKilometers.map { capstoneDistance(from: $0, completedAt: longestRide?.workoutDate) }
+            let fallbackMinutes = weeklyAerobicMinutes(from: draft)
+
+            return FitnessStrategyTarget(
+                id: "cycling_goal_signal",
+                scope: .strategy,
+                kind: .primary,
+                title: targetDistance.map { "Capstone ride: \(Int($0)) km" } ?? "\(fallbackMinutes) cycling minutes",
+                summary: targetDistance.map { distance in
+                    let history = longestRide.map { " Your longest comparable ride is \(Int(($0.distanceKilometers ?? 0).rounded())) km from \(relativeAgeDescription(for: $0.workoutDate))." } ?? ""
+                    return "This is a single controlled capstone ride, not cumulative weekly distance.\(history) Weekly targets should stair-step toward a \(Int(distance)) km effort; route and elevation are not modeled yet."
+                } ?? "Use recurring cycling exposure as the first measurable signal before HAYF asks for harder bike work.",
+                metricKey: targetDistance == nil ? "cycling_minutes_7d" : "longest_cycling_distance_km",
+                metricCategory: "cycling",
+                direction: .increase,
+                targetValue: targetDistance ?? Double(fallbackMinutes),
+                unit: targetDistance == nil ? "min" : "km"
+            )
+        }
+
+        private static func runningPerformanceTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?
+        ) -> FitnessStrategyTarget? {
+            guard goal.category == .endurance || draft.trainingOptions.contains(.running) || goal.displayText.lowercased().contains("run") else { return nil }
+            let longestRun = longestWorkout(containing: "running", snapshot: snapshot)
+            let targetDistance = longestRun?.distanceKilometers.map { capstoneDistance(from: $0, completedAt: longestRun?.workoutDate) }
+            let fallbackMinutes = weeklyAerobicMinutes(from: draft)
+
+            return FitnessStrategyTarget(
+                id: "running_goal_signal",
+                scope: .strategy,
+                kind: .primary,
+                title: targetDistance.map { "Capstone run: \(Int($0)) km" } ?? "\(fallbackMinutes) running minutes",
+                summary: targetDistance.map { distance in
+                    let history = longestRun.map { " Your longest comparable run is \(Int(($0.distanceKilometers ?? 0).rounded())) km from \(relativeAgeDescription(for: $0.workoutDate))." } ?? ""
+                    return "This is a single controlled capstone run, not cumulative weekly distance.\(history) Weekly targets should stair-step toward a \(Int(distance)) km effort."
+                } ?? "Use recurring run exposure as the first measurable signal before HAYF asks for harder running.",
+                metricKey: targetDistance == nil ? "running_minutes_7d" : "longest_running_distance_km",
+                metricCategory: "running",
+                direction: .increase,
+                targetValue: targetDistance ?? Double(fallbackMinutes),
+                unit: targetDistance == nil ? "min" : "km"
+            )
+        }
+
+        private static func weeklyExposureTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            usesPhases: Bool
+        ) -> FitnessStrategyTarget {
+            let weeklySessions = targetWeeklySessions(from: draft.frequency)
+            return FitnessStrategyTarget(
+                id: "weekly_training_exposures",
+                scope: .week,
+                kind: .supporting,
+                title: "\(weeklySessions) weekly exposures",
+                summary: "Keep \(weeklySessions) weekly training exposures showing up before the strategy asks for more specific work toward \(goal.displayText).",
+                metricKey: "planned_sessions_7d",
+                metricCategory: "consistency",
+                direction: .maintain,
+                targetValue: Double(weeklySessions),
+                unit: "sessions"
+            )
+        }
+
+        private static func modalityMixTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?,
+            weeklySessions: Int
+        ) -> FitnessStrategyTarget? {
+            let options = draft.trainingOptions
+            guard options.count >= 2 else { return nil }
+
+            let primary = options[0]
+            let secondary = options[1]
+            let primaryCount = max(1, Int(ceil(Double(weeklySessions) * 0.6)))
+            let secondaryCount = max(1, weeklySessions - primaryCount)
+
+            return FitnessStrategyTarget(
+                id: "weekly_modality_mix",
+                scope: .week,
+                kind: .supporting,
+                title: "\(primary.title) + \(secondary.title)",
+                summary: "A strong week should bias toward \(primaryCount)x \(primary.title.lowercased()) and \(secondaryCount)x \(secondary.title.lowercased()), then adjust around your calendar instead of pretending every week is identical.",
+                metricKey: "weekly_modality_mix",
+                metricCategory: "consistency",
+                direction: .maintain,
+                targetValue: Double(weeklySessions),
+                unit: "sessions"
+            )
+        }
+
+        private static func recoveryOrFloorTarget(draft: ConsistencyOnboardingDraft) -> FitnessStrategyTarget {
+            FitnessStrategyTarget(
+                id: "bad_day_floor_used",
+                scope: .week,
+                kind: .supporting,
+                title: "Use the floor",
+                summary: "When a full session is not realistic, \(draft.floorSummary.lowercased()) counts as the recovery move that keeps the strategy alive.",
+                metricKey: "floor_sessions_7d",
+                metricCategory: "adherence",
+                direction: .review,
+                targetValue: nil,
+                unit: nil
+            )
+        }
+
+        private static func targetWeeklySessions(from frequency: TrainingFrequency?) -> Int {
+            switch frequency {
+            case .two: return 2
+            case .three: return 3
+            case .four: return 4
+            case .fivePlus: return 5
+            case .changes, nil: return 3
+            }
+        }
+
+        private static func targetStrongWeeks(from weeklySessions: Int, snapshot: HealthFeatureSnapshot?) -> Int {
+            let priorStreak = snapshot?.fitnessHistory.consistency.longestActiveWeekStreak ?? 0
+            let base = weeklySessions >= 5 ? 4 : 6
+            return min(8, max(base, priorStreak + 1))
+        }
+
+        private static func weeklyAerobicMinutes(from draft: ConsistencyOnboardingDraft) -> Int {
+            let sessions = targetWeeklySessions(from: draft.frequency)
+            let minutes = sessionMinutes(from: draft.sessionLength)
+            return max(60, sessions * minutes)
+        }
+
+        private static func sessionMinutes(from length: SessionLength?) -> Int {
+            switch length {
+            case .twenty: return 20
+            case .thirty: return 30
+            case .fortyFive: return 45
+            case .sixtyPlus: return 60
+            case .varies, nil: return 35
+            }
+        }
+
+        private static func longestWorkout(containing modality: String, snapshot: HealthFeatureSnapshot?) -> FitnessLongestWorkoutSummary? {
+            snapshot?.fitnessHistory.performance.longestWorkoutsByModality.first {
+                $0.modality.lowercased().contains(modality)
+            }
+        }
+
+        private static func capstoneDistance(from longestDistance: Double, completedAt date: Date?) -> Double {
+            let ageDays = date.map { Calendar.current.dateComponents([.day], from: $0, to: Date()).day ?? 0 } ?? 999
+            let multiplier: Double
+            switch ageDays {
+            case ..<180:
+                multiplier = 1.15
+            case ..<365:
+                multiplier = 1.10
+            default:
+                multiplier = 1.05
+            }
+
+            let rawTarget = longestDistance * multiplier
+            let roundedToFive = (rawTarget / 5).rounded() * 5
+            return max(longestDistance.rounded(), roundedToFive)
+        }
+
+        private static func relativeAgeDescription(for date: Date) -> String {
+            let days = Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
+            if days < 60 {
+                return "the last two months"
+            }
+            if days < 365 {
+                return "\(max(2, Int((Double(days) / 30).rounded()))) months ago"
+            }
+            return "\(max(1, Int((Double(days) / 365).rounded()))) years ago"
+        }
+
+        private static func requestedKilogramChange(in text: String) -> Double? {
+            let lowercased = text.lowercased()
+            guard containsBodyCompositionLanguage(lowercased) else { return nil }
+            let pattern = #"(\d+(?:[\.,]\d+)?)\s*(?:kg|kgs|kilogram|kilograms)"#
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: lowercased, range: NSRange(lowercased.startIndex..., in: lowercased)),
+                  let range = Range(match.range(at: 1), in: lowercased) else {
+                return nil
+            }
+
+            let value = Double(lowercased[range].replacingOccurrences(of: ",", with: ".")) ?? 0
+            let wantsGain = lowercased.contains("gain") || lowercased.contains("add") || lowercased.contains("build")
+            return wantsGain ? value : -value
+        }
+
+        private static func containsBodyCompositionLanguage(_ text: String) -> Bool {
+            let lowercased = text.lowercased()
+            return ["kg", "weight", "body fat", "lean", "drop", "lose", "loss", "cut", "gain mass"].contains { lowercased.contains($0) }
+        }
+
+        private static func deduplicated(_ targets: [FitnessStrategyTarget]) -> [FitnessStrategyTarget] {
+            var seen = Set<String>()
+            return targets.filter { target in
+                guard !seen.contains(target.id) else { return false }
+                seen.insert(target.id)
+                return true
+            }
+        }
+    }
+}
+
+private extension Array {
+    func prefixArray(_ maxLength: Int) -> [Element] {
+        Array(prefix(maxLength))
     }
 }
 
@@ -4569,7 +5272,18 @@ private enum AthleteBlueprintBuilder {
     ) -> AthleteBlueprintCoachRead {
         let text: String
         if evidence.hasWorkoutHistory {
-            text = "\(archetype.explanation) \(currentState.summary) \(evidence.bodyMemoryCoachLine ?? physicalBaseline.summary) \(goalFit.summary)"
+            var lines = [
+                archetype.explanation,
+                currentState.summary
+            ]
+            if let bodyLine = evidence.bodyMemoryCoachLine,
+               !archetype.explanation.contains(bodyLine) {
+                lines.append(bodyLine)
+            } else if evidence.bodyMemoryCoachLine == nil {
+                lines.append(physicalBaseline.summary)
+            }
+            lines.append(goalFit.summary)
+            text = uniqueSentences(from: lines).joined(separator: " ")
         } else {
             text = "HAYF has a clear picture of what you want from training, but not enough Apple Health history yet to make strong claims about your past patterns. For now, the read leans on what you told us and will sharpen as you train."
         }
@@ -4614,8 +5328,7 @@ private enum AthleteBlueprintBuilder {
             }
 
             let friendlyLabel = evidence.bodyMemoryArchetypePrefix.map { "\($0) \(baseLabel)" } ?? baseLabel
-            let bodyClause = evidence.bodyMemoryArchetypeClause.map { " \($0)" } ?? ""
-            let explanation = "Your history is led by \(joinedList(evidence.dominantModalities)), which makes you a \(baseLabel.lowercased()).\(bodyClause)"
+            let explanation = "Your history is led by \(joinedList(evidence.dominantModalities)), which makes you a \(baseLabel.lowercased())."
             return AthleteBlueprintArchetype(
                 label: friendlyLabel,
                 explanation: explanation,
@@ -5130,6 +5843,22 @@ private enum AthleteBlueprintBuilder {
             return "\(clean.dropLast().joined(separator: ", ")), and \(clean.last ?? "")"
         }
     }
+
+    private static func uniqueSentences(from lines: [String]) -> [String] {
+        var seen = Set<String>()
+        var unique: [String] = []
+
+        for line in lines {
+            let normalized = line
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalized.isEmpty, !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            unique.append(line)
+        }
+
+        return unique
+    }
 }
 
 private struct AthleteBlueprintGoal {
@@ -5522,15 +6251,35 @@ private struct FitnessStrategyTargetRow: View {
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(target.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(target.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 6)
+
+                    if let value = target.displayValue {
+                        Text(value)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(HAYFColor.orange.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                }
 
                 Text(target.summary)
                     .font(.system(size: 14, weight: .regular))
                     .lineSpacing(3)
                     .foregroundStyle(HAYFColor.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Text("\(target.kind.displayName) · \(target.metricCategoryDisplay)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(HAYFColor.muted)
+                    .padding(.top, 3)
             }
 
             Spacer(minLength: 0)
@@ -5542,6 +6291,15 @@ private struct FitnessStrategyTargetRow: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(HAYFColor.border, lineWidth: 1)
         }
+    }
+}
+
+private extension FitnessStrategyTarget {
+    var metricCategoryDisplay: String {
+        metricCategory
+            .split(separator: "_")
+            .map { $0.capitalized }
+            .joined(separator: " ")
     }
 }
 

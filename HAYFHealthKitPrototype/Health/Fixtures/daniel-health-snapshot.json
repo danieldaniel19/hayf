@@ -1,0 +1,406 @@
+{
+  "generatedAt": "2026-05-19T20:17:36Z",
+  "importWindow": "Last 6 years, plus latest available body/recovery/nutrition samples",
+  "workoutLedger": {
+    "totalWorkouts": 837,
+    "daysSinceLastWorkout": 0,
+    "lastWorkout": {
+      "type": "Traditional strength",
+      "startDate": "2026-05-19T06:19:24Z",
+      "durationMinutes": 46.890852733453116,
+      "energyKilocalories": 190.03496797577574
+    },
+    "windows": [
+      {
+        "window": "7d",
+        "workouts": 5,
+        "totalMinutes": 458.4303785940011,
+        "totalDistanceKilometers": 129.580591796875,
+        "totalEnergyKilocalories": 2859.8570406019508,
+        "activityTypes": ["Cycling", "Traditional strength"]
+      },
+      {
+        "window": "28d",
+        "workouts": 22,
+        "totalMinutes": 2177.5733967463175,
+        "totalDistanceKilometers": 390.0404881835454,
+        "totalEnergyKilocalories": 13067.531985998969,
+        "activityTypes": ["Cycling", "Hiking", "Running", "Traditional strength", "Walking"]
+      },
+      {
+        "window": "90d",
+        "workouts": 54,
+        "totalMinutes": 4445.901938978833,
+        "totalDistanceKilometers": 723.3643820978873,
+        "totalEnergyKilocalories": 27967.004574684488,
+        "activityTypes": ["Climbing", "Cycling", "HIIT", "Hiking", "Running", "Traditional strength", "Walking"]
+      },
+      {
+        "window": "365d",
+        "workouts": 214,
+        "totalMinutes": 13699.790078006186,
+        "totalDistanceKilometers": 2194.098066678284,
+        "totalEnergyKilocalories": 95723.7265094057,
+        "activityTypes": ["Climbing", "Cycling", "HIIT", "Hiking", "Running", "Traditional strength", "Walking"]
+      },
+      {
+        "window": "all",
+        "workouts": 837,
+        "totalMinutes": 59149.9400144895,
+        "totalDistanceKilometers": 9884.027440332839,
+        "totalEnergyKilocalories": 421148.3861578729,
+        "activityTypes": ["Climbing", "Cycling", "Functional strength", "HIIT", "Hiking", "Other", "Running", "Traditional strength", "Walking", "Yoga"]
+      }
+    ],
+    "byActivity": [
+      {
+        "type": "Cycling",
+        "workouts": 249,
+        "totalMinutes": 32024.919035363186,
+        "totalDistanceKilometers": 8876.24330257041,
+        "lastWorkoutDate": "2026-05-17T09:18:14Z",
+        "daysSinceLastWorkout": 2
+      },
+      {
+        "type": "Traditional strength",
+        "workouts": 257,
+        "totalMinutes": 12741.02014846802,
+        "lastWorkoutDate": "2026-05-19T06:19:24Z",
+        "daysSinceLastWorkout": 0
+      },
+      {
+        "type": "Running",
+        "workouts": 150,
+        "totalMinutes": 4718.657491350174,
+        "totalDistanceKilometers": 807.7861723618967,
+        "lastWorkoutDate": "2026-04-28T15:50:03Z",
+        "daysSinceLastWorkout": 21
+      }
+    ],
+    "longestCyclingDistanceKilometers": 288.003,
+    "longestRunningDistanceKilometers": 21.072560563954664
+  },
+  "fitnessHistory": {
+    "lookbackYears": 6,
+    "totalWorkouts": 837,
+    "trainingIdentity": {
+      "label": "Hybrid athlete",
+      "dominantModalities": ["cycling", "strength", "running"],
+      "modalityMix": [
+        {
+          "modality": "cycling",
+          "workouts": 249,
+          "totalMinutes": 32024.919035363186,
+          "totalDistanceKilometers": 8876.24330257041,
+          "shareOfMinutes": 0.5414192986082199,
+          "lastWorkoutDate": "2026-05-17T09:18:14Z"
+        },
+        {
+          "modality": "strength",
+          "workouts": 307,
+          "totalMinutes": 14824.66739714941,
+          "shareOfMinutes": 0.25062861253144003,
+          "lastWorkoutDate": "2026-05-19T06:19:24Z"
+        },
+        {
+          "modality": "running",
+          "workouts": 150,
+          "totalMinutes": 4718.657491350174,
+          "totalDistanceKilometers": 807.7861723618967,
+          "shareOfMinutes": 0.07977451017184939,
+          "lastWorkoutDate": "2026-04-28T15:50:03Z"
+        }
+      ]
+    },
+    "consistency": {
+      "weeksAnalyzed": 313,
+      "activeWeeks": 231,
+      "averageWorkoutsPerActiveWeek": 3.6233766233766236,
+      "averageMinutesPerActiveWeek": 256.0603463830715,
+      "longestActiveWeekStreak": 44,
+      "longestGapDays": 134
+    },
+    "seasonality": {
+      "strongestMonth": {
+        "month": 9,
+        "label": "Sep",
+        "workouts": 78,
+        "totalMinutes": 10677.04110386769,
+        "totalDistanceKilometers": 1884.129810379582
+      },
+      "strongestSeason": {
+        "season": "spring",
+        "workouts": 275,
+        "totalMinutes": 19701.393723636877,
+        "totalDistanceKilometers": 3543.3439163053717
+      },
+      "summerVsWinterMinutesRatio": 1.9529218741591372,
+      "monthlyActivity": [
+        {
+          "month": 5,
+          "label": "May",
+          "workouts": 120,
+          "totalMinutes": 9815.996485294902,
+          "totalDistanceKilometers": 2008.6427631976842
+        },
+        {
+          "month": 9,
+          "label": "Sep",
+          "workouts": 78,
+          "totalMinutes": 10677.04110386769,
+          "totalDistanceKilometers": 1884.129810379582
+        }
+      ],
+      "seasonalActivity": [
+        {
+          "season": "spring",
+          "workouts": 275,
+          "totalMinutes": 19701.393723636877,
+          "totalDistanceKilometers": 3543.3439163053717
+        },
+        {
+          "season": "summer",
+          "workouts": 213,
+          "totalMinutes": 15548.046133716904,
+          "totalDistanceKilometers": 3229.6333335325185
+        },
+        {
+          "season": "winter",
+          "workouts": 162,
+          "totalMinutes": 7961.427612362308,
+          "totalDistanceKilometers": 683.8959044159842
+        }
+      ]
+    },
+    "load": {
+      "windows": [
+        {
+          "window": "7d",
+          "workouts": 5,
+          "totalMinutes": 458.4303785940011,
+          "totalDistanceKilometers": 129.580591796875,
+          "totalEnergyKilocalories": 2859.8570406019508,
+          "activityTypes": ["Cycling", "Traditional strength"]
+        },
+        {
+          "window": "90d",
+          "workouts": 54,
+          "totalMinutes": 4445.901938978833,
+          "totalDistanceKilometers": 723.3643820978873,
+          "totalEnergyKilocalories": 27967.004574684488,
+          "activityTypes": ["Climbing", "Cycling", "HIIT", "Hiking", "Running", "Traditional strength", "Walking"]
+        },
+        {
+          "window": "all",
+          "workouts": 837,
+          "totalMinutes": 59149.9400144895,
+          "totalDistanceKilometers": 9884.027440332839,
+          "totalEnergyKilocalories": 421148.3861578729,
+          "activityTypes": ["Climbing", "Cycling", "Functional strength", "HIIT", "Hiking", "Other", "Running", "Traditional strength", "Walking", "Yoga"]
+        }
+      ],
+      "currentVsNinetyDayMinutesRatio": 1.3257388373687249,
+      "currentVsAllTimeMinutesRatio": 0.0077503101183484385
+    },
+    "performance": {
+      "bestDistanceEfforts": [
+        {
+          "modality": "cycling",
+          "distanceBucketKilometers": 80,
+          "workoutDate": "2024-05-30T08:07:47Z",
+          "workoutDistanceKilometers": 113.03,
+          "averageSpeedKilometersPerHour": 20.913193195251065,
+          "paceSecondsPerKilometer": 172.14013978589756
+        },
+        {
+          "modality": "running",
+          "distanceBucketKilometers": 20,
+          "workoutDate": "2024-10-13T10:39:54Z",
+          "workoutDistanceKilometers": 21.072560563954664,
+          "averageSpeedKilometersPerHour": 10.76175754246878,
+          "paceSecondsPerKilometer": 334.51785043413537
+        }
+      ],
+      "longestWorkoutsByModality": [
+        {
+          "modality": "cycling",
+          "workoutDate": "2024-06-15T02:19:40Z",
+          "durationMinutes": 1190.0333333333333,
+          "distanceKilometers": 288.003
+        },
+        {
+          "modality": "walking",
+          "workoutDate": "2026-05-01T07:07:31Z",
+          "durationMinutes": 520.0734360059103,
+          "distanceKilometers": 24.403130148047598
+        },
+        {
+          "modality": "running",
+          "workoutDate": "2024-10-13T10:39:54Z",
+          "durationMinutes": 117.48579438328743,
+          "distanceKilometers": 21.072560563954664
+        }
+      ]
+    },
+    "strengthContinuity": {
+      "strengthWorkouts7Days": 2,
+      "strengthMinutes7Days": 98.9000929494699,
+      "strengthWorkouts28Days": 7,
+      "strengthWorkouts90Days": 17,
+      "strengthMinutes90Days": 737.3749602337679,
+      "daysSinceLastStrength": 0,
+      "strengthShareOfMinutes90Days": 0.16585497619030562
+    },
+    "recoveryContext": {
+      "sleepHoursLastNight": 7.067408962315983,
+      "averageSleepHours14Days": 7.490975927447988,
+      "restingHeartRate14DayAverageBPM": 62.900961126929836,
+      "hrv14DayAverageMS": 54.45154465587696,
+      "vo2MaxLatest": 41.92
+    },
+    "bodyTrend": {
+      "bodyMassLatestKilograms": 70,
+      "bodyMassLatestSampleDate": "2026-04-27T06:26:00Z",
+      "bodyMass28DayAverageKilograms": 70,
+      "bodyFatLatestPercentage": 17.1,
+      "bodyFatLatestSampleDate": "2025-06-28T14:35:15Z",
+      "bodyMassHistory": {
+        "sampleCount": 17,
+        "firstSampleDate": "2025-06-03T21:59:59Z",
+        "latestSampleDate": "2026-04-27T06:26:00Z",
+        "firstValue": 71.5,
+        "latestValue": 70,
+        "change": -1.5,
+        "daysCovered": 327,
+        "average28Days": 70,
+        "average90Days": 70,
+        "average180Days": 69.8333333333333,
+        "change180Days": 5.684341886080802e-14,
+        "weeklyChangeRate": -0.03211009174311927,
+        "trend": "falling",
+        "confidence": "high"
+      },
+      "bodyFatHistory": {
+        "sampleCount": 12,
+        "firstSampleDate": "2025-06-04T06:44:38Z",
+        "latestSampleDate": "2025-06-28T14:35:15Z",
+        "firstValue": 16.7,
+        "latestValue": 17.1,
+        "change": 0.40000000000000213,
+        "daysCovered": 24,
+        "weeklyChangeRate": 0.11666666666666729,
+        "trend": "insufficient",
+        "confidence": "insufficient"
+      }
+    },
+    "activityFloor": {
+      "averageSteps7Days": 5450.795387168074,
+      "averageSteps28Days": 8277.565634018698,
+      "activeEnergy7DaysKilocalories": 3901.897999999921,
+      "exerciseMinutes7Days": 636,
+      "walkingRunningDistance28DaysKilometers": 176.13847908502578
+    },
+    "insightCandidates": [
+      {
+        "key": "training_identity",
+        "category": "identity",
+        "title": "Hybrid athlete",
+        "summary": "Your history is led by cycling, strength, running.",
+        "confidence": "high",
+        "evidence": {
+          "dominantModalities": "cycling, strength, running"
+        }
+      },
+      {
+        "key": "best_consistency_streak",
+        "category": "consistency",
+        "title": "Best consistency block",
+        "summary": "Your longest active training streak is 44 weeks.",
+        "confidence": "high",
+        "evidence": {
+          "longestActiveWeekStreak": "44"
+        }
+      },
+      {
+        "key": "body_mass_trend",
+        "category": "body",
+        "title": "Body mass trend",
+        "summary": "Body mass is down 1.5 kg across 327 tracked days.",
+        "confidence": "high",
+        "evidence": {
+          "change": "-1.50",
+          "daysCovered": "327",
+          "sampleCount": "17",
+          "trend": "falling"
+        }
+      }
+    ]
+  },
+  "activity": {
+    "averageSteps7Days": 5450.795387168074,
+    "averageSteps28Days": 8277.565634018698,
+    "activeEnergy7DaysKilocalories": 3901.897999999921,
+    "exerciseMinutes7Days": 636,
+    "cyclingDistance7DaysKilometers": 129.580591796875,
+    "runningDistance7DaysKilometers": null,
+    "walkingRunningDistance7DaysKilometers": 27.508572588380254,
+    "walkingRunningDistance28DaysKilometers": 176.13847908502578,
+    "cyclingDistance90DaysKilometers": 622.7912516127706
+  },
+  "recovery": {
+    "sleepHoursLastNight": 7.067408962315983,
+    "averageSleepHours14Days": 7.490975927447988,
+    "restingHeartRate14DayAverageBPM": 62.900961126929836,
+    "hrv14DayAverageMS": 54.45154465587696,
+    "respiratoryRate14DayAverageBreathsPerMinute": 15.373435326842802,
+    "vo2MaxLatest": 41.92,
+    "oxygenSaturationLatestPercent": 99
+  },
+  "body": {
+    "heightCentimeters": 173,
+    "heightLatestSampleDate": "2025-01-06T21:44:25Z",
+    "bodyMassKilograms": 70,
+    "bodyMassLatestSampleDate": "2026-04-27T06:26:00Z",
+    "bodyMass28DayAverageKilograms": 70,
+    "bodyFatPercentage": 17.1,
+    "bodyFatLatestSampleDate": "2025-06-28T14:35:15Z",
+    "leanBodyMassKilograms": 59.6,
+    "bodyMassHistory": {
+      "sampleCount": 17,
+      "firstSampleDate": "2025-06-03T21:59:59Z",
+      "latestSampleDate": "2026-04-27T06:26:00Z",
+      "firstValue": 71.5,
+      "latestValue": 70,
+      "change": -1.5,
+      "daysCovered": 327,
+      "average28Days": 70,
+      "average90Days": 70,
+      "average180Days": 69.8333333333333,
+      "change180Days": 5.684341886080802e-14,
+      "weeklyChangeRate": -0.03211009174311927,
+      "trend": "falling",
+      "confidence": "high"
+    },
+    "bodyFatHistory": {
+      "sampleCount": 12,
+      "firstSampleDate": "2025-06-04T06:44:38Z",
+      "latestSampleDate": "2025-06-28T14:35:15Z",
+      "firstValue": 16.7,
+      "latestValue": 17.1,
+      "change": 0.40000000000000213,
+      "daysCovered": 24,
+      "weeklyChangeRate": 0.11666666666666729,
+      "trend": "insufficient",
+      "confidence": "insufficient"
+    }
+  },
+  "nutrition": {
+    "lastLoggedAt": "2026-01-14T21:09:55Z",
+    "daysWithEnergyLogged28Days": 0,
+    "averageWater28DaysLiters": 1.6875
+  },
+  "notes": [
+    "Mock fixture copied from Daniel's derived HealthKit feature snapshot for simulator onboarding QA.",
+    "HealthKit remains the source of truth in production. HAYF computed deterministic features locally before any AI call."
+  ]
+}

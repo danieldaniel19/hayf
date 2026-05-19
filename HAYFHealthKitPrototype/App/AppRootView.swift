@@ -8,6 +8,7 @@ struct AppRootView: View {
     @State private var createdProfilePendingFinish: StoredAccountProfile?
     @State private var updatedProfilePendingFinish: StoredAccountProfile?
     @State private var isRestartingAccountCreation = false
+    @State private var shouldSkipOnboardingThisSession = false
     @State private var shouldPresentActiveBlockOnPlanLanding = false
 
     var body: some View {
@@ -34,10 +35,14 @@ struct AppRootView: View {
                     } else if shouldShowOnboarding(for: accountProfile) {
                         OnboardingFlowView(
                             physiologyReference: accountProfile.physiologyReference.flatMap(PhysiologyReference.init(rawValue:)) ?? .male,
-                            onboardingProfileStore: onboardingProfileStore
-                        ) {
-                            shouldPresentActiveBlockOnPlanLanding = true
-                        }
+                            onboardingProfileStore: onboardingProfileStore,
+                            onExit: {
+                                shouldSkipOnboardingThisSession = true
+                            },
+                            onComplete: {
+                                shouldPresentActiveBlockOnPlanLanding = true
+                            }
+                        )
                     } else {
                         AuthenticatedHomeView(
                             userEmail: authViewModel.userEmail,
@@ -52,6 +57,7 @@ struct AppRootView: View {
                             },
                             restartOnboarding: {
                                 Task {
+                                    shouldSkipOnboardingThisSession = false
                                     try? await onboardingProfileStore.clearCurrentUserOnboardingProfile()
                                 }
                             },
@@ -100,13 +106,14 @@ struct AppRootView: View {
                 createdProfilePendingFinish = nil
                 updatedProfilePendingFinish = nil
                 isRestartingAccountCreation = false
+                shouldSkipOnboardingThisSession = false
                 shouldPresentActiveBlockOnPlanLanding = false
             }
         }
     }
 
     private func shouldShowOnboarding(for profile: StoredAccountProfile) -> Bool {
-        onboardingProfileStore.profile?.id != profile.id
+        !shouldSkipOnboardingThisSession && onboardingProfileStore.profile?.id != profile.id
     }
 
     private func signOut() {
@@ -115,6 +122,7 @@ struct AppRootView: View {
         createdProfilePendingFinish = nil
         updatedProfilePendingFinish = nil
         isRestartingAccountCreation = false
+        shouldSkipOnboardingThisSession = false
         shouldPresentActiveBlockOnPlanLanding = false
         authViewModel.signOut()
     }
