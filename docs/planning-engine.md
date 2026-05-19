@@ -2,6 +2,8 @@
 
 Implemented: 2026-05-08
 
+Note: this document describes the first implemented planning engine. The target post-blueprint replacement model is defined in `docs/post-blueprint-planning-architecture.md`.
+
 ## Purpose
 
 The planning engine turns completed onboarding into the app's durable fitness planning source of truth:

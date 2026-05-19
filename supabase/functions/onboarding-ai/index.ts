@@ -4,7 +4,8 @@ type OnboardingTask =
   | "generate_summary"
   | "generate_goal_candidates"
   | "generate_blended_candidate"
-  | "generate_athlete_blueprint";
+  | "generate_athlete_blueprint"
+  | "generate_fitness_strategy";
 
 type OnboardingAIRequest = {
   task: OnboardingTask;
@@ -77,6 +78,63 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
         properties: {
           headline: { type: "string" },
           summary: { type: "string" },
+        },
+      },
+    },
+  },
+  generate_fitness_strategy: {
+    type: "object",
+    additionalProperties: false,
+    required: ["strategyRead", "strategyPillars", "phaseOutline", "operatingRhythm", "strategyTargets"],
+    properties: {
+      strategyRead: { type: "string" },
+      strategyPillars: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "title", "summary"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string" },
+          },
+        },
+      },
+      phaseOutline: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "name", "objective", "targetSummary"],
+          properties: {
+            id: { type: "string" },
+            name: { type: "string" },
+            objective: { type: "string" },
+            targetSummary: { type: "string" },
+          },
+        },
+      },
+      operatingRhythm: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        required: ["summary", "anchors"],
+        properties: {
+          summary: { type: "string" },
+          anchors: { type: "array", items: { type: "string" } },
+        },
+      },
+      strategyTargets: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "title", "summary"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string" },
+          },
         },
       },
     },
@@ -158,7 +216,7 @@ async function runOpenAI(requestBody: OnboardingAIRequest, model: string) {
         {
           role: "system",
           content:
-            "You are HAYF's onboarding coach. Be concise, perceptive, and practical. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples. When writing an Athlete Blueprint, sound like an elite coach who has studied the athlete closely, but stay fully inside the approved evidence.",
+            "You are HAYF's onboarding coach. Be concise, perceptive, and practical. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples. When writing an Athlete Blueprint, sound like an elite coach who has studied the athlete closely, but stay fully inside the approved evidence. When writing a Fitness Strategy, sound like a coach explaining the plan of attack after assessing the athlete.",
         },
         {
           role: "user",
@@ -227,6 +285,17 @@ function taskRules(task: OnboardingTask) {
         "Do not turn goalFit into a mini-plan: no prescriptions, no weekly session counts, no exercise programming.",
         "Rephrase goals in natural English; never echo a first-person brief such as 'I want to...' verbatim after 'your goal of'.",
       ].join(" ");
+    case "generate_fitness_strategy":
+      return [
+        "Return authored copy for the Fitness Strategy reveal only.",
+        "Use sectionSeeds as the exact structural contract and preserve every id exactly.",
+        "strategyRead should explain the coaching approach, not repeat the user's goal summary. Use 2 to 4 short sentences.",
+        "strategyPillars should explain the few steering rules HAYF will prioritize. Keep every seeded id and write concrete user-facing copy.",
+        "For consistency goals, phaseOutline must stay empty and operatingRhythm must be present.",
+        "For non-consistency goals, phaseOutline should preserve the seeded ids and operatingRhythm should be null.",
+        "strategyTargets should explain what HAYF will watch to know whether the strategy is working. They are not workout prescriptions.",
+        "Do not create new athlete facts beyond the supplied blueprint summary and onboarding signals.",
+      ].join(" ");
   }
 }
 
@@ -262,6 +331,17 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "feasibleTrainingOptions",
       "onboardingSignals",
       "evidenceSummary",
+      "sectionSeeds",
+      "doNotClaim",
+    ]);
+  }
+
+  if (task === "generate_fitness_strategy") {
+    return pick(context, [
+      "intent",
+      "normalizedGoal",
+      "blueprint",
+      "onboardingSignals",
       "sectionSeeds",
       "doNotClaim",
     ]);

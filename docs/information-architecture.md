@@ -1,18 +1,19 @@
 # HAYF Information Architecture
 
-Last updated: 2026-05-11
+Last updated: 2026-05-18
 
 This document is the working source of truth for where fitness planning, goals, profile context, and account controls live in the app. Its main job is to prevent naming drift and duplicated surfaces as the product grows.
 
+The current implementation still uses the first planning-engine model. The target post-blueprint model is defined in `docs/post-blueprint-planning-architecture.md`; use that document when designing the next refactor slice.
+
 ## Canonical Terms
 
-- **Active block** is the canonical name for the user's current durable training container. It maps to `active_fitness_blocks`.
-- **Current goal** can be used as friendly Profile copy when referring to the user's active block goal, but it should not imply a separate data object.
-- **Training targets** are HAYF-derived short-term targets or sub-goals, such as cycling kilometers per week, running kilometers per week, upper-body minutes, or consistency targets. They map to `fitness_goal_targets`.
-- **This week's focus** is the week-level objective from `weekly_rhythms`. It belongs in Plan, not Profile.
+- **Athlete Blueprint** is the user-facing evolving report of the athlete. The first post-onboarding blueprint is revision 1, not a static forever snapshot.
+- **Current goal** is the single active user goal. Restarting onboarding supersedes the prior active goal and creates a new one.
+- **Fitness strategy** is the current overall approach for achieving the active goal. A goal may have several historical strategies, but only one active strategy at a time.
+- **Training targets** are HAYF-derived targets at the goal, strategy, phase, week, or session level.
+- **This week's focus** is the week-level objective from the current `weekly_plan`. It belongs in Plan, not Profile.
 - **What HAYF knows** is the user-facing summary of durable fitness evidence, powered by `fitness_history_insights`, `fitness_metric_observations`, and related evaluations.
-
-Avoid using **active goal** as a product term when it means the active block. If the UI needs a softer label, use copy like "Current goal" while keeping the underlying concept clear.
 
 ## Screen Responsibilities
 
@@ -20,18 +21,20 @@ Avoid using **active goal** as a product term when it means the active block. If
 
 Plan is the execution home.
 
-It should answer: What am I doing now, what is HAYF optimizing for this block, and what is scheduled across the visible planning window?
+It should answer: What am I doing now, what is HAYF optimizing for through the active strategy, and what is scheduled across the visible planning window?
 
 Plan owns:
 
-- active block status, phase, and progress
-- training targets for the active block
+- active strategy status, phase, and progress
+- training targets for the visible strategy/week/session context
 - this week's focus / objective
 - current week plus next week workout schedule
 - direct workout planning actions, such as moving, deleting, replacing, or adding planned workouts
 - repair proposals and plan refresh states
 
-The Plan screen may scroll. The first glance should prioritize the active block, training targets, and current week context. The two-week schedule should always render all seven days of each week, even when a day has no workout, so users can choose explicit move targets for planned workouts.
+The post-onboarding Fitness Strategy reveal is not the Plan screen. Strategy explains the approach; Plan owns execution.
+
+The Plan screen may scroll. The first glance should prioritize the active strategy, training targets, and current week context. The visible horizon remains two weeks: the current week is committed, the next week is draft. Both weeks should render all seven days, even when a day has no workout, so users can choose explicit move targets for planned workouts and enter known future constraints.
 
 Today and future day rows may also add workouts. Open days should expose an add-workout entry point directly in the row, and occupied days should expose the same day-level add entry below that day's workout cards. Add and replace should share one coach sheet: HAYF can suggest plan-aware options, or the user can describe a workout in natural language and preview the interpreted workout before confirming. Any selected workout change opens a review step with Accept, Cancel, and a disabled Follow up with coach action before the plan is mutated.
 
@@ -50,7 +53,7 @@ Primary implementation references:
 
 Profile is the user identity and durable fitness context home.
 
-It should answer: Who am I in HAYF, what goal/context is HAYF carrying for me, and what does HAYF know about my fitness history?
+It should answer: Who am I in HAYF, what goal/context is HAYF carrying for me, and what does HAYF know about my evolving athlete profile?
 
 Profile owns:
 
@@ -58,10 +61,11 @@ Profile owns:
 - location, when available or user-provided
 - one quiet settings entry point
 - first-level sign out
-- a fitness profile card for "What HAYF knows"
+- a fitness profile card for "What HAYF knows" / current Athlete Blueprint
 - a calm place to revisit the durable goal/current focus after onboarding
+- likely later access to the current Fitness Strategy, though the final entry point is not decided yet
 
-Profile should not become a week-planning dashboard. It can reference the current goal because users need a post-onboarding home for goals like "drop 2 kg" or "body fat 15% to 12%", but weekly execution and training targets still belong in Plan.
+Profile should not become a week-planning dashboard. It can reference the current goal and current Athlete Blueprint because users need a post-onboarding home for durable athlete context, but weekly execution and short-horizon targets still belong in Plan.
 
 Profile should not include:
 
@@ -105,20 +109,23 @@ Feedback should be requested after completed workouts through workout detail / d
 
 ## Goal And Target Model
 
-Onboarding can create a concrete goal such as losing 2 kg, reducing body fat from 15% to 12%, building consistency, preparing for an event, or discovering a better fitness direction. After onboarding, that intent becomes the active block.
+Onboarding can create a concrete goal such as losing 2 kg, reducing body fat from 15% to 12%, building consistency, preparing for an event, or discovering a better fitness direction.
 
-The post-onboarding model is:
+The target post-blueprint model is:
 
-1. **Active block** carries the durable goal, review cadence, timeline, and broad training direction.
-2. **Weekly rhythm** translates that durable goal into the current week's focus and constraints.
-3. **Training targets** translate the goal into measurable short-term signals HAYF watches.
-4. **Planned workouts** turn the target/rhythm into specific scheduled sessions.
-5. **Actual workouts and feedback** update HAYF's evidence, evaluations, and future plan choices.
+1. **Athlete Blueprint** keeps the evolving athlete read that guides all downstream planning.
+2. **User goal** carries the one active goal HAYF is serving.
+3. **Fitness strategy** carries the current overall approach for that goal and may change while the goal remains active.
+4. **Strategy phases** exist for time-bound concrete goals and are absent for consistency goals.
+5. **Weekly plans** translate the active strategy into one week of execution, with the current week committed and the next week draft.
+6. **Workouts** turn the weekly plan into concrete sessions.
+7. **Targets** attach wherever meaningful: goal, strategy, phase, week, or session.
+8. **Actual workouts and feedback** evaluate upward into the week, strategy, and goal.
 
 This means goals appear in two places for different reasons:
 
-- Profile lets the user revisit the durable goal and understand what HAYF believes about them.
-- Plan shows how that goal is being operationalized right now.
+- Profile lets the user revisit the durable goal and current athlete read.
+- Plan shows how the active strategy is being operationalized right now.
 
 Do not create parallel goal surfaces that let users edit the same concept in unrelated places. A goal review or adjustment can start from Profile or Plan, but the actual change should resolve through a single review flow, later likely with coach assistance.
 
@@ -126,18 +133,21 @@ Do not create parallel goal surfaces that let users edit the same concept in unr
 
 The current planning/profile evidence layer is source-agnostic.
 
-Core tables:
+Target core tables:
 
-- `active_fitness_blocks`: one active block per user
-- `fitness_block_phases`: optional block phases
-- `weekly_rhythms`: week-level objective and operating rhythm
+- `athlete_profiles`: one durable athlete container per user
+- `athlete_blueprint_revisions`: immutable evolving athlete-report revisions
+- `user_goals`: one active user goal per user
+- `fitness_strategies`: one active strategy for the active goal, with historical strategies preserved
+- `fitness_strategy_phases`: required for time-bound strategies and absent for consistency strategies
+- `weekly_plans`: week-level implementation with `draft` and `committed` states
 - `planned_workouts`: concrete scheduled workouts
 - `health_feature_snapshots`: compact HealthKit-derived snapshots
 - `actual_workouts`: imported HealthKit workout summaries
 - `fitness_history_insights`: coach-readable "What HAYF knows" insights
 - `fitness_metric_observations`: labelled metric evidence
-- `fitness_goal_targets`: primary goal target plus supporting training targets
-- `fitness_goal_evaluations`: append-only target evaluations
+- `planning_targets`: scoped targets for goal, strategy, phase, week, and session
+- `planning_target_evaluations`: append-only target evaluations
 - `workout_debrief_requests`: prompts for post-workout feedback
 - `workout_feedback`: user feedback after workouts
 - `plan_events`: audit trail for user and engine planning changes
@@ -148,7 +158,7 @@ HealthKit remains the source of truth for Apple health data. HAYF stores compact
 
 ## Current Product State
 
-Implemented or partially implemented:
+Implemented or partially implemented in the current engine:
 
 - Plan reads active block, phases, weekly rhythms, planned workouts, and training targets.
 - Plan renders the visible two-week window.
@@ -168,12 +178,14 @@ Known future work:
 - post-workout feedback UI
 - richer Fitness Profile detail views
 - user-facing explanations for training targets and target evaluations
+- migrate from the current active-block hierarchy to the target post-blueprint architecture
 
 ## Design Guardrails
 
-- Keep Plan action-oriented and week/block focused.
+- Keep Plan action-oriented and strategy/week focused.
 - Keep Profile holistic, calm, and durable.
-- Do not duplicate the active block as a separate "active goal" object.
+- Keep exactly one active user goal.
+- Allow strategy changes without replacing the goal.
 - Do not put weekly focus in Profile.
 - Do not put health data management or global workout feedback in Profile.
 - Keep the top-right screen action reserved for coach chat.

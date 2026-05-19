@@ -112,8 +112,12 @@ Do not add generic "Something else" options when the screen already has an optio
 8. HealthKit permission:
    - ask after the user has seen that HAYF understands them
    - explain that workout history, activity, sleep, recovery, body context, and available nutrition logs improve recommendations
-9. First useful output:
-   - next recommendation, starter week, or chosen goal plan
+9. Athlete Blueprint:
+   - first evidence-backed read of the athlete
+10. Fitness Strategy:
+   - the strategy HAYF will use for the active goal, with phases or operating rhythm plus the targets that will keep the user on track
+11. First useful output:
+   - the first visible Plan window with the current week committed and the next week draft
 
 HealthKit permission should come after the value preview. Permission asks are easier to justify once the user understands why HAYF needs the data.
 
@@ -194,7 +198,9 @@ Current implementation:
 7. Bad-day floor: single-select the minimum session or intentional rest pattern that still counts.
 8. Summary: read back the interpreted profile with AI-shaped content and allow adjustment.
 9. Apple Health: request the broad personal-first read-only HealthKit scope after the value preview.
-10. Setup preview: show a rolling 4-week rhythm frame, the first weekly rhythm, what HAYF will watch, and a coach note from the onboarding AI provider.
+10. Athlete Blueprint: show HAYF's first evidence-backed read of the athlete.
+11. Fitness Strategy: show the strategy, operating rhythm, and targets HAYF will use to coach the consistency goal.
+12. Plan: open the first visible two-week window.
 
 The current implementation calls a Supabase Edge Function through a remote `OnboardingAIProvider`. If the function, model call, or schema decoding fails, the app falls back to local deterministic fixtures so onboarding can still complete. Rules remain as hidden fallback behavior only.
 
@@ -480,12 +486,15 @@ The backend should return structured content only:
 - exactly three goal candidates for the goal-discovery branch
 - blended candidate preview
 
-The final onboarding screen may derive a local setup preview around that output:
+The final post-onboarding sequence should separate concepts cleanly:
 
-- consistency path: rolling rhythm, 4-week review window, first weekly rhythm, and watch signals
-- goal paths: starter program, high-level phases, first weekly rhythm, and watch signals
+- Athlete Blueprint: who HAYF believes it is coaching
+- Fitness Strategy: how HAYF will coach this athlete toward the active goal
+- Plan: the first two visible weeks, with the current week committed and the next week draft
 
-This preview should not require the model to generate a full long-term calendar. HAYF should show the arc, then keep the first week concrete.
+The Fitness Strategy should not repeat the whole goal summary. It should show the strategy read, strategy pillars, phases for time-bound goals or operating rhythm for consistency goals, and the targets HAYF will watch. See `docs/fitness-strategy-spec.md`.
+
+This sequence should not require the model to generate a full long-term calendar. HAYF should show the arc, then keep the first visible planning window concrete.
 
 The model should not invent screens, controls, navigation, permissions, or arbitrary UI copy. If the backend fails or returns malformed content, the app should silently use deterministic fallback content and let the user continue.
 

@@ -126,8 +126,7 @@ Remote evidence should be compact and labelled:
 
 - `fitness_metric_observations`: numeric or categorical facts with metric keys, units, source labels, windows, and confidence
 - `fitness_history_insights`: coach-readable patterns such as training identity, seasonality, consistency, active streaks, body metric availability, and body-trend history
-- `fitness_goal_targets`: the primary active-block goal plus supporting sub-goals
-- `fitness_goal_evaluations`: append-only goal status checks such as on track, lagging, achieved, or needs review
+- target architecture: `planning_targets` and `planning_target_evaluations` should replace the current active-block-specific goal-target tables as the post-blueprint refactor lands
 - `workout_debrief_requests` and `workout_feedback`: the feedback loop after completed workouts
 
 This keeps the AI layer grounded without requiring it to inspect raw samples. It also avoids rebuilding the engine every time a new goal appears, because new features can query labelled evidence by domain, modality, time window, and source.

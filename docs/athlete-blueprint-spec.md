@@ -1,12 +1,20 @@
 # HAYF Athlete Blueprint Spec
 
-Status: working source of truth for the first post-onboarding Athlete Blueprint.
+Status: working source of truth for the Athlete Blueprint report structure. The first post-onboarding blueprint is revision 1 of an evolving athlete report, not a one-time static snapshot.
 
 ## Purpose
 
-The Athlete Blueprint is the first user-visible payoff after onboarding. It should make the user feel accurately assessed by a serious coach before HAYF shows the strategy built for them.
+The Athlete Blueprint is the first user-visible payoff after onboarding and the durable report structure HAYF should continue to use as the athlete changes. It should make the user feel accurately assessed by a serious coach before HAYF shows the strategy built for them.
 
 The blueprint is not the plan. It is the evidence-backed read of the athlete that future plans should be built from.
+
+## Lifecycle
+
+- The first post-onboarding blueprint is the athlete's first accepted revision.
+- Later revisions should reuse the same visible structure as new evidence changes HAYF's read of the athlete over time.
+- A current revision may change as body composition, consistency, training state, or other approved evidence changes.
+- Prior revisions should remain inspectable so HAYF can explain how its understanding evolved.
+- Planning artifacts should reference the blueprint revision that informed them.
 
 ## Product Boundary
 

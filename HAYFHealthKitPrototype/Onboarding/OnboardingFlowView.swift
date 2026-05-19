@@ -18,6 +18,7 @@ struct OnboardingFlowView: View {
     @State private var blendedCandidate: GoalCandidate?
     @State private var healthRequestState: HealthRequestState = .idle
     @State private var athleteBlueprint: AthleteBlueprintOutput?
+    @State private var fitnessStrategy: FitnessStrategyOutput?
     @State private var pendingHealthSnapshot: HealthFeatureSnapshot?
     @State private var selectedBlueprintDetail: AthleteBlueprintDetail?
     @State private var completionErrorMessage: String?
@@ -73,6 +74,8 @@ struct OnboardingFlowView: View {
                 await refreshHealthState()
             case .generatingBlueprint:
                 await generateAthleteBlueprint()
+            case .generatingStrategy:
+                await generateFitnessStrategy()
             case .generatingSummary:
                 await generateSummary()
             case .generatingCandidates:
@@ -189,6 +192,10 @@ struct OnboardingFlowView: View {
             loadingScreen(title: "Reading your athlete profile.", copy: "HAYF is combining what you told us with your training history.")
         case .athleteBlueprint:
             athleteBlueprintScreen
+        case .generatingStrategy:
+            loadingScreen(title: "Building your strategy.", copy: "HAYF is turning your goal and Athlete Blueprint into the approach it will coach from.")
+        case .fitnessStrategy:
+            fitnessStrategyScreen
         }
     }
 
@@ -993,6 +1000,69 @@ struct OnboardingFlowView: View {
         }
     }
 
+    private var fitnessStrategyScreen: some View {
+        let strategy = currentFitnessStrategy
+
+        return VStack(alignment: .leading, spacing: 26) {
+            OnboardingIntro(
+                eyebrow: "FITNESS STRATEGY",
+                title: "Here's how HAYF\nwill coach this.",
+                copy: "Built from your goal and Athlete Blueprint, this is the approach HAYF believes gives you the best chance of getting there."
+            )
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text("STRATEGY READ")
+                    .font(.system(size: 10, weight: .medium))
+                    .kerning(1.2)
+                    .foregroundStyle(HAYFColor.secondary)
+
+                Text(strategy.read)
+                    .font(.system(size: 18, weight: .regular))
+                    .lineSpacing(5)
+                    .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+            }
+
+            SummarySection(title: "What HAYF will prioritize") {
+                VStack(spacing: 10) {
+                    ForEach(strategy.pillars) { pillar in
+                        FitnessStrategyPillarRow(pillar: pillar)
+                    }
+                }
+            }
+
+            if let operatingRhythm = strategy.operatingRhythm {
+                SummarySection(title: "Operating rhythm") {
+                    FitnessStrategyOperatingRhythmCard(rhythm: operatingRhythm)
+                }
+            } else if !strategy.phases.isEmpty {
+                SummarySection(title: "How the strategy unfolds") {
+                    VStack(spacing: 10) {
+                        ForEach(strategy.phases) { phase in
+                            FitnessStrategyPhaseRow(phase: phase)
+                        }
+                    }
+                }
+            }
+
+            SummarySection(title: "Targets that keep you on track") {
+                VStack(spacing: 10) {
+                    ForEach(strategy.targets) { target in
+                        FitnessStrategyTargetRow(target: target)
+                    }
+                }
+            }
+        }
+    }
+
     private var bottomAction: some View {
         VStack(spacing: 14) {
             OnboardingPrimaryButton(
@@ -1020,6 +1090,7 @@ struct OnboardingFlowView: View {
             } else if step == .athleteBlueprint {
                 Button("Edit answers") {
                     athleteBlueprint = nil
+                    fitnessStrategy = nil
                     pendingHealthSnapshot = nil
                     step = summaryEditStep
                 }
@@ -1079,7 +1150,7 @@ struct OnboardingFlowView: View {
 
     private var primaryButtonTitle: String {
         switch step {
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint:
+        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
             return "Working"
         case .summary:
             return "Looks right"
@@ -1093,6 +1164,8 @@ struct OnboardingFlowView: View {
             return "Connect Apple Health"
         case .athleteBlueprint:
             return "Accept blueprint"
+        case .fitnessStrategy:
+            return "Accept strategy"
         case .blendPreview:
             return "Use blended goal"
         case .editCandidate:
@@ -1154,7 +1227,7 @@ struct OnboardingFlowView: View {
             return draft.supportStyle != nil
         case .floor:
             return draft.badDayFloor != nil
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint:
+        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
             return false
         default:
             return true
@@ -1251,8 +1324,10 @@ struct OnboardingFlowView: View {
                 requestHealthAccess()
             }
         case .athleteBlueprint:
+            prepareFitnessStrategy()
+        case .fitnessStrategy:
             completeOnboarding()
-        case .generatingCandidates, .generatingBlend, .generatingBlueprint:
+        case .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
             break
         }
     }
@@ -1325,6 +1400,8 @@ struct OnboardingFlowView: View {
             step = .summary
         case .generatingBlueprint, .athleteBlueprint:
             step = .health
+        case .generatingStrategy, .fitnessStrategy:
+            step = .athleteBlueprint
         }
     }
 
@@ -1374,6 +1451,14 @@ struct OnboardingFlowView: View {
         )
     }
 
+    private var currentFitnessStrategy: FitnessStrategyOutput {
+        fitnessStrategy ?? FitnessStrategyBuilder.build(
+            intent: currentIntent,
+            draft: draft,
+            blueprint: currentAthleteBlueprint
+        )
+    }
+
     private var summaryEditStep: OnboardingStep {
         .options
     }
@@ -1386,6 +1471,8 @@ struct OnboardingFlowView: View {
         editingGoalTimeline = .eightWeeks
         blendCandidateIDs = []
         blendedCandidate = nil
+        athleteBlueprint = nil
+        fitnessStrategy = nil
     }
 
     private func prepareCandidateEdit() {
@@ -1489,6 +1576,26 @@ struct OnboardingFlowView: View {
         step = .athleteBlueprint
     }
 
+    private func prepareFitnessStrategy() {
+        completionErrorMessage = nil
+        step = .generatingStrategy
+    }
+
+    private func generateFitnessStrategy() async {
+        let fallback = FitnessStrategyBuilder.build(
+            intent: currentIntent,
+            draft: draft,
+            blueprint: currentAthleteBlueprint
+        )
+        fitnessStrategy = await aiProvider.generateFitnessStrategy(
+            intent: currentIntent,
+            draft: draft,
+            blueprint: currentAthleteBlueprint,
+            fallback: fallback
+        )
+        step = .fitnessStrategy
+    }
+
     private func completeOnboarding() {
         guard !isCompleting else { return }
 
@@ -1570,10 +1677,12 @@ private enum OnboardingStep: Equatable {
     case health
     case generatingBlueprint
     case athleteBlueprint
+    case generatingStrategy
+    case fitnessStrategy
 
     var isGenerating: Bool {
         switch self {
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint:
+        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
             return true
         default:
             return false
@@ -1583,11 +1692,11 @@ private enum OnboardingStep: Equatable {
     static func totalSegments(for intent: OnboardingIntent) -> Int {
         switch intent {
         case .stayConsistent:
-            return 16
+            return 17
         case .concreteGoal:
-            return 19
+            return 20
         case .findGoal:
-            return 19
+            return 20
         }
     }
 
@@ -1610,7 +1719,8 @@ private enum OnboardingStep: Equatable {
             case .floor, .generatingSummary: return 13
             case .summary: return 14
             case .health, .generatingBlueprint: return 15
-            case .athleteBlueprint: return 16
+            case .athleteBlueprint, .generatingStrategy: return 16
+            case .fitnessStrategy: return 17
             default: return 1
             }
         case .concreteGoal:
@@ -1633,7 +1743,8 @@ private enum OnboardingStep: Equatable {
             case .floor, .generatingSummary: return 16
             case .summary: return 17
             case .health, .generatingBlueprint: return 18
-            case .athleteBlueprint: return 19
+            case .athleteBlueprint, .generatingStrategy: return 19
+            case .fitnessStrategy: return 20
             default: return 1
             }
         case .findGoal:
@@ -1656,7 +1767,8 @@ private enum OnboardingStep: Equatable {
             case .floor, .generatingSummary: return 16
             case .summary: return 17
             case .health, .generatingBlueprint: return 18
-            case .athleteBlueprint: return 19
+            case .athleteBlueprint, .generatingStrategy: return 19
+            case .fitnessStrategy: return 20
             default: return 1
             }
         }
@@ -1903,6 +2015,12 @@ private protocol OnboardingAIProvider {
         snapshot: HealthFeatureSnapshot?,
         fallback: AthleteBlueprintOutput
     ) async -> AthleteBlueprintOutput
+    func generateFitnessStrategy(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        fallback: FitnessStrategyOutput
+    ) async -> FitnessStrategyOutput
 }
 
 private enum OnboardingAITask: String, Codable {
@@ -1910,6 +2028,7 @@ private enum OnboardingAITask: String, Codable {
     case generateGoalCandidates = "generate_goal_candidates"
     case generateBlendedCandidate = "generate_blended_candidate"
     case generateAthleteBlueprint = "generate_athlete_blueprint"
+    case generateFitnessStrategy = "generate_fitness_strategy"
 }
 
 private struct OnboardingAIHealthSnapshot: Codable {
@@ -2060,6 +2179,11 @@ private struct OnboardingAIFunctionRequest: Codable {
 private struct AthleteBlueprintAIFunctionRequest: Codable {
     let task: OnboardingAITask
     let context: AthleteBlueprintAICompactContext
+}
+
+private struct FitnessStrategyAIFunctionRequest: Codable {
+    let task: OnboardingAITask
+    let context: FitnessStrategyAICompactContext
 }
 
 private struct AthleteBlueprintAICompactContext: Codable {
@@ -2315,6 +2439,189 @@ private struct AthleteBlueprintAIGoalFitPayload: Codable {
     let summary: String
 }
 
+private struct FitnessStrategyAICompactContext: Codable {
+    let intent: String
+    let normalizedGoal: AthleteBlueprintAIGoalPayload
+    let blueprint: FitnessStrategyAIBlueprintSummary
+    let onboardingSignals: AthleteBlueprintAIOnboardingSignals
+    let sectionSeeds: FitnessStrategyAISectionSeeds
+    let doNotClaim: [String]
+
+    init(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        fallback: FitnessStrategyOutput
+    ) {
+        let goal = AthleteBlueprintBuilder.normalizedGoal(intent: intent, draft: draft)
+        self.intent = intent.rawValue
+        normalizedGoal = AthleteBlueprintAIGoalPayload(goal: goal)
+        self.blueprint = FitnessStrategyAIBlueprintSummary(blueprint: blueprint)
+        onboardingSignals = AthleteBlueprintAIOnboardingSignals(
+            goalPriority: draft.prioritySummary,
+            frequencyPreference: draft.frequency?.summary ?? "",
+            sessionLengthPreference: draft.sessionLength?.title ?? "",
+            availableDays: draft.availableDays.map(\.title).sorted(),
+            availableDayParts: draft.availableDayParts.map(\.title).sorted(),
+            infrastructureAccess: draft.infrastructureAccess.map(\.title).sorted(),
+            blockers: draft.blockers.map(\.title).sorted(),
+            blockerNote: draft.blockerNote.trimmed,
+            supportStyle: draft.supportSummary,
+            badDayFloor: draft.floorSummary,
+            injuryNotes: draft.injuryNotes.trimmed,
+            bodyBaseline: BodyBaselinePayload(draft: draft)
+        )
+        sectionSeeds = FitnessStrategyAISectionSeeds(strategy: fallback)
+        doNotClaim = [
+            "Do not repeat the user's goal summary back to them as the strategy.",
+            "Do not invent phases for consistency goals.",
+            "Do not create new athlete facts beyond the Athlete Blueprint summary and onboarding signals."
+        ]
+    }
+}
+
+private struct FitnessStrategyAIBlueprintSummary: Codable {
+    let coachRead: String
+    let athleteArchetype: String
+    let currentTrainingState: String
+    let historyFindings: [String]
+    let goalFit: String
+
+    init(blueprint: AthleteBlueprintOutput) {
+        coachRead = blueprint.coachRead.text
+        athleteArchetype = "\(blueprint.archetype.label): \(blueprint.archetype.explanation)"
+        currentTrainingState = "\(blueprint.currentTrainingState.label): \(blueprint.currentTrainingState.summary)"
+        historyFindings = blueprint.historyFindings.map { "\($0.title): \($0.summary)" }
+        goalFit = "\(blueprint.goalFit.headline): \(blueprint.goalFit.summary)"
+    }
+}
+
+private struct FitnessStrategyAISectionSeeds: Codable {
+    let strategyPillars: [FitnessStrategyAIPillarSeed]
+    let phaseOutline: [FitnessStrategyAIPhaseSeed]
+    let operatingRhythm: FitnessStrategyAIOperatingRhythmSeed?
+    let strategyTargets: [FitnessStrategyAITargetSeed]
+
+    init(strategy: FitnessStrategyOutput) {
+        strategyPillars = strategy.pillars.map(FitnessStrategyAIPillarSeed.init(pillar:))
+        phaseOutline = strategy.phases.map(FitnessStrategyAIPhaseSeed.init(phase:))
+        operatingRhythm = strategy.operatingRhythm.map(FitnessStrategyAIOperatingRhythmSeed.init(rhythm:))
+        strategyTargets = strategy.targets.map(FitnessStrategyAITargetSeed.init(target:))
+    }
+}
+
+private struct FitnessStrategyAIPillarSeed: Codable {
+    let id: String
+    let title: String
+
+    init(pillar: FitnessStrategyPillar) {
+        id = pillar.id
+        title = pillar.title
+    }
+}
+
+private struct FitnessStrategyAIPhaseSeed: Codable {
+    let id: String
+    let name: String
+
+    init(phase: FitnessStrategyPhase) {
+        id = phase.id
+        name = phase.name
+    }
+}
+
+private struct FitnessStrategyAIOperatingRhythmSeed: Codable {
+    let summary: String
+
+    init(rhythm: FitnessStrategyOperatingRhythm) {
+        summary = rhythm.summary
+    }
+}
+
+private struct FitnessStrategyAITargetSeed: Codable {
+    let id: String
+    let title: String
+
+    init(target: FitnessStrategyTarget) {
+        id = target.id
+        title = target.title
+    }
+}
+
+private struct FitnessStrategyAIPayload: Codable {
+    let strategyRead: String
+    let strategyPillars: [FitnessStrategyAIPillarPayload]
+    let phaseOutline: [FitnessStrategyAIPhasePayload]
+    let operatingRhythm: FitnessStrategyAIOperatingRhythmPayload?
+    let strategyTargets: [FitnessStrategyAITargetPayload]
+
+    func merged(with fallback: FitnessStrategyOutput) -> FitnessStrategyOutput {
+        let pillarCopy = Dictionary(uniqueKeysWithValues: strategyPillars.map { ($0.id, $0) })
+        let phaseCopy = Dictionary(uniqueKeysWithValues: phaseOutline.map { ($0.id, $0) })
+        let targetCopy = Dictionary(uniqueKeysWithValues: strategyTargets.map { ($0.id, $0) })
+
+        return FitnessStrategyOutput(
+            read: strategyRead.trimmed.isEmpty ? fallback.read : strategyRead.trimmed,
+            pillars: fallback.pillars.map { pillar in
+                guard let aiPillar = pillarCopy[pillar.id] else { return pillar }
+                return FitnessStrategyPillar(
+                    id: pillar.id,
+                    title: aiPillar.title.trimmed.isEmpty ? pillar.title : aiPillar.title.trimmed,
+                    summary: aiPillar.summary.trimmed.isEmpty ? pillar.summary : aiPillar.summary.trimmed
+                )
+            },
+            phases: fallback.phases.map { phase in
+                guard let aiPhase = phaseCopy[phase.id] else { return phase }
+                return FitnessStrategyPhase(
+                    id: phase.id,
+                    name: aiPhase.name.trimmed.isEmpty ? phase.name : aiPhase.name.trimmed,
+                    objective: aiPhase.objective.trimmed.isEmpty ? phase.objective : aiPhase.objective.trimmed,
+                    targetSummary: aiPhase.targetSummary.trimmed.isEmpty ? phase.targetSummary : aiPhase.targetSummary.trimmed
+                )
+            },
+            operatingRhythm: fallback.operatingRhythm.map { fallbackRhythm in
+                guard let operatingRhythm else { return fallbackRhythm }
+                return FitnessStrategyOperatingRhythm(
+                    summary: operatingRhythm.summary.trimmed.isEmpty ? fallbackRhythm.summary : operatingRhythm.summary.trimmed,
+                    anchors: operatingRhythm.anchors.isEmpty ? fallbackRhythm.anchors : operatingRhythm.anchors.map(\.trimmed).filter { !$0.isEmpty }
+                )
+            },
+            targets: fallback.targets.map { target in
+                guard let aiTarget = targetCopy[target.id] else { return target }
+                return FitnessStrategyTarget(
+                    id: target.id,
+                    title: aiTarget.title.trimmed.isEmpty ? target.title : aiTarget.title.trimmed,
+                    summary: aiTarget.summary.trimmed.isEmpty ? target.summary : aiTarget.summary.trimmed
+                )
+            }
+        )
+    }
+}
+
+private struct FitnessStrategyAIPillarPayload: Codable {
+    let id: String
+    let title: String
+    let summary: String
+}
+
+private struct FitnessStrategyAIPhasePayload: Codable {
+    let id: String
+    let name: String
+    let objective: String
+    let targetSummary: String
+}
+
+private struct FitnessStrategyAIOperatingRhythmPayload: Codable {
+    let summary: String
+    let anchors: [String]
+}
+
+private struct FitnessStrategyAITargetPayload: Codable {
+    let id: String
+    let title: String
+    let summary: String
+}
+
 private struct OnboardingAISummaryFunctionResponse: Decodable {
     let output: OnboardingAISummaryPayload
 }
@@ -2329,6 +2636,10 @@ private struct OnboardingAIBlendedCandidateFunctionResponse: Decodable {
 
 private struct OnboardingAIAthleteBlueprintFunctionResponse: Decodable {
     let output: AthleteBlueprintAIPayload
+}
+
+private struct OnboardingAIFitnessStrategyFunctionResponse: Decodable {
+    let output: FitnessStrategyAIPayload
 }
 
 private struct OnboardingAISummaryPayload: Codable {
@@ -2443,6 +2754,30 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
         }
     }
 
+    func generateFitnessStrategy(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        fallback: FitnessStrategyOutput
+    ) async -> FitnessStrategyOutput {
+        do {
+            let request = FitnessStrategyAIFunctionRequest(
+                task: .generateFitnessStrategy,
+                context: FitnessStrategyAICompactContext(
+                    intent: intent,
+                    draft: draft,
+                    blueprint: blueprint,
+                    fallback: fallback
+                )
+            )
+            let response: OnboardingAIFitnessStrategyFunctionResponse = try await invoke(request)
+            return response.output.merged(with: fallback)
+        } catch {
+            logger.error("Fitness Strategy AI generation failed: \(error.localizedDescription, privacy: .public)")
+            return fallback
+        }
+    }
+
     private func invoke<Response: Decodable>(_ request: OnboardingAIFunctionRequest) async throws -> Response {
         try await supabase.functions.invoke(
             "onboarding-ai",
@@ -2451,6 +2786,13 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
     }
 
     private func invoke<Response: Decodable>(_ request: AthleteBlueprintAIFunctionRequest) async throws -> Response {
+        try await supabase.functions.invoke(
+            "onboarding-ai",
+            options: FunctionInvokeOptions(body: request)
+        )
+    }
+
+    private func invoke<Response: Decodable>(_ request: FitnessStrategyAIFunctionRequest) async throws -> Response {
         try await supabase.functions.invoke(
             "onboarding-ai",
             options: FunctionInvokeOptions(body: request)
@@ -2480,6 +2822,16 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         snapshot: HealthFeatureSnapshot?,
         fallback: AthleteBlueprintOutput
     ) async -> AthleteBlueprintOutput {
+        await mockDelay()
+        return fallback
+    }
+
+    func generateFitnessStrategy(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        fallback: FitnessStrategyOutput
+    ) async -> FitnessStrategyOutput {
         await mockDelay()
         return fallback
     }
@@ -3879,6 +4231,224 @@ private struct CoachNote: View {
     }
 }
 
+private struct FitnessStrategyOutput {
+    let read: String
+    let pillars: [FitnessStrategyPillar]
+    let phases: [FitnessStrategyPhase]
+    let operatingRhythm: FitnessStrategyOperatingRhythm?
+    let targets: [FitnessStrategyTarget]
+}
+
+private struct FitnessStrategyPillar: Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+}
+
+private struct FitnessStrategyPhase: Identifiable {
+    let id: String
+    let name: String
+    let objective: String
+    let targetSummary: String
+}
+
+private struct FitnessStrategyOperatingRhythm {
+    let summary: String
+    let anchors: [String]
+}
+
+private struct FitnessStrategyTarget: Identifiable {
+    let id: String
+    let title: String
+    let summary: String
+}
+
+private enum FitnessStrategyBuilder {
+    static func build(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput
+    ) -> FitnessStrategyOutput {
+        let goal = AthleteBlueprintBuilder.normalizedGoal(intent: intent, draft: draft)
+        let usesPhases = goal.category != .consistency
+        let anchor = dominantAnchor(from: blueprint, draft: draft)
+        let frequency = draft.frequency?.summary ?? "a repeatable weekly rhythm"
+        let floor = draft.floorSummary.lowercased()
+
+        let read: String
+        if usesPhases {
+            read = "HAYF will coach this as a \(anchor)-supported build: keep the work repeatable first, then make it more goal-specific as your week proves it can hold. The strategy is to protect continuity while gradually shifting more of the training toward \(goal.displayText)."
+        } else {
+            read = "HAYF will coach consistency as the goal itself: build a rhythm that survives ordinary life before it asks for more. The strategy is to keep \(frequency) repeatable, use \(floor) when the week gets tight, and let durable behavior become the first win."
+        }
+
+        let pillars = usesPhases
+            ? [
+                FitnessStrategyPillar(
+                    id: "protect_anchor",
+                    title: "Protect the anchor",
+                    summary: "Keep \(anchor) visible in the week so the strategy builds from training that already fits you."
+                ),
+                FitnessStrategyPillar(
+                    id: "earn_progression",
+                    title: "Earn progression",
+                    summary: "Add harder or more specific work only after the recurring week is holding."
+                ),
+                FitnessStrategyPillar(
+                    id: "preserve_recovery",
+                    title: "Preserve recovery slack",
+                    summary: "Leave enough room to adapt without turning one missed session into a broken week."
+                )
+            ]
+            : [
+                FitnessStrategyPillar(
+                    id: "protect_exposures",
+                    title: "Protect repeatable exposures",
+                    summary: "The first job is to keep training showing up often enough to become normal."
+                ),
+                FitnessStrategyPillar(
+                    id: "reduce_friction",
+                    title: "Reduce friction first",
+                    summary: "Use the simplest useful session before chasing a more impressive one."
+                ),
+                FitnessStrategyPillar(
+                    id: "use_floor",
+                    title: "Use the floor",
+                    summary: "A smaller intentional session should keep the rhythm alive when a full session is not realistic."
+                )
+            ]
+
+        let phases = usesPhases
+            ? [
+                FitnessStrategyPhase(
+                    id: "base",
+                    name: "Base",
+                    objective: "Make the weekly structure reliable around your real schedule.",
+                    targetSummary: "Hold the core weekly exposures with recovery intact."
+                ),
+                FitnessStrategyPhase(
+                    id: "build",
+                    name: "Build",
+                    objective: "Increase the goal-specific dose without losing the anchor work.",
+                    targetSummary: "Progress the main goal signal while keeping support work alive."
+                ),
+                FitnessStrategyPhase(
+                    id: "review",
+                    name: "Review",
+                    objective: "Sharpen what is working and decide the next strategy move.",
+                    targetSummary: "Confirm whether the goal is on track, achieved, or needs review."
+                )
+            ]
+            : []
+
+        let operatingRhythm = usesPhases ? nil : FitnessStrategyOperatingRhythm(
+            summary: "\(frequency.capitalized), one low-friction fallback, and a 28-day review cadence.",
+            anchors: [
+                "Protect \(frequency)",
+                "Use \(draft.floorSummary) before skipping completely",
+                "Review the rhythm every 28 days"
+            ]
+        )
+
+        let targets = buildTargets(goal: goal, draft: draft, usesPhases: usesPhases)
+
+        return FitnessStrategyOutput(
+            read: read,
+            pillars: pillars,
+            phases: phases,
+            operatingRhythm: operatingRhythm,
+            targets: targets
+        )
+    }
+
+    private static func dominantAnchor(from blueprint: AthleteBlueprintOutput, draft: ConsistencyOnboardingDraft) -> String {
+        let lowercasedLabel = blueprint.archetype.label.lowercased()
+        if lowercasedLabel.contains("strength") {
+            return "strength"
+        }
+        if lowercasedLabel.contains("endurance") {
+            return "endurance"
+        }
+        if lowercasedLabel.contains("hybrid") {
+            return "hybrid training"
+        }
+        if let first = draft.trainingOptions.first {
+            return first.title.lowercased()
+        }
+        return "repeatable training"
+    }
+
+    private static func buildTargets(
+        goal: AthleteBlueprintGoal,
+        draft: ConsistencyOnboardingDraft,
+        usesPhases: Bool
+    ) -> [FitnessStrategyTarget] {
+        let frequency = draft.frequency?.summary ?? "your planned weekly exposures"
+        var targets = [
+            FitnessStrategyTarget(
+                id: "weekly_exposures",
+                title: usesPhases ? "Weekly exposures" : "Weekly consistency",
+                summary: "Keep \(frequency) showing up before the strategy asks for more."
+            ),
+            FitnessStrategyTarget(
+                id: "bad_day_floor",
+                title: "Bad-day floor",
+                summary: "Use \(draft.floorSummary.lowercased()) to protect the week when a full session is not realistic."
+            )
+        ]
+
+        switch goal.category {
+        case .endurance:
+            targets.insert(
+                FitnessStrategyTarget(
+                    id: "endurance_exposure",
+                    title: "Endurance exposure",
+                    summary: "Keep enough recurring aerobic work in the week for \(goal.displayText) to become trainable."
+                ),
+                at: 1
+            )
+        case .strength:
+            targets.insert(
+                FitnessStrategyTarget(
+                    id: "strength_exposure",
+                    title: "Strength exposure",
+                    summary: "Protect the strength sessions that directly support \(goal.displayText)."
+                ),
+                at: 1
+            )
+        case .bodyComposition:
+            targets.insert(
+                FitnessStrategyTarget(
+                    id: "body_composition_signal",
+                    title: "Body trend",
+                    summary: "Use repeated body-composition evidence, not one-off readings, to judge whether the strategy is moving the right way."
+                ),
+                at: 1
+            )
+        case .consistency:
+            targets.insert(
+                FitnessStrategyTarget(
+                    id: "streak_recovery",
+                    title: "Streak recovery",
+                    summary: "When a week slips, return quickly instead of letting one miss become a longer gap."
+                ),
+                at: 1
+            )
+        case .sportPerformance, .generalFitness, .custom:
+            targets.insert(
+                FitnessStrategyTarget(
+                    id: "goal_specific_signal",
+                    title: "Goal-specific signal",
+                    summary: "Watch the most relevant training marker once the first weeks establish a stable base."
+                ),
+                at: 1
+            )
+        }
+
+        return Array(targets.prefix(4))
+    }
+}
+
 private struct AthleteBlueprintOutput {
     let coachRead: AthleteBlueprintCoachRead
     let archetype: AthleteBlueprintArchetype
@@ -4831,6 +5401,147 @@ private struct AthleteBlueprintSummaryRow: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct FitnessStrategyPillarRow: View {
+    let pillar: FitnessStrategyPillar
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(HAYFColor.orange.opacity(0.18))
+                .frame(width: 28, height: 28)
+                .overlay {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(HAYFColor.orange)
+                }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(pillar.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text(pillar.summary)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct FitnessStrategyPhaseRow: View {
+    let phase: FitnessStrategyPhase
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(phase.name.uppercased())
+                .font(.system(size: 10, weight: .medium))
+                .kerning(1.2)
+                .foregroundStyle(HAYFColor.secondary)
+
+            Text(phase.objective)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(phase.targetSummary)
+                .font(.system(size: 14, weight: .regular))
+                .lineSpacing(3)
+                .foregroundStyle(HAYFColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct FitnessStrategyOperatingRhythmCard: View {
+    let rhythm: FitnessStrategyOperatingRhythm
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(rhythm.summary)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(rhythm.anchors, id: \.self) { anchor in
+                    HStack(alignment: .top, spacing: 10) {
+                        Circle()
+                            .fill(HAYFColor.orange)
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 7)
+
+                        Text(anchor)
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct FitnessStrategyTargetRow: View {
+    let target: FitnessStrategyTarget
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "scope")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(target.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text(target.summary)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
     }
 }
 
