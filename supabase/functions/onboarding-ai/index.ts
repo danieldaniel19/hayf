@@ -215,8 +215,7 @@ async function runOpenAI(requestBody: OnboardingAIRequest, model: string) {
       input: [
         {
           role: "system",
-          content:
-            "You are HAYF's onboarding coach. Be concise, perceptive, and practical. Do not provide medical advice. Use only the compact context provided; never ask for raw HealthKit samples. When writing an Athlete Blueprint, sound like an elite coach who has studied the athlete closely, but stay fully inside the approved evidence. When writing a Fitness Strategy, sound like a coach explaining the plan of attack after assessing the athlete.",
+          content: [sharedSystemPrompt(), taskSystemPrompt(requestBody.task)].join(" "),
         },
         {
           role: "user",
@@ -250,7 +249,43 @@ async function runOpenAI(requestBody: OnboardingAIRequest, model: string) {
     throw new Error("OpenAI returned no structured output text");
   }
 
-  return JSON.parse(outputText);
+  return sanitizeOutputForTask(requestBody.task, JSON.parse(outputText));
+}
+
+function sharedSystemPrompt() {
+  return [
+    "You are HAYF's onboarding coach.",
+    "Be concise, perceptive, and practical.",
+    "Do not provide medical advice.",
+    "Use only the compact context provided.",
+    "Never ask for raw HealthKit samples.",
+  ].join(" ");
+}
+
+function taskSystemPrompt(task: OnboardingTask) {
+  switch (task) {
+    case "generate_goal_candidates":
+      return [
+        "You are writing selectable goal cards directly to the user.",
+        "Write like a calm coach speaking to an excited athlete at the start of a shared training project.",
+        "Use direct second-person language: you, your, we will, and you will.",
+        "Never refer to the user as 'the athlete', 'athlete', 'user', or 'client'.",
+        "Never write analyst fragments like 'Primary priority cycling' or 'Athlete wants'.",
+      ].join(" ");
+    case "generate_blended_candidate":
+      return [
+        "You are writing one blended goal card directly to the user.",
+        "Write like a calm coach speaking to an excited athlete at the start of a shared training project.",
+        "Use direct second-person language: you, your, we will, and you will.",
+        "Never refer to the user as 'the athlete', 'athlete', 'user', or 'client'.",
+      ].join(" ");
+    case "generate_athlete_blueprint":
+      return "When writing an Athlete Blueprint, sound like an elite coach who has studied the athlete closely, but stay fully inside the approved evidence.";
+    case "generate_fitness_strategy":
+      return "When writing a Fitness Strategy, sound like a coach explaining the plan of attack after assessing the athlete.";
+    case "generate_summary":
+      return "Write a short reflective readback directly to the user.";
+  }
 }
 
 function validateRequest(value: OnboardingAIRequest | null): asserts value is OnboardingAIRequest {
@@ -268,9 +303,37 @@ function taskRules(task: OnboardingTask) {
     case "generate_summary":
       return "Return one concise sentence addressed to the user, like a coach reflecting back what a new client just told them. Describe the user's target or selected direction in natural second-person language, and mention constraints like availability, access, or support style only when they materially shape the read. Do not use imperative planner language like 'Create', 'Build a plan', or 'Track'. Do not explain how HAYF will execute it, and do not list or repeat every answer.";
     case "generate_goal_candidates":
-      return "Return exactly three distinct goal candidates. Each candidate must have a concrete title that includes its timeframe, a short tracking field, and timeframeWeeks set to 4, 8, or 12.";
+      return [
+        "Return exactly three distinct goal candidates.",
+        "Each title must name the outcome only and must not include the timeframe because timeframeWeeks is displayed separately.",
+        "Titles may use two short sentences when that reads better, for example: 'Increase compound strength. Add 10% to squat and deadlift.'",
+        "Never use em dashes, en dashes, semicolons, colons, slashes, or plus signs in titles.",
+        "Never start a title with punctuation.",
+        "Set timeframeWeeks to 4, 8, or 12.",
+        "Write rationale as warm coach copy for an excited athlete at the start of a project you will work on together.",
+        "Rationale must speak directly to the user with words like you, your, we will, and you will.",
+        "Do not write note-style fragments like 'Primary interest in cycling' or third-person phrases like 'athlete's preference'.",
+        "Rationale must be one sentence when possible, two short sentences at most.",
+        "Rationale must explain why this goal fits the user's priority and challenge style, then make the payoff feel motivating and concrete.",
+        "Do not use semicolons, em dashes, en dashes, slashes, or plus signs.",
+        "Do not use the word 'Tracks' or describe tracking in the rationale.",
+        "The tracking field is internal only: keep it as a short comma-separated note under 12 words.",
+      ].join(" ");
     case "generate_blended_candidate":
-      return "Blend the two selected candidates into one candidate that keeps the clearer target, borrows useful support structure, and chooses a concrete 4-, 8-, or 12-week timeframe.";
+      return [
+        "Blend the two selected candidates into one candidate that keeps the clearer target, borrows useful support structure, and chooses a concrete 4-, 8-, or 12-week timeframe.",
+        "The title must name the outcome only and must not include the timeframe because timeframeWeeks is displayed separately.",
+        "Titles may use two short sentences when that reads better.",
+        "Never use em dashes, en dashes, semicolons, colons, slashes, or plus signs in titles.",
+        "Never start a title with punctuation.",
+        "Write rationale as warm coach copy for an excited athlete at the start of a project you will work on together.",
+        "Rationale must speak directly to the user with words like you, your, we will, and you will.",
+        "Do not write note-style fragments like 'Primary interest in cycling' or third-person phrases like 'athlete's preference'.",
+        "Rationale must be one sentence when possible, two short sentences at most.",
+        "Do not use semicolons, em dashes, en dashes, slashes, or plus signs.",
+        "Do not use the word 'Tracks' or describe tracking in the rationale.",
+        "The tracking field is internal only: keep it as a short comma-separated note under 12 words.",
+      ].join(" ");
     case "generate_athlete_blueprint":
       return [
         "Return authored copy for the six Athlete Blueprint sections only.",
@@ -412,6 +475,92 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
 
 function pick(source: Record<string, unknown>, keys: string[]) {
   return Object.fromEntries(keys.flatMap((key) => key in source ? [[key, source[key]]] : []));
+}
+
+function sanitizeOutputForTask(task: OnboardingTask, output: Record<string, any>) {
+  if (task === "generate_goal_candidates") {
+    return {
+      ...output,
+      candidates: Array.isArray(output.candidates)
+        ? output.candidates.map((candidate: Record<string, any>) => sanitizeGoalCandidate(candidate))
+        : [],
+    };
+  }
+
+  if (task === "generate_blended_candidate") {
+    return sanitizeGoalCandidate(output);
+  }
+
+  return output;
+}
+
+function sanitizeGoalCandidate(candidate: Record<string, any>) {
+  return {
+    ...candidate,
+    title: sanitizeGoalTitle(String(candidate.title ?? "")),
+    rationale: sanitizeGoalRationale(String(candidate.rationale ?? "")),
+    tracking: sanitizeTracking(String(candidate.tracking ?? "")),
+  };
+}
+
+function sanitizeGoalTitle(value: string) {
+  return sentenceCase(
+    value
+      .replace(/[—–]/g, ". ")
+      .replace(/[;:+/]/g, " ")
+      .replace(/^[\s:;,.+\-/]+/, "")
+      .replace(/\s+/g, " ")
+      .replace(/\s+\./g, ".")
+      .trim()
+  );
+}
+
+function sanitizeGoalRationale(value: string) {
+  return sentenceCase(
+    value
+      .replace(/[—–;]/g, ". ")
+      .replace(/\s+\+\s+/g, " and ")
+      .replace(/\//g, " or ")
+      .replace(/\bPrimary priority ([^,.]+), athlete wants measurable numeric targets and to be more athletic\.?/gi, "Your $1 priority and your preference for measurable targets give us a clear starting point.")
+      .replace(/\bPrimary priority ([^,.]+), athlete wants ([^.]+)\.?/gi, "Your $1 priority matters here, and you want $2.")
+      .replace(/\bPrimary interest in ([^.]+)\.?/gi, "Your priority is $1.")
+      .replace(/\bThe athlete wants\b/gi, "You want")
+      .replace(/\bAthlete wants\b/gi, "You want")
+      .replace(/\bthe athlete's\b/gi, "your")
+      .replace(/\bathlete's\b/gi, "your")
+      .replace(/\bthe athlete\b/gi, "you")
+      .replace(/\bathlete\b/gi, "you")
+      .replace(/\bthe user's\b/gi, "your")
+      .replace(/\buser's\b/gi, "your")
+      .replace(/\bthe user\b/gi, "you")
+      .replace(/\buser\b/gi, "you")
+      .replace(/\bthe your\b/gi, "your")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function sanitizeTracking(value: string) {
+  return value
+    .replace(/[—–;]/g, ",")
+    .replace(/\bTracks?:\s*/gi, "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(", ");
+}
+
+function sentenceCase(value: string) {
+  return value
+    .split(".")
+    .map((part) => {
+      const trimmed = part.trim();
+      if (!trimmed) return "";
+      return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+    })
+    .filter(Boolean)
+    .join(". ");
 }
 
 function goalCandidateProperties() {

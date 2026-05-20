@@ -434,7 +434,7 @@ Goal candidates:
 - Strength base goal: improve squat, press, and pull while keeping one cardio day.
 - Sport-ready goal: build conditioning and mobility for football, tennis, or basketball.
 
-Each generated candidate should carry a real timeframe, not just a phrase in the title. Choosing a candidate stores that timeframe with the selected goal. Editing a candidate lets the user change both the goal text and timeframe. Blending two candidates lets HAYF choose the timeframe for the blended result.
+Each generated candidate should carry a real timeframe in structured data, shown as a separate chip in the card rather than folded into the title. Choosing a candidate stores that timeframe with the selected goal. Editing a candidate lets the user change both the goal text and timeframe. Blending two candidates lets HAYF choose the timeframe for the blended result.
 
 Choice question:
 
@@ -448,7 +448,7 @@ Which goal feels most like you?
 
 Example output:
 
-"Your starter goal: build a balanced 8-week training rhythm with 3 sessions per week. HAYF will track consistency, strength exposure, cardio exposure, and recovery."
+"Build a balanced training rhythm. This gives us a clear first project, with enough structure to make progress and enough room to adjust as your week gets real."
 
 Design note:
 

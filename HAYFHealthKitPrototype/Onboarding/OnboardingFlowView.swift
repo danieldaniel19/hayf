@@ -71,7 +71,7 @@ struct OnboardingFlowView: View {
         .animation(.easeInOut(duration: 0.2), value: step)
         .sheet(item: $selectedBlueprintDetail) { detail in
             AthleteBlueprintDetailSheet(detail: detail)
-                .presentationDetents([.medium])
+                .presentationDetents([.fraction(0.68), .large])
                 .presentationDragIndicator(.visible)
         }
         .task(id: step) {
@@ -473,7 +473,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "Which goal feels\nmost like you?",
-                copy: "HAYF mocked up three directions from what you chose. Pick one, edit it, or blend two."
+                copy: "HAYF shaped three goals from what you told us. Choose the one you want to chase first."
             )
 
             VStack(spacing: 12) {
@@ -656,18 +656,17 @@ struct OnboardingFlowView: View {
             )
 
             OptionGroup(title: currentIntent == .concreteGoal ? "Total training days per week" : "Days per week") {
-                HStack(spacing: 10) {
-                    ForEach(TrainingFrequency.allCases) { frequency in
-                        CompactChoiceButton(
-                            title: frequency.title,
-                            isSelected: draft.frequency == frequency
-                        ) {
-                            draft.frequency = frequency
-                        }
-                    }
-                }
+                WheelChoicePicker(
+                    options: TrainingFrequency.allCases,
+                    selection: Binding(
+                        get: { draft.frequency ?? .three },
+                        set: { draft.frequency = $0 }
+                    )
+                )
             }
-
+        }
+        .onAppear {
+            draft.frequency = draft.frequency ?? .three
         }
     }
 
@@ -679,17 +678,17 @@ struct OnboardingFlowView: View {
             )
 
             OptionGroup(title: "Typical session length") {
-                HStack(spacing: 10) {
-                    ForEach(SessionLength.allCases) { length in
-                        CompactChoiceButton(
-                            title: length.title,
-                            isSelected: draft.sessionLength == length
-                        ) {
-                            draft.sessionLength = length
-                        }
-                    }
-                }
+                WheelChoicePicker(
+                    options: SessionLength.allCases,
+                    selection: Binding(
+                        get: { draft.sessionLength ?? .thirty },
+                        set: { draft.sessionLength = $0 }
+                    )
+                )
             }
+        }
+        .onAppear {
+            draft.sessionLength = draft.sessionLength ?? .thirty
         }
     }
 
@@ -701,12 +700,15 @@ struct OnboardingFlowView: View {
             )
 
             OptionGroup(title: "Available days") {
-                FlexibleChoiceGrid(items: Weekday.allCases, selection: $draft.availableDays)
+                WeekdayAvailabilityRow(selection: $draft.availableDays)
             }
 
             OptionGroup(title: "Available times") {
-                FlexibleChoiceGrid(items: DayPart.allCases, selection: $draft.availableDayParts)
+                DayPartAvailabilityRow(selection: $draft.availableDayParts)
             }
+        }
+        .onAppear {
+            draft.availableDayParts.remove(.midday)
         }
     }
 
@@ -761,20 +763,30 @@ struct OnboardingFlowView: View {
                 copy: "Health imports can be stale. These answers become the first body-composition baseline HAYF can trust today."
             )
 
-            HStack(spacing: 12) {
-                NumericInputField(
+            HStack(alignment: .top, spacing: 12) {
+                NumberWheelPicker(
                     title: "Weight",
-                    placeholder: "70",
                     unit: "kg",
+                    values: Array(25...250),
+                    defaultValue: 70,
                     text: $draft.bodyMassKilogramsInput
                 )
 
-                NumericInputField(
+                NumberWheelPicker(
                     title: "Height",
-                    placeholder: "173",
                     unit: "cm",
+                    values: Array(100...230),
+                    defaultValue: 173,
                     text: $draft.heightCentimetersInput
                 )
+            }
+        }
+        .onAppear {
+            if draft.bodyMassKilogramsInput.trimmed.isEmpty {
+                draft.bodyMassKilogramsInput = "70"
+            }
+            if draft.heightCentimetersInput.trimmed.isEmpty {
+                draft.heightCentimetersInput = "173"
             }
         }
     }
@@ -1020,8 +1032,8 @@ struct OnboardingFlowView: View {
         return VStack(alignment: .leading, spacing: 26) {
             OnboardingIntro(
                 eyebrow: "ATHLETE BLUEPRINT",
-                title: "Here's HAYF's\nread on you.",
-                copy: "This is the athlete HAYF believes it is coaching before it builds the strategy."
+                title: "Here's what HAYF\nsees so far.",
+                copy: "A quick read on your training history, current baseline, and how your goal fits."
             )
 
             Button {
@@ -1033,7 +1045,7 @@ struct OnboardingFlowView: View {
                         .kerning(1.2)
                         .foregroundStyle(HAYFColor.secondary)
 
-                    Text(blueprint.coachRead.text)
+                    Text(blueprint.coachRead.preview)
                         .font(.system(size: 18, weight: .regular))
                         .lineSpacing(5)
                         .foregroundStyle(HAYFColor.primary)
@@ -2627,40 +2639,33 @@ private struct AthleteBlueprintAIPayload: Codable {
     let goalFit: AthleteBlueprintAIGoalFitPayload
 
     func merged(with fallback: AthleteBlueprintOutput) -> AthleteBlueprintOutput {
-        let findingCopy = Dictionary(uniqueKeysWithValues: historyFindings.map { ($0.id, $0) })
-
         return AthleteBlueprintOutput(
             coachRead: AthleteBlueprintCoachRead(
+                preview: (coachRead.trimmed.isEmpty ? fallback.coachRead.text : coachRead.trimmed)
+                    .limitedSentences(maxSentences: 2, maxCharacters: 190),
                 text: coachRead.trimmed.isEmpty ? fallback.coachRead.text : coachRead.trimmed,
                 detail: fallback.coachRead.detail
+                    .withBody(coachRead.trimmed.isEmpty ? fallback.coachRead.text : coachRead.trimmed)
             ),
             archetype: AthleteBlueprintArchetype(
-                label: athleteArchetype.label.trimmed.isEmpty ? fallback.archetype.label : athleteArchetype.label.trimmed,
-                explanation: athleteArchetype.summary.trimmed.isEmpty ? fallback.archetype.explanation : athleteArchetype.summary.trimmed,
+                label: fallback.archetype.label,
+                explanation: fallback.archetype.explanation,
                 detail: fallback.archetype.detail
             ),
             currentTrainingState: AthleteBlueprintCurrentState(
-                label: currentTrainingState.label.trimmed.isEmpty ? fallback.currentTrainingState.label : currentTrainingState.label.trimmed,
-                summary: currentTrainingState.summary.trimmed.isEmpty ? fallback.currentTrainingState.summary : currentTrainingState.summary.trimmed,
+                label: fallback.currentTrainingState.label,
+                summary: fallback.currentTrainingState.summary,
                 detail: fallback.currentTrainingState.detail
             ),
             physicalBaseline: AthleteBlueprintPhysicalBaseline(
-                label: physicalBaseline.label.trimmed.isEmpty ? fallback.physicalBaseline.label : physicalBaseline.label.trimmed,
-                summary: physicalBaseline.summary.trimmed.isEmpty ? fallback.physicalBaseline.summary : physicalBaseline.summary.trimmed,
+                label: fallback.physicalBaseline.label,
+                summary: fallback.physicalBaseline.summary,
                 detail: fallback.physicalBaseline.detail
             ),
-            historyFindings: fallback.historyFindings.map { finding in
-                guard let aiFinding = findingCopy[finding.id] else { return finding }
-                return AthleteBlueprintFinding(
-                    id: finding.id,
-                    title: aiFinding.title.trimmed.isEmpty ? finding.title : aiFinding.title.trimmed,
-                    summary: aiFinding.summary.trimmed.isEmpty ? finding.summary : aiFinding.summary.trimmed,
-                    detail: finding.detail
-                )
-            },
+            historyFindings: fallback.historyFindings,
             goalFit: AthleteBlueprintGoalFit(
-                headline: goalFit.headline.trimmed.isEmpty ? fallback.goalFit.headline : goalFit.headline.trimmed,
-                summary: goalFit.summary.trimmed.isEmpty ? fallback.goalFit.summary : goalFit.summary.trimmed,
+                headline: fallback.goalFit.headline,
+                summary: fallback.goalFit.summary,
                 supports: fallback.goalFit.supports,
                 gaps: fallback.goalFit.gaps,
                 detail: fallback.goalFit.detail
@@ -3188,16 +3193,16 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         let first = avoidsRunning
             ? GoalCandidate(
                 id: "balanced-athlete",
-                title: "8-week balanced athlete rhythm",
-                rationale: "Build consistency with strength, low-impact cardio, and mobility without relying on running.",
+                title: "Balanced athlete rhythm",
+                rationale: "Because you want progress without leaning on running, this gives us a steady mix of strength, low-impact cardio, and mobility to build from together.",
                 tracking: "Sessions completed, strength exposure, cardio exposure, recovery trend.",
                 timeline: .eightWeeks,
                 systemImage: "circle.lefthalf.filled"
             )
             : GoalCandidate(
                 id: "endurance-base",
-                title: wantsEndurance ? "Improve 10K readiness in 12 weeks" : "Build an 8-week aerobic base",
-                rationale: "Give your week a clear endurance direction while keeping the plan light enough to repeat.",
+                title: wantsEndurance ? "Improve 10K readiness" : "Build an aerobic base",
+                rationale: "Your endurance focus gives us a clear first project, and we can make it feel ambitious while still light enough to repeat.",
                 tracking: "Easy minutes, long-session confidence, consistency, recovery.",
                 timeline: wantsEndurance ? .twelveWeeks : .eightWeeks,
                 systemImage: "figure.run"
@@ -3206,16 +3211,16 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         let second = wantsStrength
             ? GoalCandidate(
                 id: "strength-base",
-                title: "Build strength with one cardio anchor in 12 weeks",
-                rationale: avoidsGym ? "Use simple strength sessions and one conditioning day without depending on a gym." : "Improve strength exposure while keeping enough cardio to feel athletic.",
+                title: "Build strength with one cardio anchor",
+                rationale: avoidsGym ? "Your strength priority still has plenty of room to grow without depending on a gym, so we will keep the work simple and focused." : "Your strength priority gives us the main target, while one cardio anchor keeps the build feeling athletic and useful.",
                 tracking: "Strength sessions, movement quality, conditioning touchpoint, soreness.",
                 timeline: .twelveWeeks,
                 systemImage: "figure.strengthtraining.traditional"
             )
             : GoalCandidate(
                 id: "consistency-reset",
-                title: "4-week consistency reset",
-                rationale: "Make the win repeatable: never miss twice, keep one fallback, and reduce planning friction.",
+                title: "Consistency reset",
+                rationale: "This turns the first win into something repeatable, with a clear floor for messy weeks and less friction around getting started.",
                 tracking: "Weekly sessions, bad-day floor used, skipped-week recovery.",
                 timeline: .fourWeeks,
                 systemImage: "arrow.triangle.2.circlepath"
@@ -3224,16 +3229,16 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         let third = sportReady
             ? GoalCandidate(
                 id: "sport-ready",
-                title: "Build sport-ready conditioning in 8 weeks",
-                rationale: "Build the engine, mobility, and strength base that make court or field sessions feel better.",
+                title: "Build sport-ready conditioning",
+                rationale: "Because feeling better in your sport is the payoff, we will build the engine, mobility, and strength base that makes sessions more fun.",
                 tracking: "Conditioning, mobility, strength support, sport-session readiness.",
                 timeline: .eightWeeks,
                 systemImage: "sportscourt"
             )
             : GoalCandidate(
                 id: "balanced-energy",
-                title: "Feel-fit 8-week build",
-                rationale: "Aim for more energy and capability without a hard event or all-or-nothing target.",
+                title: "Feel-fit build",
+                rationale: "This gives your training a positive direction without forcing a hard event, so we can build energy and capability week by week.",
                 tracking: "Energy, consistency, cardio exposure, strength exposure.",
                 timeline: .eightWeeks,
                 systemImage: "bolt.heart"
@@ -3246,8 +3251,8 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         guard candidates.count >= 2 else {
             return fallbackGoalCandidates(for: draft).first ?? GoalCandidate(
                 id: "blended-fallback",
-                title: "Balanced 8-week goal",
-                rationale: "Blend consistency, strength, and easy cardio into a repeatable rhythm.",
+                title: "Balanced training goal",
+                rationale: "This blends consistency, strength, and easy cardio into a rhythm we can actually make stick.",
                 tracking: "Sessions, recovery, strength exposure, cardio exposure.",
                 timeline: .eightWeeks,
                 systemImage: "point.topleft.down.curvedto.point.bottomright.up"
@@ -3256,8 +3261,8 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
 
         return GoalCandidate(
             id: "blended-\(candidates.map(\.id).joined(separator: "-"))",
-            title: "Blended goal: \(candidates[0].title) + \(candidates[1].title)",
-            rationale: "Keep the clearest target from \(candidates[0].title.lowercased()) while borrowing the support structure from \(candidates[1].title.lowercased()).",
+            title: "Blended goal",
+            rationale: "We will keep the clearest target from \(candidates[0].title.removingGoalTimeline(candidates[0].timeline).lowercased()) and borrow the support structure from \(candidates[1].title.removingGoalTimeline(candidates[1].timeline).lowercased()), so the goal feels focused without becoming too narrow.",
             tracking: "\(candidates[0].tracking) Also watch: \(candidates[1].tracking.lowercased())",
             timeline: candidates.map(\.timeline).max(by: { $0.weeks < $1.weeks }) ?? .eightWeeks,
             systemImage: "point.topleft.down.curvedto.point.bottomright.up"
@@ -3401,6 +3406,18 @@ private enum Weekday: String, CaseIterable, Identifiable {
         case .sunday: return "Sun"
         }
     }
+
+    var singleLetterTitle: String {
+        switch self {
+        case .monday: return "M"
+        case .tuesday: return "T"
+        case .wednesday: return "W"
+        case .thursday: return "T"
+        case .friday: return "F"
+        case .saturday: return "S"
+        case .sunday: return "S"
+        }
+    }
 }
 
 private enum DayPart: String, CaseIterable, Identifiable {
@@ -3409,8 +3426,19 @@ private enum DayPart: String, CaseIterable, Identifiable {
     case afternoon
     case evening
 
+    static let allCases: [DayPart] = [.morning, .afternoon, .evening]
+
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+
+    var systemImage: String {
+        switch self {
+        case .morning: return "sunrise"
+        case .midday: return "sun.max"
+        case .afternoon: return "sun.max"
+        case .evening: return "moon"
+        }
+    }
 }
 
 private enum BodyFatBand: String, CaseIterable, Identifiable {
@@ -4265,6 +4293,96 @@ private struct FlexibleChoiceGrid<Item: Identifiable & Hashable>: View where Ite
     }
 }
 
+private struct WeekdayAvailabilityRow: View {
+    @Binding var selection: Set<Weekday>
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(Weekday.allCases) { day in
+                CompactWeekdayButton(
+                    title: day.singleLetterTitle,
+                    isSelected: selection.contains(day)
+                ) {
+                    selection.toggle(day)
+                }
+            }
+        }
+    }
+}
+
+private struct CompactWeekdayButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
+                .background(isSelected ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct DayPartAvailabilityRow: View {
+    @Binding var selection: Set<DayPart>
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(DayPart.allCases) { dayPart in
+                DayPartAvailabilityButton(
+                    title: dayPart.title,
+                    systemImage: dayPart.systemImage,
+                    isSelected: selection.contains(dayPart)
+                ) {
+                    selection.toggle(dayPart)
+                }
+            }
+        }
+    }
+}
+
+private struct DayPartAvailabilityButton: View {
+    let title: String
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .regular))
+                    .symbolRenderingMode(.monochrome)
+
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+            .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 74)
+            .background(isSelected ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private protocol ChoiceDisplayable {
     var choiceTitle: String { get }
 }
@@ -4275,6 +4393,98 @@ extension Weekday: ChoiceDisplayable {
 
 extension DayPart: ChoiceDisplayable {
     var choiceTitle: String { title }
+}
+
+private protocol WheelDisplayable {
+    var wheelTitle: String { get }
+}
+
+extension TrainingFrequency: WheelDisplayable {
+    var wheelTitle: String { title }
+}
+
+extension SessionLength: WheelDisplayable {
+    var wheelTitle: String { title }
+}
+
+private struct WheelChoicePicker<Option: Identifiable & Hashable & WheelDisplayable>: View {
+    let options: [Option]
+    @Binding var selection: Option
+
+    var body: some View {
+        Picker("", selection: $selection) {
+            ForEach(options) { option in
+                Text(option.wheelTitle)
+                    .font(.system(size: 22, weight: .semibold))
+                    .tag(option)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.wheel)
+        .frame(maxWidth: .infinity)
+        .frame(height: 150)
+        .clipped()
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct NumberWheelPicker: View {
+    let title: String
+    let unit: String
+    let values: [Int]
+    let defaultValue: Int
+    @Binding var text: String
+
+    private var selection: Binding<Int> {
+        Binding(
+            get: {
+                let parsed = Double(text.replacingOccurrences(of: ",", with: ".")) ?? Double(defaultValue)
+                let value = Int(parsed.rounded())
+                guard values.contains(value) else {
+                    return defaultValue
+                }
+                return value
+            },
+            set: { value in
+                text = "\(value)"
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HAYFColor.secondary)
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+
+            Picker("", selection: selection) {
+                ForEach(values, id: \.self) { value in
+                    Text("\(value) \(unit)")
+                        .font(.system(size: 21, weight: .semibold))
+                        .tag(value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.wheel)
+            .frame(maxWidth: .infinity)
+            .frame(height: 118)
+            .clipped()
+        }
+        .frame(maxWidth: .infinity)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
 }
 
 private struct NumericInputField: View {
@@ -4454,46 +4664,62 @@ private struct GoalCandidateCard: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 15) {
-                HAYFIcon(systemImage: candidate.systemImage, isSelected: isSelected, size: 42, iconSize: 22)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text(candidate.title.goalCardTitle(timeline: candidate.timeline))
+                            .font(.system(size: 17, weight: .semibold))
+                            .lineSpacing(2)
+                            .foregroundStyle(HAYFColor.primary)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(candidate.title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        GoalTimeframeChip(title: candidate.timeline.title, isSelected: isSelected)
+                    }
 
-                    Text(candidate.rationale)
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 10)
 
-                    Text("Tracks: \(candidate.tracking)")
-                        .font(.system(size: 12, weight: .medium))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.muted)
-                        .fixedSize(horizontal: false, vertical: true)
+                    switch selectionStyle {
+                    case .single:
+                        RadioDot(isSelected: isSelected)
+                    case .multiple:
+                        CheckmarkBox(isSelected: isSelected)
+                    }
                 }
 
-                Spacer()
-
-                switch selectionStyle {
-                case .single:
-                    RadioDot(isSelected: isSelected)
-                case .multiple:
-                    CheckmarkBox(isSelected: isSelected)
-                }
+                Text(candidate.rationale.goalCardRationale())
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(4)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(16)
-            .background(HAYFColor.surface)
+            .padding(18)
+            .background(isSelected ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.4 : 1)
+                    .stroke(isSelected ? HAYFColor.orange.opacity(0.72) : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct GoalTimeframeChip: View {
+    let title: String
+    let isSelected: Bool
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.muted)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(isSelected ? HAYFColor.orange.opacity(0.10) : HAYFColor.surfaceRaised)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(isSelected ? HAYFColor.orange.opacity(0.18) : HAYFColor.border, lineWidth: 1)
+            }
     }
 }
 
@@ -5162,6 +5388,7 @@ private struct AthleteBlueprintOutput {
 }
 
 private struct AthleteBlueprintCoachRead {
+    let preview: String
     let text: String
     let detail: AthleteBlueprintDetail
 }
@@ -5203,10 +5430,92 @@ private struct AthleteBlueprintDetail: Identifiable {
     let id: String
     let title: String
     let summary: String
+    let body: String?
     let confidence: String
     let observationWindow: String
     let evidence: [String]
     let caveat: String?
+
+    init(
+        id: String,
+        title: String,
+        summary: String,
+        body: String? = nil,
+        confidence: String,
+        observationWindow: String,
+        evidence: [String],
+        caveat: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.body = body
+        self.confidence = confidence
+        self.observationWindow = observationWindow
+        self.evidence = evidence
+        self.caveat = caveat
+    }
+}
+
+private extension AthleteBlueprintDetail {
+    func withBody(_ body: String) -> AthleteBlueprintDetail {
+        AthleteBlueprintDetail(
+            id: id,
+            title: title,
+            summary: summary,
+            body: body.trimmed.nilIfEmpty,
+            confidence: confidence,
+            observationWindow: observationWindow,
+            evidence: evidence,
+            caveat: caveat
+        )
+    }
+
+    var rankedEvidence: [String] {
+        evidence
+            .enumerated()
+            .sorted { lhs, rhs in
+                let lhsScore = evidencePriority(lhs.element)
+                let rhsScore = evidencePriority(rhs.element)
+                return lhsScore == rhsScore ? lhs.offset < rhs.offset : lhsScore < rhsScore
+            }
+            .prefix(3)
+            .map(\.element)
+    }
+
+    func evidencePriority(_ item: String) -> Int {
+        let lowercased = item.lowercased()
+
+        switch id {
+        case "coach_read":
+            if lowercased.contains("dominant modalities") { return 0 }
+            if lowercased.contains("last 7 days") || lowercased.contains("typical recent week") { return 1 }
+            if lowercased.contains("selected") || lowercased.contains("goal horizon") { return 2 }
+        case "athlete_archetype":
+            if lowercased.contains("dominant modalities") { return 0 }
+            if lowercased.contains("imported workouts") { return 1 }
+            if lowercased.contains("body-mass change") { return 2 }
+        case "current_training_state":
+            if lowercased.contains("last 7 days") { return 0 }
+            if lowercased.contains("typical recent week") || lowercased.contains("last 90 days") { return 1 }
+        case "physical_baseline":
+            if lowercased.contains("body mass") || lowercased.contains("weight") { return 0 }
+            if lowercased.contains("height") { return 1 }
+            if lowercased.contains("body-fat") || lowercased.contains("body fat") { return 2 }
+        case "body_mass_trend":
+            if lowercased.contains("change") { return 0 }
+            if lowercased.contains("window") { return 1 }
+            if lowercased.contains("samples") { return 2 }
+        case "goal_fit":
+            if lowercased.contains("selected") { return 0 }
+            if lowercased.contains("goal horizon") { return 1 }
+            if lowercased.contains("does not") || lowercased.contains("no selected") { return 2 }
+        default:
+            break
+        }
+
+        return 10
+    }
 }
 
 private enum AthleteBlueprintBuilder {
@@ -5271,6 +5580,8 @@ private enum AthleteBlueprintBuilder {
         evidence: AthleteBlueprintEvidence
     ) -> AthleteBlueprintCoachRead {
         let text: String
+        let preview: String
+        let headline: String
         if evidence.hasWorkoutHistory {
             var lines = [
                 archetype.explanation,
@@ -5283,20 +5594,30 @@ private enum AthleteBlueprintBuilder {
                 lines.append(physicalBaseline.summary)
             }
             lines.append(goalFit.summary)
-            text = uniqueSentences(from: lines).joined(separator: " ")
+            let sentences = uniqueSentences(from: lines)
+            text = sentences.joined(separator: " ")
+            preview = sentences
+                .prefixArray(2)
+                .joined(separator: " ")
+                .limitedSentences(maxSentences: 2, maxCharacters: 190)
+            headline = "You have a steady base to build from."
         } else {
             text = "HAYF has a clear picture of what you want from training, but not enough Apple Health history yet to make strong claims about your past patterns. For now, the read leans on what you told us and will sharpen as you train."
+            preview = "HAYF has enough from your answers to build a first strategy. The read will sharpen as you train."
+            headline = "We have enough to start."
         }
 
         return AthleteBlueprintCoachRead(
+            preview: preview,
             text: text,
-            detail: AthleteBlueprintDetail(
-                id: "coach_read",
-                title: "Coach's read",
-                summary: "This is the synthesis HAYF uses before it creates the strategy.",
-                confidence: evidence.hasWorkoutHistory ? "High" : "Provisional",
-                observationWindow: evidence.hasWorkoutHistory ? "Onboarding + imported workout history" : "Onboarding only",
-                evidence: evidence.hasWorkoutHistory
+                detail: AthleteBlueprintDetail(
+                    id: "coach_read",
+                    title: "Coach's read",
+                    summary: headline,
+                    body: text,
+                    confidence: evidence.hasWorkoutHistory ? "High" : "Provisional",
+                    observationWindow: evidence.hasWorkoutHistory ? "Onboarding + imported workout history" : "Onboarding only",
+                    evidence: evidence.hasWorkoutHistory
                     ? archetype.detail.evidence
                         + currentState.detail.evidence
                         + goalFit.supports
@@ -5335,7 +5656,8 @@ private enum AthleteBlueprintBuilder {
                 detail: AthleteBlueprintDetail(
                     id: "athlete_archetype",
                     title: "Athlete type",
-                    summary: "This label is based on repeated tracked behavior, not on the goal you selected today.",
+                    summary: "Your repeated training mix points to this athlete type.",
+                    body: explanation,
                     confidence: evidence.dominantModalities.count >= 2 ? "High" : "Medium",
                     observationWindow: "6 years of imported workouts",
                     evidence: [
@@ -5359,10 +5681,11 @@ private enum AthleteBlueprintBuilder {
         return AthleteBlueprintArchetype(
             label: fallbackLabel,
             explanation: "Your self-reported preferences point toward \(fallbackLabel.lowercased()), but HAYF needs more tracked history before it treats that as a durable pattern.",
-            detail: AthleteBlueprintDetail(
-                id: "athlete_archetype",
-                title: "Athlete type",
-                summary: "This label currently comes from what you selected in onboarding, not from a repeated tracked pattern yet.",
+                detail: AthleteBlueprintDetail(
+                    id: "athlete_archetype",
+                    title: "Athlete type",
+                    summary: "Your onboarding choices are the strongest signal so far.",
+                body: "This is an early label based on what you told HAYF, not a durable training pattern yet.",
                 confidence: "Provisional",
                 observationWindow: "Onboarding only",
                 evidence: [
@@ -5398,32 +5721,37 @@ private enum AthleteBlueprintBuilder {
         let recentVsBaseline = weeklyAverage28 > 0 ? sevenDayMinutes / weeklyAverage28 : 1
         let label: String
         let summary: String
+        let detailBody: String
         let evidenceLines: [String]
 
         if sevenDayMinutes == 0, ninetyDayMinutes > 0 {
             label = "Rebuilding after a lull"
-            summary = "Your history shows a usable base, but the last week has gone quiet. HAYF should treat this as re-entry rather than a blank slate."
+            summary = "Last 7 days: no tracked training. Last 90 days: \(Int(ninetyDayMinutes.rounded())) tracked training minutes."
+            detailBody = "Your history shows a usable base, but the last week has gone quiet. HAYF should treat this as re-entry rather than a blank slate."
             evidenceLines = [
                 "Last 7 days: no tracked training minutes.",
                 "Last 90 days: \(Int(ninetyDayMinutes.rounded())) tracked training minutes."
             ]
         } else if recentVsBaseline < 0.65, twentyEightDayMinutes > 0 {
             label = "Recent rhythm has dipped"
-            summary = "Your current week is lighter than your recent baseline, which suggests HAYF should protect momentum before it adds ambition."
+            summary = "Last 7 days: \(Int(sevenDayMinutes.rounded())) training minutes. Recent typical week: about \(Int(weeklyAverage28.rounded())) minutes."
+            detailBody = "Your current week is lighter than your recent baseline, which suggests HAYF should protect momentum before it adds ambition."
             evidenceLines = [
                 "Last 7 days: \(Int(sevenDayMinutes.rounded())) minutes.",
                 "Typical recent week from the last 28 days: about \(Int(weeklyAverage28.rounded())) minutes."
             ]
         } else if recentVsBaseline > 1.35, weeklyAverage28 > 0 {
             label = "Building momentum"
-            summary = "Your most recent week is running above your recent baseline, which suggests real momentum but also a reason to keep the first strategy controlled."
+            summary = "Last 7 days: \(Int(sevenDayMinutes.rounded())) training minutes. Recent typical week: about \(Int(weeklyAverage28.rounded())) minutes."
+            detailBody = "Your most recent week is running above your recent baseline, which suggests real momentum but also a reason to keep the first strategy controlled."
             evidenceLines = [
                 "Last 7 days: \(Int(sevenDayMinutes.rounded())) minutes.",
                 "Typical recent week from the last 28 days: about \(Int(weeklyAverage28.rounded())) minutes."
             ]
         } else {
             label = "Stable recent rhythm"
-            summary = "Your recent training load is close to your recent baseline, so HAYF can start from continuity rather than repair."
+            summary = "Last 7 days: \(Int(sevenDayMinutes.rounded())) training minutes. Recent typical week: about \(Int(weeklyAverage28.rounded())) minutes."
+            detailBody = "Your recent training load is close to your recent baseline, so HAYF can start from continuity rather than repair."
             evidenceLines = [
                 "Last 7 days: \(Int(sevenDayMinutes.rounded())) minutes.",
                 "Typical recent week from the last 28 days: about \(Int(weeklyAverage28.rounded())) minutes."
@@ -5434,9 +5762,10 @@ private enum AthleteBlueprintBuilder {
             label: label,
             summary: summary,
             detail: AthleteBlueprintDetail(
-                id: "current_training_state",
-                title: "Current state",
-                summary: "This is a present-state read built from recent load, not from your all-time history.",
+                    id: "current_training_state",
+                    title: "Current state",
+                    summary: "Your recent load says where you are starting from now.",
+                body: detailBody,
                 confidence: twentyEightDayMinutes > 0 ? "High" : "Medium",
                 observationWindow: "Last 7 days vs prior 28-day baseline",
                 evidence: evidenceLines,
@@ -5477,13 +5806,17 @@ private enum AthleteBlueprintBuilder {
         }
         evidenceLines.append(contentsOf: evidence.bodyMemoryEvidenceLines)
 
+        let bodyMassText = String(format: "%.1f", bodyMassKilograms)
+        let currentBaselineSummary = "You reported \(bodyMassText) kg, \(Int(heightCentimeters.rounded())) cm, and \(bodyFatBand.title) body fat today."
+
         return AthleteBlueprintPhysicalBaseline(
-            label: "\(String(format: "%.1f", bodyMassKilograms)) kg at \(bodyFatBand.title)",
-            summary: "HAYF has a fresh self-reported baseline for weight, height, and estimated body fat before it reads imported trend data.",
+            label: "\(bodyMassText) kg, \(bodyFatBand.title) body fat",
+            summary: currentBaselineSummary,
             detail: AthleteBlueprintDetail(
-                id: "physical_baseline",
-                title: "Physical baseline",
-                summary: "This baseline comes from what you entered today, so it outranks older imported body metrics as the current state.",
+                    id: "physical_baseline",
+                    title: "Physical baseline",
+                    summary: "Today’s self-report is the current body baseline.",
+                body: currentBaselineSummary,
                 confidence: "Current self-report",
                 observationWindow: "Onboarding today",
                 evidence: evidenceLines,
@@ -5523,7 +5856,7 @@ private enum AthleteBlueprintBuilder {
                 AthleteBlueprintFinding(
                     id: "strength_anchor",
                     title: "Strength is a real anchor",
-                    summary: "You logged \(evidence.strengthWorkouts90Days) strength sessions in the last 90 days.",
+                    summary: "\(evidence.strengthWorkouts90Days) tracked strength sessions totaling \(Int(evidence.strengthMinutes90Days.rounded())) minutes in the last 90 days.",
                     detail: AthleteBlueprintDetail(
                         id: "strength_anchor",
                         title: "Strength is a real anchor",
@@ -5545,7 +5878,7 @@ private enum AthleteBlueprintBuilder {
                 AthleteBlueprintFinding(
                     id: "consistency_streak",
                     title: "You have proved you can hold a rhythm",
-                    summary: "Your longest active streak is \(evidence.longestActiveWeekStreak) weeks.",
+                    summary: "Longest active-week streak: \(evidence.longestActiveWeekStreak) weeks. Active weeks observed: \(evidence.activeWeeks).",
                     detail: AthleteBlueprintDetail(
                         id: "consistency_streak",
                         title: "You have proved you can hold a rhythm",
@@ -5563,11 +5896,12 @@ private enum AthleteBlueprintBuilder {
         }
 
         if let longest = evidence.longestWorkout {
+            let distanceText = longest.distanceKilometers.map { " covering \(String(format: "%.1f", $0)) km" } ?? ""
             findings.append(
                 AthleteBlueprintFinding(
                     id: "long_session_tolerance",
                     title: "You can handle one longer session",
-                    summary: "Your history includes a \(Int(longest.durationMinutes.rounded()))-minute \(longest.modality) session.",
+                    summary: "Longest recorded \(longest.modality) session: \(Int(longest.durationMinutes.rounded())) minutes\(distanceText).",
                     detail: AthleteBlueprintDetail(
                         id: "long_session_tolerance",
                         title: "You can handle one longer session",
@@ -5589,7 +5923,7 @@ private enum AthleteBlueprintBuilder {
                 AthleteBlueprintFinding(
                     id: "strongest_month",
                     title: "\(strongestMonth.label) is your strongest month",
-                    summary: "Historically, \(strongestMonth.label) carries your highest training volume.",
+                    summary: "\(strongestMonth.label) has your highest imported monthly volume: \(Int(strongestMonth.totalMinutes.rounded())) tracked minutes.",
                     detail: AthleteBlueprintDetail(
                         id: "strongest_month",
                         title: "\(strongestMonth.label) is your strongest month",
@@ -5658,7 +5992,8 @@ private enum AthleteBlueprintBuilder {
             detail: AthleteBlueprintDetail(
                 id: "body_mass_trend",
                 title: title,
-                summary: "This is a repeated-measurement trend, not a single imported reading.",
+                summary: "A repeated measurement trend, not one imported reading.",
+                body: summary,
                 confidence: evidence.bodyMassTrendConfidence.capitalized,
                 observationWindow: "Last \(days) days of tracked weight",
                 evidence: evidence.bodyMemoryEvidenceLines,
@@ -5769,7 +6104,8 @@ private enum AthleteBlueprintBuilder {
             detail: AthleteBlueprintDetail(
                 id: "goal_fit",
                 title: "Goal fit",
-                summary: "This checks whether the goal and the training path you chose make sense together; it does not require your past history to already look like the goal.",
+                summary: result.headline,
+                body: result.summary,
                 confidence: evidence.hasWorkoutHistory ? "High" : "Medium",
                 observationWindow: "Goal + onboarding + available athlete evidence",
                 evidence: result.supports + result.gaps + result.detailEvidence,
@@ -6404,11 +6740,14 @@ private struct AthleteBlueprintDetailSheet: View {
     let detail: AthleteBlueprintDetail
 
     var body: some View {
-        ZStack {
-            HAYFColor.neutral
-                .ignoresSafeArea()
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 22) {
+                Capsule()
+                    .fill(HAYFColor.borderStrong)
+                    .frame(width: 46, height: 5)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 2)
 
-            VStack(alignment: .leading, spacing: 20) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(detail.title.uppercased())
                         .font(.system(size: 11, weight: .medium))
@@ -6420,6 +6759,15 @@ private struct AthleteBlueprintDetailSheet: View {
                         .lineSpacing(4)
                         .foregroundStyle(HAYFColor.primary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if let body = detail.body {
+                        Text(body)
+                            .font(.system(size: 15, weight: .regular))
+                            .lineSpacing(4)
+                            .foregroundStyle(HAYFColor.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
                 }
 
                 HStack(spacing: 10) {
@@ -6427,20 +6775,9 @@ private struct AthleteBlueprintDetailSheet: View {
                     BlueprintMetaPill(label: "Window", value: detail.observationWindow)
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(detail.evidence, id: \.self) { item in
-                        HStack(alignment: .top, spacing: 10) {
-                            Circle()
-                                .fill(HAYFColor.orange)
-                                .frame(width: 7, height: 7)
-                                .padding(.top, 7)
-
-                            Text(item)
-                                .font(.system(size: 15, weight: .regular))
-                                .lineSpacing(4)
-                                .foregroundStyle(HAYFColor.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(detail.rankedEvidence, id: \.self) { item in
+                        BlueprintEvidenceRow(text: item)
                     }
                 }
 
@@ -6458,12 +6795,30 @@ private struct AthleteBlueprintDetailSheet: View {
                                 .stroke(HAYFColor.border, lineWidth: 1)
                         }
                 }
-
-                Spacer(minLength: 0)
             }
             .padding(.horizontal, 24)
-            .padding(.top, 24)
-            .padding(.bottom, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 28)
+        }
+        .background(HAYFColor.neutral.ignoresSafeArea())
+    }
+}
+
+private struct BlueprintEvidenceRow: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 11) {
+            Circle()
+                .fill(HAYFColor.orange)
+                .frame(width: 7, height: 7)
+                .padding(.top, 8)
+
+            Text(text)
+                .font(.system(size: 15, weight: .regular))
+                .lineSpacing(4)
+                .foregroundStyle(HAYFColor.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -6482,9 +6837,12 @@ private struct BlueprintMetaPill: View {
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 72, alignment: .center)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
         .background(HAYFColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
@@ -6768,6 +7126,165 @@ private extension String {
 
     var nilIfEmpty: String? {
         isEmpty ? nil : self
+    }
+
+    func limitedSentences(maxSentences: Int, maxCharacters: Int) -> String {
+        let sentenceParts = split(separator: ".", omittingEmptySubsequences: true)
+            .map { String($0).trimmed }
+            .filter { !$0.isEmpty }
+
+        let sentenceLimited = sentenceParts
+            .prefix(maxSentences)
+            .map { $0.hasSuffix(".") ? $0 : "\($0)." }
+            .joined(separator: " ")
+
+        return sentenceLimited.isEmpty ? self.trimmed : sentenceLimited
+    }
+
+    func goalCardTitle(timeline: GoalTimeline) -> String {
+        let weeks = timeline.weeks
+        var result = self
+            .replacingOccurrences(of: "—", with: ". ")
+            .replacingOccurrences(of: "–", with: ". ")
+            .replacingOccurrences(
+                of: "\\s+(in|over)\\s+\(weeks)\\s+weeks\\b",
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\b\(weeks)[ -]week\\b\\s*",
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "^[\\s:;,.\\-]+",
+                with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "\\s{2,}",
+                with: " ",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "\\s+\\.",
+                with: ".",
+                options: .regularExpression
+            )
+            .trimmed
+
+        if result.isEmpty {
+            result = self.trimmed
+        }
+
+        return result.capitalizingSentenceStarts()
+    }
+
+    func removingGoalTimeline(_ timeline: GoalTimeline) -> String {
+        goalCardTitle(timeline: timeline)
+    }
+
+    func goalCardRationale() -> String {
+        replacingOccurrences(of: ";", with: ".")
+            .replacingOccurrences(of: "—", with: ". ")
+            .replacingOccurrences(of: "–", with: ". ")
+            .replacingOccurrences(
+                of: "Primary priority ([^,]+), athlete wants measurable numeric targets and to be more athletic\\.?",
+                with: "Your $1 priority and your preference for measurable targets give us a clear starting point.",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "Primary priority ([^,]+), athlete wants ([^.]+)\\.?",
+                with: "Your $1 priority matters here, and you want $2.",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "Primary interest in ([^+.]+) \\+ access to ([^.]+)\\.",
+                with: "Your $1 priority and access to $2 give us a clear starting point.",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bmeasurable numeric target suits\\b",
+                with: "We will use a measurable target that fits",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bStrength is secondary but supports\\b",
+                with: "Strength is a secondary priority, but it will support your",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bAn objective 1RM target fits the your preference for numbers\\.",
+                with: "You prefer numbers, so an objective 1RM target gives you a clear project.",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bThe athlete wants\\b",
+                with: "You want",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bAthlete wants\\b",
+                with: "You want",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bthe athlete's\\b",
+                with: "your",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bathlete\\b",
+                with: "you",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bthe user's\\b",
+                with: "your",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\buser's\\b",
+                with: "your",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bthe user\\b",
+                with: "you",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\buser\\b",
+                with: "you",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: "\\bthe your\\b",
+                with: "your",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(of: "/", with: " or ")
+            .replacingOccurrences(of: " + ", with: " and ")
+            .replacingOccurrences(of: "Primary interest in ", with: "Your priority is ")
+            .replacingOccurrences(of: "athlete's preference", with: "your preference")
+            .replacingOccurrences(of: "Athlete's preference", with: "Your preference")
+            .replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
+            .trimmed
+            .capitalizingSentenceStarts()
+    }
+
+    private func capitalizingSentenceStarts() -> String {
+        split(separator: ".", omittingEmptySubsequences: false)
+            .map { part in
+                let string = String(part)
+                let leadingSpaces = string.prefix { $0 == " " }
+                let trimmedPart = string.drop { $0 == " " }
+                guard let first = trimmedPart.first else {
+                    return string
+                }
+                return String(leadingSpaces) + first.uppercased() + String(trimmedPart.dropFirst())
+            }
+            .joined(separator: ".")
     }
 }
 
