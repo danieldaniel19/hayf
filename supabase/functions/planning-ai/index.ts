@@ -3,10 +3,11 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 type SupabaseAdminClient = any;
 
 type PlanningTask =
-  | "bootstrap_after_onboarding"
+  | "accept_strategy_and_create_initial_plan"
   | "sync_healthkit_and_reconcile"
   | "refresh_plan_window"
   | "record_plan_edit"
+  | "record_weekly_plan_constraint"
   | "recommend_workout_replacements"
   | "recommend_workout_additions"
   | "interpret_workout_description"
@@ -20,6 +21,14 @@ type PlanningTask =
 type PlanningAIRequest = {
   task: PlanningTask;
   healthSnapshot?: Record<string, unknown> | null;
+  acceptedBlueprint?: Record<string, unknown> | null;
+  accepted_blueprint?: Record<string, unknown> | null;
+  acceptedStrategy?: Record<string, unknown> | null;
+  accepted_strategy?: Record<string, unknown> | null;
+  acceptedAt?: string;
+  accepted_at?: string;
+  weeklyPlanConstraint?: WeeklyPlanConstraintInput | null;
+  weekly_plan_constraint?: WeeklyPlanConstraintInput | null;
   actualWorkouts?: ActualWorkoutInput[];
   syncWindow?: { startDate?: string; endDate?: string };
   deviceTimezone?: string;
@@ -47,6 +56,15 @@ type PlanningAIRequest = {
   current_derived_snapshot?: Record<string, unknown> | null;
   repairPolicy?: "immediate" | "deferred";
   repair_policy?: "immediate" | "deferred";
+};
+
+type WeeklyPlanConstraintInput = {
+  weekly_plan_id?: string;
+  weeklyPlanID?: string;
+  scheduled_date?: string;
+  scheduledDate?: string;
+  kind?: "available" | "limited" | "unavailable";
+  note?: string | null;
 };
 
 type ActualWorkoutInput = {
@@ -159,6 +177,13 @@ type TrainingProfile = {
   dimensions: TrainingDimension[];
   load: TrainingLoad;
   impact: TrainingImpact;
+};
+
+type PlanningScope = {
+  goal: Record<string, any>;
+  strategy: Record<string, any>;
+  timezone: string;
+  block: Record<string, any>;
 };
 
 type EditRiskKind = "compressed_recovery" | "cumulative_load" | "goal_drift" | "weekly_imbalance";
@@ -503,14 +528,16 @@ async function handleTask(args: {
   const { admin, requestBody, userID, model } = args;
 
   switch (requestBody.task) {
-    case "bootstrap_after_onboarding":
-      return bootstrapAfterOnboarding(admin, userID!, requestBody, model);
+    case "accept_strategy_and_create_initial_plan":
+      return acceptStrategyAndCreateInitialPlan(admin, userID!, requestBody, model);
     case "sync_healthkit_and_reconcile":
       return syncHealthKitAndReconcile(admin, userID!, requestBody, model);
     case "refresh_plan_window":
       return refreshPlanWindow(admin, userID!, requestBody, model, "user");
     case "record_plan_edit":
       return recordPlanEdit(admin, userID!, requestBody, model);
+    case "record_weekly_plan_constraint":
+      return recordWeeklyPlanConstraint(admin, userID!, requestBody);
     case "recommend_workout_replacements":
       return recommendWorkoutReplacements(admin, userID!, requestBody, model);
     case "recommend_workout_additions":
@@ -534,7 +561,7 @@ async function handleTask(args: {
   }
 }
 
-async function bootstrapAfterOnboarding(
+async function acceptStrategyAndCreateInitialPlan(
   admin: SupabaseAdminClient,
   userID: string,
   requestBody: PlanningAIRequest,
@@ -547,93 +574,136 @@ async function bootstrapAfterOnboarding(
   );
 
   const timezone = requestBody.deviceTimezone || "UTC";
-  const start = parseDateOnly(requestBody.startDate) ?? new Date();
-  const context = {
-    profile,
-    onboarding,
-    healthSnapshot: requestBody.healthSnapshot ?? null,
-    deviceTimezone: timezone,
-    startDate: isoDate(start),
-  };
+  const acceptedAt = parseTimestamp(requestBody.acceptedAt ?? requestBody.accepted_at) ?? new Date();
+  const acceptedLocalDate = dateOnlyInTimezone(acceptedAt, timezone);
+  const committedWeekStart = firstCommittedWeekStart(acceptedAt, timezone);
+  const draftWeekStart = addDays(committedWeekStart, 7);
+  const ownerStartDate = isoDate(committedWeekStart > acceptedLocalDate ? committedWeekStart : acceptedLocalDate);
+  const acceptedBlueprint = requestBody.acceptedBlueprint ?? requestBody.accepted_blueprint ?? {};
+  const acceptedStrategy = requestBody.acceptedStrategy ?? requestBody.accepted_strategy ?? {};
+  const goalKind = blockKind(String(onboarding.intent ?? ""));
+  const timeframeWeeks = acceptedStrategyTimeframeWeeks(acceptedStrategy, onboarding);
+  const requiresPhases = acceptedStrategyPhases(acceptedStrategy).length > 0 && goalKind !== "consistency";
+  const targetDate = goalKind === "consistency" || !timeframeWeeks
+    ? null
+    : isoDate(addDays(committedWeekStart, Math.max(1, timeframeWeeks) * 7 - 1));
 
-  let generated: GeneratedPlan;
-  let usedFallback = false;
-  try {
-    generated = sanitizeGeneratedPlan(await runPlanGeneration("bootstrap_after_onboarding", context, model), onboarding, start, timezone);
-  } catch (error) {
-    usedFallback = true;
-    await insertTrace(admin, {
-      userID,
-      task: "bootstrap_after_onboarding",
-      model,
-      compactRequest: { task: "bootstrap_after_onboarding", context },
-      structuredResponse: null,
-      status: "failure",
-      latencyMS: 0,
-      errorMessage: errorMessage(error),
-    });
-    generated = fallbackPlan(onboarding, start, timezone);
-  }
+  await supersedeActivePlanningRows(admin, userID);
+  const athleteProfile = await ensureAthleteProfile(admin, userID);
+  const blueprintRevision = await createAcceptedBlueprintRevision(admin, userID, athleteProfile, acceptedBlueprint, requestBody.healthSnapshot, acceptedAt);
 
-  await archiveActiveBlocks(admin, userID);
-
-  const block = await single(
+  const goal = await single(
     admin
-      .from("active_fitness_blocks")
+      .from("user_goals")
       .insert({
         user_id: userID,
-        kind: generated.block.kind,
-        title: generated.block.title,
-        goal_text: generated.block.goalText || null,
-        status: "active",
-        start_date: generated.block.startDate,
-        target_date: generated.block.targetDate,
-        review_cadence_days: generated.block.reviewCadenceDays,
-        timezone,
         source_onboarding_profile_id: onboarding.id,
-        context_json: generated.block.context,
+        source_blueprint_revision_id: blueprintRevision.id,
+        goal_kind: goalKind,
+        title: acceptedStrategyGoalTitle(acceptedStrategy, onboarding),
+        normalized_goal_json: normalizedGoalPayload(acceptedStrategy, onboarding, timeframeWeeks),
+        timeframe_weeks: timeframeWeeks,
+        status: "active",
+        start_date: isoDate(committedWeekStart),
+        target_date: targetDate,
+        requires_phases: requiresPhases,
       })
       .select()
       .single(),
-    "Could not create active fitness block",
+    "Could not create user goal",
   );
 
-  if (generated.phases.length > 0) {
-    await throwOnError(
-      admin.from("fitness_block_phases").insert(
-        generated.phases.map((phase) => ({
-          active_block_id: block.id,
-          user_id: userID,
-          name: phase.name,
-          start_date: phase.startDate,
-          end_date: phase.endDate,
-          objective: phase.objective,
-          focus_json: phase.focus,
-          risk_json: phase.risk,
-        })),
-      ),
-    );
+  const strategy = await single(
+    admin
+      .from("fitness_strategies")
+      .insert({
+        user_id: userID,
+        user_goal_id: goal.id,
+        source_blueprint_revision_id: blueprintRevision.id,
+        version: 1,
+        change_reason: "initial",
+        status: "active",
+        title: acceptedStrategyTitle(acceptedStrategy, goalKind),
+        summary: stringAt(acceptedStrategy, "read") || "",
+        rationale: stringAt(acceptedStrategy, "read") || "",
+        review_cadence_days: goalKind === "consistency" ? 28 : Math.max(28, (timeframeWeeks ?? 8) * 7),
+        start_date: isoDate(committedWeekStart),
+        target_date: targetDate,
+        requires_phases: requiresPhases,
+        context_json: {
+          timezone,
+          acceptedAt: acceptedAt.toISOString(),
+          planOwnerStartDate: ownerStartDate,
+          acceptedStrategy,
+        },
+      })
+      .select()
+      .single(),
+    "Could not create fitness strategy",
+  );
+
+  const phaseRows = await insertAcceptedStrategyPhases(admin, userID, strategy.id, acceptedStrategy);
+  await insertAcceptedPlanningTargets(admin, userID, goal, strategy, phaseRows, acceptedStrategy, isoDate(committedWeekStart), targetDate);
+
+  const context = {
+    profile,
+    onboarding,
+    acceptedBlueprint,
+    acceptedStrategy,
+    healthSnapshot: requestBody.healthSnapshot ?? null,
+    deviceTimezone: timezone,
+    startDate: isoDate(committedWeekStart),
+    planOwnerStartDate: ownerStartDate,
+    weeklyPlanStatuses: [
+      { weekStartDate: isoDate(committedWeekStart), status: "committed" },
+      { weekStartDate: isoDate(draftWeekStart), status: "draft" },
+    ],
+  };
+
+  const generated = sanitizeGeneratedPlan(
+    initialPlanFromAcceptedStrategy(onboarding, acceptedStrategy, acceptedBlueprint, committedWeekStart, timezone),
+    onboarding,
+    committedWeekStart,
+    timezone,
+  );
+
+  const weeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
+    userID,
+    strategyID: strategy.id,
+    rhythms: generated.rhythms,
+    source: "generated",
+    committedWeekStart: isoDate(committedWeekStart),
+    ownerStartDate,
+  });
+  await markCurrentWorkoutForStrategy(admin, userID, strategy.id, acceptedLocalDate);
+
+  if (requestBody.healthSnapshot) {
+    await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot);
+    await evaluatePlanningTargets(admin, userID, strategy.id, requestBody.healthSnapshot);
   }
 
-  await insertRhythmsAndWorkouts(admin, userID, block.id, generated.rhythms, "generated");
-  await markCurrentWorkout(admin, userID, block.id, start);
-  if (requestBody.healthSnapshot) {
-    await persistFitnessEvidence(admin, userID, block.id, requestBody.healthSnapshot);
-    await createInitialGoalTargets(admin, userID, block, requestBody.healthSnapshot);
-    await evaluateGoalTargets(admin, userID, block, requestBody.healthSnapshot);
-  }
   const event = await createPlanEvent(admin, {
     userID,
-    activeBlockID: block.id,
-    eventType: "bootstrapped",
-    payload: { usedFallback, blockKind: generated.block.kind },
+    fitnessStrategyID: strategy.id,
+    userGoalID: goal.id,
+    eventType: "strategy_accepted",
+    payload: {
+      usedDeterministicInitialPlan: true,
+      goalKind,
+      committedWeekStart: isoDate(committedWeekStart),
+      draftWeekStart: isoDate(draftWeekStart),
+      planOwnerStartDate: ownerStartDate,
+    },
   });
 
   return {
     userID,
-    model: usedFallback ? "deterministic-fallback" : model,
-    usedFallback,
-    activeBlockID: block.id,
+    model: "deterministic-initial",
+    usedFallback: true,
+    userGoalID: goal.id,
+    fitnessStrategyID: strategy.id,
+    blueprintRevisionID: blueprintRevision.id,
+    weeklyPlanIDs: weeklyPlans.map((plan) => plan.id),
     eventID: event.id,
     plan: generated,
   };
@@ -645,8 +715,8 @@ async function syncHealthKitAndReconcile(
   requestBody: PlanningAIRequest,
   model: string,
 ) {
-  const block = await loadActiveBlock(admin, userID);
-  const timezone = requestBody.deviceTimezone || block.timezone || "UTC";
+  const scope = await loadActivePlanningScope(admin, userID);
+  const timezone = requestBody.deviceTimezone || scope.timezone || "UTC";
 
   if (requestBody.healthSnapshot) {
     await throwOnError(
@@ -657,7 +727,7 @@ async function syncHealthKitAndReconcile(
         source_timezone: timezone,
       }),
     );
-    await persistFitnessEvidence(admin, userID, block.id, requestBody.healthSnapshot);
+    await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot);
   }
 
   let synced = 0;
@@ -692,7 +762,7 @@ async function syncHealthKitAndReconcile(
       continue;
     }
 
-    const match = await findWorkoutMatch(admin, userID, block.id, actual);
+    const match = await findWorkoutMatch(admin, userID, scope, actual);
     if (match) {
       await throwOnError(
         admin
@@ -703,15 +773,16 @@ async function syncHealthKitAndReconcile(
       await throwOnError(admin.from("planned_workouts").update({ status: "done" }).eq("id", match.workout.id));
       await createPlanEvent(admin, {
         userID,
-        activeBlockID: block.id,
+        fitnessStrategyID: scope.strategy.id,
+        weeklyPlanID: match.workout.weekly_plan_id ?? null,
         plannedWorkoutID: match.workout.id,
         eventType: "actual_matched",
         payload: { actual, confidence: match.confidence },
       });
-      await createWorkoutDebriefRequest(admin, userID, block.id, match.workout.id, upserted.id);
+      await createWorkoutDebriefRequest(admin, userID, null, match.workout.id, upserted.id);
       matched += 1;
     } else {
-      const inserted = await insertDetectedWorkout(admin, userID, block.id, actual);
+      const inserted = await insertDetectedWorkout(admin, userID, scope, actual);
       await throwOnError(
         admin
           .from("actual_workouts")
@@ -720,22 +791,23 @@ async function syncHealthKitAndReconcile(
       );
       const event = await createPlanEvent(admin, {
         userID,
-        activeBlockID: block.id,
+        fitnessStrategyID: scope.strategy.id,
+        weeklyPlanID: inserted.weekly_plan_id ?? null,
         plannedWorkoutID: inserted.id,
         eventType: "extra_workout_detected",
         payload: { actual },
       });
-      await createWorkoutDebriefRequest(admin, userID, block.id, inserted.id, upserted.id);
+      await createWorkoutDebriefRequest(admin, userID, null, inserted.id, upserted.id);
       detectedEvents.push({ eventID: event.id, plannedWorkoutID: inserted.id, actual });
       detected += 1;
     }
   }
 
-  const missedWorkouts = await markMissedWorkouts(admin, userID, block.id, requestBody.syncWindow?.endDate);
+  const missedWorkouts = await markMissedWorkouts(admin, userID, scope.strategy.id, requestBody.syncWindow?.endDate);
 
   const event = await createPlanEvent(admin, {
     userID,
-    activeBlockID: block.id,
+    fitnessStrategyID: scope.strategy.id,
     eventType: "actual_synced",
     payload: {
       synced,
@@ -750,7 +822,7 @@ async function syncHealthKitAndReconcile(
   if (detectedEvents.length > 0) {
     await createReplanProposal(admin, {
       userID,
-      activeBlockID: block.id,
+      fitnessStrategyID: scope.strategy.id,
       triggerEventID: event.id,
       reason: detectedEvents.length === 1
         ? "Unexpected HealthKit workout detected. Review whether the rest of the week should change."
@@ -774,12 +846,11 @@ async function syncHealthKitAndReconcile(
       true,
     );
   } else {
-    await markCurrentWorkout(admin, userID, block.id, new Date());
+    await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), timezone));
   }
 
   if (requestBody.healthSnapshot) {
-    await createInitialGoalTargets(admin, userID, block, requestBody.healthSnapshot);
-    await evaluateGoalTargets(admin, userID, block, requestBody.healthSnapshot);
+    await evaluatePlanningTargets(admin, userID, scope.strategy.id, requestBody.healthSnapshot);
   }
 
   return { userID, eventID: event.id, synced, matched, detected, missed: missedWorkouts.length, refreshOutput };
@@ -803,13 +874,14 @@ async function refreshPlanWindowForUser(
   trigger: "user" | "scheduled",
   force = false,
 ) {
-  const block = await loadActiveBlock(admin, userID);
-  const start = parseDateOnly(windowStart) ?? new Date();
+  const scope = await loadActivePlanningScope(admin, userID);
+  const timezone = scope.timezone || "UTC";
+  const start = parseDateOnly(windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
   const window = twoWeekWindow(start);
-  if (!force && trigger === "user" && await hasUsablePlanWindow(admin, userID, block.id, window)) {
+  if (!force && trigger === "user" && await hasUsablePlanWindow(admin, userID, scope.strategy.id, window)) {
     const event = await createPlanEvent(admin, {
       userID,
-      activeBlockID: block.id,
+      fitnessStrategyID: scope.strategy.id,
       eventType: "window_refreshed",
       payload: { trigger, skipped: true, reason: "visible_two_week_window_already_exists", window },
     });
@@ -818,7 +890,7 @@ async function refreshPlanWindowForUser(
       userID,
       model: "deterministic",
       skipped: true,
-      activeBlockID: block.id,
+      fitnessStrategyID: scope.strategy.id,
       eventID: event.id,
     };
   }
@@ -836,7 +908,7 @@ async function refreshPlanWindowForUser(
       .from("plan_events")
       .select()
       .eq("user_id", userID)
-      .eq("active_block_id", block.id)
+      .eq("fitness_strategy_id", scope.strategy.id)
       .order("created_at", { ascending: false })
       .limit(30),
   );
@@ -845,18 +917,39 @@ async function refreshPlanWindowForUser(
       .from("replan_proposals")
       .select()
       .eq("user_id", userID)
-      .eq("active_block_id", block.id)
+      .eq("fitness_strategy_id", scope.strategy.id)
       .in("status", ["pending", "accepted"])
       .order("created_at", { ascending: false })
       .limit(10),
   );
-  const context = { block, latestSnapshot, events, proposals, windowStart: isoDate(start), trigger, force };
+  const weeklyPlans = await list(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end)
+      .order("week_start_date", { ascending: true }),
+  );
+  const context = {
+    goal: scope.goal,
+    strategy: scope.strategy,
+    block: scope.block,
+    weeklyPlans,
+    latestSnapshot,
+    events,
+    proposals,
+    windowStart: isoDate(start),
+    trigger,
+    force,
+  };
   const healthDataFreshness = healthFreshness(latestSnapshot);
 
   let generated: GeneratedPlan;
   let usedFallback = false;
   try {
-    generated = sanitizeGeneratedPlan(await runPlanGeneration("refresh_plan_window", context, model), null, start, block.timezone ?? "UTC");
+    generated = sanitizeGeneratedPlan(await runPlanGeneration("refresh_plan_window", context, model), null, start, timezone);
   } catch (error) {
     usedFallback = true;
     await insertTrace(admin, {
@@ -869,26 +962,47 @@ async function refreshPlanWindowForUser(
       latencyMS: 0,
       errorMessage: errorMessage(error),
     });
-    generated = fallbackPlanFromBlock(block, start);
+    generated = fallbackPlanFromBlock(scope.block, start);
+  }
+
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  if (planIDs.length > 0) {
+    await throwOnError(
+      admin
+        .from("planned_workouts")
+        .update({ status: "superseded" })
+        .eq("user_id", userID)
+        .in("weekly_plan_id", planIDs)
+        .gte("scheduled_date", window.start)
+        .lte("scheduled_date", window.end)
+        .in("status", ["planned", "current"])
+        .in("source", ["generated", "replanned"]),
+    );
   }
 
   await throwOnError(
     admin
-      .from("planned_workouts")
+      .from("weekly_plans")
       .update({ status: "superseded" })
       .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .gte("scheduled_date", window.start)
-      .lte("scheduled_date", window.end)
-      .in("status", ["planned", "current"])
-      .in("source", ["generated", "replanned"]),
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end)
+      .in("status", ["committed", "draft"]),
   );
 
-  await insertRhythmsAndWorkouts(admin, userID, block.id, generated.rhythms, "replanned", isoDate(start));
-  await markCurrentWorkout(admin, userID, block.id, start);
+  await insertWeeklyPlansAndWorkouts(admin, {
+    userID,
+    strategyID: scope.strategy.id,
+    rhythms: generated.rhythms,
+    source: "replanned",
+    committedWeekStart: isoDate(start),
+    ownerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
+  });
+  await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), timezone));
   const event = await createPlanEvent(admin, {
     userID,
-    activeBlockID: block.id,
+    fitnessStrategyID: scope.strategy.id,
     eventType: "window_refreshed",
     payload: { trigger, usedFallback, window, healthDataFreshness },
   });
@@ -897,7 +1011,7 @@ async function refreshPlanWindowForUser(
     userID,
     model: usedFallback ? "deterministic-fallback" : model,
     usedFallback,
-    activeBlockID: block.id,
+    fitnessStrategyID: scope.strategy.id,
     eventID: event.id,
     plan: generated,
   };
@@ -913,28 +1027,21 @@ async function recordPlanEdit(
     throw new Error("record_plan_edit requires edit");
   }
 
-  const block = await loadActiveBlock(admin, userID);
+  const scope = await loadActivePlanningScope(admin, userID);
   const edit = requestBody.edit;
   if (edit.type !== "move_workout" && edit.type !== "delete_workout") {
     throw new Error("record_plan_edit only supports move and delete edits");
   }
-  const workout = await single(
-    admin
-      .from("planned_workouts")
-      .select()
-      .eq("id", edit.planned_workout_id)
-      .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .single(),
-    "Planned workout not found",
-  );
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, edit.planned_workout_id);
 
   let event: Record<string, any>;
   if (edit.type === "move_workout") {
+    const targetPlan = await weeklyPlanForDate(admin, userID, scope.strategy.id, edit.scheduled_date);
     await throwOnError(
       admin
         .from("planned_workouts")
         .update({
+          weekly_plan_id: targetPlan?.id ?? workout.weekly_plan_id ?? null,
           scheduled_date: edit.scheduled_date,
           sequence_order: edit.sequence_order ?? workout.sequence_order,
           source: "user_moved",
@@ -944,7 +1051,8 @@ async function recordPlanEdit(
     );
     event = await createPlanEvent(admin, {
       userID,
-      activeBlockID: block.id,
+      fitnessStrategyID: scope.strategy.id,
+      weeklyPlanID: targetPlan?.id ?? workout.weekly_plan_id ?? null,
       plannedWorkoutID: workout.id,
       eventType: "workout_moved",
       payload: { from: workout.scheduled_date, to: edit.scheduled_date },
@@ -958,7 +1066,8 @@ async function recordPlanEdit(
     );
     event = await createPlanEvent(admin, {
       userID,
-      activeBlockID: block.id,
+      fitnessStrategyID: scope.strategy.id,
+      weeklyPlanID: workout.weekly_plan_id ?? null,
       plannedWorkoutID: workout.id,
       eventType: "workout_deleted",
       payload: { deletedWorkout: workout },
@@ -969,15 +1078,15 @@ async function recordPlanEdit(
 
   const repairPolicy = requestedRepairPolicy(requestBody);
   const repair = repairPolicy === "deferred"
-    ? await buildPlanEditReviewHint(admin, userID, block, workout, edit, requestBody.deviceTimezone || block.timezone || "UTC")
-    : await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+    ? await buildPlanEditReviewHint(admin, userID, scope, workout, edit, requestBody.deviceTimezone || scope.timezone || "UTC")
+    : await buildPlanEditRepair(admin, userID, scope, workout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
-    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
     : null;
   if (!proposal || repairPolicy === "deferred") {
-    await expirePendingReplanProposals(admin, userID, block.id);
+    await expirePendingReplanProposals(admin, userID, scope.strategy.id);
   }
-  await markCurrentWorkout(admin, userID, block.id, new Date());
+  await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), requestBody.deviceTimezone || scope.timezone || "UTC"));
   return {
     userID,
     eventID: event.id,
@@ -1002,15 +1111,88 @@ async function recordPlanEdit(
   };
 }
 
+async function recordWeeklyPlanConstraint(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const input = requestBody.weeklyPlanConstraint ?? requestBody.weekly_plan_constraint;
+  const weeklyPlanID = input?.weekly_plan_id ?? input?.weeklyPlanID;
+  const scheduledDate = input?.scheduled_date ?? input?.scheduledDate;
+  const kind = input?.kind ?? "available";
+  const note = input?.note?.trim() || null;
+  if (!weeklyPlanID || !scheduledDate) {
+    throw new Error("record_weekly_plan_constraint requires weeklyPlanID and scheduledDate");
+  }
+  if (!["available", "limited", "unavailable"].includes(kind)) {
+    throw new Error("Use available, limited, or unavailable for a weekly plan constraint.");
+  }
+
+  const scope = await loadActivePlanningScope(admin, userID);
+  const weeklyPlan = await single(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("id", weeklyPlanID)
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .single(),
+    "Weekly plan not found",
+  );
+  if (scheduledDate < weeklyPlan.week_start_date || scheduledDate > weeklyPlan.week_end_date) {
+    throw new Error("Constraint date must be inside the selected weekly plan.");
+  }
+
+  const existing = weeklyPlan.constraints_json ?? {};
+  const days = { ...(existing.days ?? {}) };
+  if (kind === "available") {
+    delete days[scheduledDate];
+  } else {
+    days[scheduledDate] = {
+      kind,
+      note,
+      source: "user",
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  const constraints = { ...existing, days };
+
+  await throwOnError(
+    admin
+      .from("weekly_plans")
+      .update({ constraints_json: constraints })
+      .eq("id", weeklyPlanID)
+      .eq("user_id", userID),
+  );
+
+  const event = await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID,
+    eventType: "weekly_plan_constraint_recorded",
+    payload: { scheduledDate, kind, hasNote: Boolean(note) },
+  });
+
+  return {
+    userID,
+    model: "deterministic",
+    weeklyPlanID,
+    scheduledDate,
+    kind,
+    eventID: event.id,
+  };
+}
+
 async function buildPlanEditRepair(
   admin: SupabaseAdminClient,
   userID: string,
-  block: Record<string, any>,
+  scope: PlanningScope,
   editedWorkout: Record<string, any>,
   edit: PlanEditInput,
   model: string,
   timezone: string,
 ): Promise<EditRepairPlan | null> {
+  const block = scope.block;
   const affectedDates = [editedWorkout.scheduled_date];
   if (edit.type === "move_workout" || edit.type === "replace_workout" || edit.type === "add_workout") affectedDates.push(edit.scheduled_date);
   const parsedDates = affectedDates.map((date) => parseDateOnly(date)).filter(Boolean) as Date[];
@@ -1022,13 +1204,23 @@ async function buildPlanEditRepair(
   const lastWeek = new Date(Math.max(currentWeekStart.getTime(), affectedLastWeek.getTime()));
   const window = { start: isoDate(firstWeek), end: isoDate(addDays(lastWeek, 6)) };
 
-  const [workouts, rhythms, goalTargets] = await Promise.all([
+  const weeklyPlans = await list(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end),
+  );
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  const [workouts, goalTargets] = await Promise.all([
     list(
       admin
         .from("planned_workouts")
         .select()
         .eq("user_id", userID)
-        .eq("active_block_id", block.id)
+        .in("weekly_plan_id", planIDs.length > 0 ? planIDs : ["00000000-0000-0000-0000-000000000000"])
         .gte("scheduled_date", window.start)
         .lte("scheduled_date", window.end)
         .in("status", ["planned", "current", "checked_in", "adjusted", "done"])
@@ -1037,23 +1229,14 @@ async function buildPlanEditRepair(
     ),
     list(
       admin
-        .from("weekly_rhythms")
-        .select()
-        .eq("user_id", userID)
-        .eq("active_block_id", block.id)
-        .eq("status", "active")
-        .gte("week_start_date", window.start)
-        .lte("week_start_date", window.end),
-    ),
-    list(
-      admin
-        .from("fitness_goal_targets")
+        .from("planning_targets")
         .select("id,target_kind,title,description,metric_key,metric_category,evaluation_rule_json,status")
         .eq("user_id", userID)
-        .eq("active_block_id", block.id)
+        .eq("fitness_strategy_id", scope.strategy.id)
         .in("status", ["on_track", "lagging", "needs_review"]),
     ),
   ]);
+  const rhythms = weeklyPlans.map(weeklyPlanAsRhythm);
 
   const risks = detectPlanEditRisks({
     block,
@@ -1095,11 +1278,12 @@ async function buildPlanEditRepair(
 async function buildPlanEditReviewHint(
   admin: SupabaseAdminClient,
   userID: string,
-  block: Record<string, any>,
+  scope: PlanningScope,
   editedWorkout: Record<string, any>,
   edit: PlanEditInput,
   timezone: string,
 ): Promise<EditRepairPlan | null> {
+  const block = scope.block;
   const affectedDates = [editedWorkout.scheduled_date];
   if (edit.type === "move_workout" || edit.type === "replace_workout" || edit.type === "add_workout") affectedDates.push(edit.scheduled_date);
   const parsedDates = affectedDates.map((date) => parseDateOnly(date)).filter(Boolean) as Date[];
@@ -1111,13 +1295,23 @@ async function buildPlanEditReviewHint(
   const lastWeek = new Date(Math.max(currentWeekStart.getTime(), affectedLastWeek.getTime()));
   const window = { start: isoDate(firstWeek), end: isoDate(addDays(lastWeek, 6)) };
 
-  const [workouts, rhythms, goalTargets] = await Promise.all([
+  const weeklyPlans = await list(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end),
+  );
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  const [workouts, goalTargets] = await Promise.all([
     list(
       admin
         .from("planned_workouts")
         .select()
         .eq("user_id", userID)
-        .eq("active_block_id", block.id)
+        .in("weekly_plan_id", planIDs.length > 0 ? planIDs : ["00000000-0000-0000-0000-000000000000"])
         .gte("scheduled_date", window.start)
         .lte("scheduled_date", window.end)
         .in("status", ["planned", "current", "checked_in", "adjusted", "done"])
@@ -1126,23 +1320,14 @@ async function buildPlanEditReviewHint(
     ),
     list(
       admin
-        .from("weekly_rhythms")
-        .select()
-        .eq("user_id", userID)
-        .eq("active_block_id", block.id)
-        .eq("status", "active")
-        .gte("week_start_date", window.start)
-        .lte("week_start_date", window.end),
-    ),
-    list(
-      admin
-        .from("fitness_goal_targets")
+        .from("planning_targets")
         .select("id,target_kind,title,description,metric_key,metric_category,evaluation_rule_json,status")
         .eq("user_id", userID)
-        .eq("active_block_id", block.id)
+        .eq("fitness_strategy_id", scope.strategy.id)
         .in("status", ["on_track", "lagging", "needs_review"]),
     ),
   ]);
+  const rhythms = weeklyPlans.map(weeklyPlanAsRhythm);
 
   const risks = detectPlanEditRisks({
     block,
@@ -1185,13 +1370,13 @@ function reviewHintFromRepair(repair: EditRepairPlan) {
 async function createPlanEditRepairProposal(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  fitnessStrategyID: string,
   triggerEventID: string,
   repair: EditRepairPlan,
 ) {
   return createReplanProposal(admin, {
     userID,
-    activeBlockID,
+    fitnessStrategyID,
     triggerEventID,
     reason: repair.reason,
     mutations: repair.mutations,
@@ -1721,8 +1906,9 @@ function createSupportWorkoutMutation(args: {
     source_workout_title: sourceWorkout.title ?? null,
     source_scheduled_date: sourceWorkout.scheduled_date ?? null,
     fields: {
-      active_block_id: block.id,
-      weekly_rhythm_id: rhythm?.id ?? sourceWorkout.weekly_rhythm_id ?? null,
+      active_block_id: null,
+      weekly_rhythm_id: null,
+      weekly_plan_id: rhythm?.weekly_plan_id ?? rhythm?.id ?? sourceWorkout.weekly_plan_id ?? null,
       scheduled_date: openDate,
       sequence_order: nextSequenceOrderForDate(weekWorkouts, openDate),
       activity_type: activityType,
@@ -1810,15 +1996,17 @@ async function recommendWorkoutReplacements(
     throw new Error("recommend_workout_replacements requires plannedWorkoutID");
   }
 
-  const block = await loadActiveBlock(admin, userID);
-  const workout = await loadPlannedWorkout(admin, userID, block.id, plannedWorkoutID);
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
   const window = twoWeekWindow(parseDateOnly(workout.scheduled_date) ?? new Date());
+  const weeklyPlans = await visibleWeeklyPlans(admin, userID, scope.strategy.id, window);
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
   const surroundingWorkouts = await list(
     admin
       .from("planned_workouts")
       .select()
       .eq("user_id", userID)
-      .eq("active_block_id", block.id)
+      .in("weekly_plan_id", planIDs.length > 0 ? planIDs : ["00000000-0000-0000-0000-000000000000"])
       .gte("scheduled_date", window.start)
       .lte("scheduled_date", window.end)
       .not("status", "in", "(deleted,superseded)")
@@ -1827,29 +2015,20 @@ async function recommendWorkoutReplacements(
   );
   const phases = await list(
     admin
-      .from("fitness_block_phases")
+      .from("fitness_strategy_phases")
       .select()
       .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .order("start_date", { ascending: true }),
-  );
-  const weeklyRhythms = await list(
-    admin
-      .from("weekly_rhythms")
-      .select()
-      .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .gte("week_start_date", window.start)
-      .lte("week_start_date", window.end)
-      .order("week_start_date", { ascending: true }),
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .order("sequence_order", { ascending: true }),
   );
 
   const context = {
-    block,
+    block: scope.block,
+    strategy: scope.strategy,
     workoutToReplace: workout,
     surroundingWorkouts,
     phases,
-    weeklyRhythms,
+    weeklyRhythms: weeklyPlans.map(weeklyPlanAsRhythm),
     userIntent: requestBody.textContext || "I do not want to do this workout in this slot.",
     window,
   };
@@ -1892,9 +2071,9 @@ async function recommendWorkoutAdditions(
     throw new Error("recommend_workout_additions requires scheduledDate");
   }
 
-  const block = await loadActiveBlock(admin, userID);
-  throwIfPastPlanningDate(scheduledDate, block.timezone || "UTC");
-  const context = await loadWorkoutPlanningContext(admin, userID, block, scheduledDate);
+  const scope = await loadActivePlanningScope(admin, userID);
+  throwIfPastPlanningDate(scheduledDate, scope.timezone || "UTC");
+  const context = await loadWorkoutPlanningContext(admin, userID, scope, scheduledDate);
 
   let candidates: WorkoutCandidate[];
   let usedFallback = false;
@@ -1946,14 +2125,14 @@ async function interpretWorkoutDescription(
     throw new Error("Describe a workout with a sport or modality, plus useful size or effort detail.");
   }
 
-  const block = await loadActiveBlock(admin, userID);
+  const scope = await loadActivePlanningScope(admin, userID);
   const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
   const scheduledDate = requestBody.scheduledDate ?? requestBody.scheduled_date;
   let workout: Record<string, any> | null = null;
   let contextDate = scheduledDate;
 
   if (plannedWorkoutID) {
-    const loadedWorkout = await loadPlannedWorkout(admin, userID, block.id, plannedWorkoutID);
+    const loadedWorkout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
     workout = loadedWorkout;
     contextDate = loadedWorkout.scheduled_date;
   }
@@ -1961,8 +2140,8 @@ async function interpretWorkoutDescription(
     throw new Error("interpret_workout_description requires plannedWorkoutID or scheduledDate");
   }
 
-  throwIfPastPlanningDate(contextDate, block.timezone || "UTC");
-  const planningContext = await loadWorkoutPlanningContext(admin, userID, block, contextDate);
+  throwIfPastPlanningDate(contextDate, scope.timezone || "UTC");
+  const planningContext = await loadWorkoutPlanningContext(admin, userID, scope, contextDate);
   const context = {
     ...planningContext,
     workoutToReplace: workout,
@@ -2013,8 +2192,8 @@ async function replaceWorkout(
     throw new Error("replace_workout requires plannedWorkoutID and replacementCandidate");
   }
 
-  const block = await loadActiveBlock(admin, userID);
-  const workout = await loadPlannedWorkout(admin, userID, block.id, plannedWorkoutID);
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
   const status = workout.status === "current" ? "current" : "planned";
 
   await throwOnError(
@@ -2032,8 +2211,9 @@ async function replaceWorkout(
     admin
       .from("planned_workouts")
       .insert({
-        active_block_id: workout.active_block_id,
-        weekly_rhythm_id: workout.weekly_rhythm_id,
+        active_block_id: null,
+        weekly_rhythm_id: null,
+        weekly_plan_id: workout.weekly_plan_id ?? null,
         user_id: userID,
         scheduled_date: workout.scheduled_date,
         sequence_order: workout.sequence_order,
@@ -2061,7 +2241,8 @@ async function replaceWorkout(
 
   const event = await createPlanEvent(admin, {
     userID,
-    activeBlockID: block.id,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout.weekly_plan_id ?? null,
     plannedWorkoutID: replacement.id,
     eventType: "workout_moved",
     payload: {
@@ -2080,15 +2261,15 @@ async function replaceWorkout(
   };
   const repairPolicy = requestedRepairPolicy(requestBody);
   const repair = repairPolicy === "deferred"
-    ? await buildPlanEditReviewHint(admin, userID, block, workout, edit, requestBody.deviceTimezone || block.timezone || "UTC")
-    : await buildPlanEditRepair(admin, userID, block, workout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+    ? await buildPlanEditReviewHint(admin, userID, scope, workout, edit, requestBody.deviceTimezone || scope.timezone || "UTC")
+    : await buildPlanEditRepair(admin, userID, scope, workout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
-    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
     : null;
   if (!proposal || repairPolicy === "deferred") {
-    await expirePendingReplanProposals(admin, userID, block.id);
+    await expirePendingReplanProposals(admin, userID, scope.strategy.id);
   }
-  await markCurrentWorkout(admin, userID, block.id, new Date());
+  await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), requestBody.deviceTimezone || scope.timezone || "UTC"));
   return {
     userID,
     eventID: event.id,
@@ -2127,9 +2308,9 @@ async function addWorkout(
     throw new Error("add_workout requires scheduledDate and workoutCandidate");
   }
 
-  const block = await loadActiveBlock(admin, userID);
-  throwIfPastPlanningDate(scheduledDate, block.timezone || "UTC");
-  const context = await loadWorkoutPlanningContext(admin, userID, block, scheduledDate);
+  const scope = await loadActivePlanningScope(admin, userID);
+  throwIfPastPlanningDate(scheduledDate, scope.timezone || "UTC");
+  const context = await loadWorkoutPlanningContext(admin, userID, scope, scheduledDate);
   const candidate = sanitizeWorkoutCandidate(rawCandidate, fallbackAdditionCandidates(context)[0], "candidate-1");
   const sequenceOrder = requestBody.sequenceOrder ?? requestBody.sequence_order ??
     nextSequenceOrderForDate(context.surroundingWorkouts, scheduledDate);
@@ -2138,8 +2319,9 @@ async function addWorkout(
     admin
       .from("planned_workouts")
       .insert({
-        active_block_id: block.id,
-        weekly_rhythm_id: context.weeklyRhythm?.id ?? null,
+        active_block_id: null,
+        weekly_rhythm_id: null,
+        weekly_plan_id: context.weeklyPlan?.id ?? null,
         user_id: userID,
         scheduled_date: scheduledDate,
         sequence_order: sequenceOrder,
@@ -2166,7 +2348,8 @@ async function addWorkout(
 
   const event = await createPlanEvent(admin, {
     userID,
-    activeBlockID: block.id,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: context.weeklyPlan?.id ?? null,
     plannedWorkoutID: addedWorkout.id,
     eventType: "workout_added",
     payload: {
@@ -2184,15 +2367,15 @@ async function addWorkout(
   };
   const repairPolicy = requestedRepairPolicy(requestBody);
   const repair = repairPolicy === "deferred"
-    ? await buildPlanEditReviewHint(admin, userID, block, addedWorkout, edit, requestBody.deviceTimezone || block.timezone || "UTC")
-    : await buildPlanEditRepair(admin, userID, block, addedWorkout, edit, model, requestBody.deviceTimezone || block.timezone || "UTC");
+    ? await buildPlanEditReviewHint(admin, userID, scope, addedWorkout, edit, requestBody.deviceTimezone || scope.timezone || "UTC")
+    : await buildPlanEditRepair(admin, userID, scope, addedWorkout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
-    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
     : null;
   if (!proposal || repairPolicy === "deferred") {
-    await expirePendingReplanProposals(admin, userID, block.id);
+    await expirePendingReplanProposals(admin, userID, scope.strategy.id);
   }
-  await markCurrentWorkout(admin, userID, block.id, new Date());
+  await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), requestBody.deviceTimezone || scope.timezone || "UTC"));
 
   return {
     userID,
@@ -2254,11 +2437,13 @@ async function applyReplanProposal(
       .eq("id", proposal.id),
   );
 
-  await expirePendingReplanProposals(admin, userID, proposal.active_block_id, proposal.id);
+  await expirePendingReplanProposals(admin, userID, proposal.fitness_strategy_id ?? proposal.active_block_id, proposal.id);
 
   const event = await createPlanEvent(admin, {
     userID,
     activeBlockID: proposal.active_block_id,
+    fitnessStrategyID: proposal.fitness_strategy_id ?? null,
+    weeklyPlanID: proposal.weekly_plan_id ?? null,
     eventType: requestBody.decision === "accepted" ? "proposal_accepted" : "proposal_rejected",
     payload: { proposalID: proposal.id },
   });
@@ -2277,35 +2462,35 @@ async function createRepairProposalForRecentEdit(
     throw new Error("create_repair_proposal_for_recent_edit requires eventID");
   }
 
-  const block = await loadActiveBlock(admin, userID);
+  const scope = await loadActivePlanningScope(admin, userID);
   const event = await single(
     admin
       .from("plan_events")
       .select()
       .eq("id", eventID)
       .eq("user_id", userID)
-      .eq("active_block_id", block.id)
+      .eq("fitness_strategy_id", scope.strategy.id)
       .single(),
     "Plan edit event not found",
   );
 
   const payload = event.payload_json ?? {};
-  const reconstructed = await reconstructPlanEditFromEvent(admin, userID, block, event, payload);
+  const reconstructed = await reconstructPlanEditFromEvent(admin, userID, scope, event, payload);
   const repair = await buildPlanEditRepair(
     admin,
     userID,
-    block,
+    scope,
     reconstructed.editedWorkout,
     reconstructed.edit,
     model,
-    requestBody.deviceTimezone || block.timezone || "UTC",
+    requestBody.deviceTimezone || scope.timezone || "UTC",
   );
 
   const proposal = repair
-    ? await createPlanEditRepairProposal(admin, userID, block.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
     : null;
   if (!proposal) {
-    await expirePendingReplanProposals(admin, userID, block.id);
+    await expirePendingReplanProposals(admin, userID, scope.strategy.id);
   }
 
   return {
@@ -2335,7 +2520,7 @@ async function createRepairProposalForRecentEdit(
 async function reconstructPlanEditFromEvent(
   admin: SupabaseAdminClient,
   userID: string,
-  block: Record<string, any>,
+  scope: PlanningScope,
   event: Record<string, any>,
   payload: Record<string, any>,
 ): Promise<{ editedWorkout: Record<string, any>; edit: PlanEditInput }> {
@@ -2345,8 +2530,8 @@ async function reconstructPlanEditFromEvent(
     if (!originalWorkoutID || !replacementWorkoutID) {
       throw new Error("Replacement event is missing workout IDs");
     }
-    const original = await loadPlannedWorkout(admin, userID, block.id, originalWorkoutID);
-    const replacement = await loadPlannedWorkout(admin, userID, block.id, replacementWorkoutID);
+    const original = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, originalWorkoutID);
+    const replacement = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, replacementWorkoutID);
     return {
       editedWorkout: original,
       edit: {
@@ -2363,7 +2548,7 @@ async function reconstructPlanEditFromEvent(
     if (!addedWorkoutID) {
       throw new Error("Add event is missing workout ID");
     }
-    const added = await loadPlannedWorkout(admin, userID, block.id, addedWorkoutID);
+    const added = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, addedWorkoutID);
     return {
       editedWorkout: added,
       edit: {
@@ -2377,7 +2562,7 @@ async function reconstructPlanEditFromEvent(
   if (event.event_type === "workout_deleted") {
     const deletedWorkout = payload.deletedWorkout as Record<string, any> | undefined;
     const workoutID = String(deletedWorkout?.id ?? event.planned_workout_id ?? "");
-    const editedWorkout = deletedWorkout ?? await loadPlannedWorkout(admin, userID, block.id, workoutID);
+    const editedWorkout = deletedWorkout ?? await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, workoutID);
     return {
       editedWorkout,
       edit: {
@@ -2392,7 +2577,7 @@ async function reconstructPlanEditFromEvent(
     if (!workoutID) {
       throw new Error("Move event is missing workout ID");
     }
-    const workout = await loadPlannedWorkout(admin, userID, block.id, workoutID);
+    const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, workoutID);
     const from = String(payload.from ?? workout.scheduled_date);
     const to = String(payload.to ?? workout.scheduled_date);
     return {
@@ -2419,22 +2604,14 @@ async function checkInToWorkout(
     throw new Error("check_in_to_workout requires plannedWorkoutID");
   }
 
-  const block = await loadActiveBlock(admin, userID);
-  const workout = await single(
-    admin
-      .from("planned_workouts")
-      .select()
-      .eq("id", plannedWorkoutID)
-      .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .single(),
-    "Planned workout not found",
-  );
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
 
   const shouldAdjust = checkInSuggestsAdjustment(requestBody);
   const event = await createPlanEvent(admin, {
     userID,
-    activeBlockID: workout.active_block_id,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout.weekly_plan_id ?? null,
     plannedWorkoutID: workout.id,
     eventType: "checkin_recorded",
     payload: {
@@ -2459,7 +2636,8 @@ async function checkInToWorkout(
   const adjustedDuration = Math.max(15, Math.round((workout.duration_minutes ?? 30) * 0.7));
   const proposal = await createReplanProposal(admin, {
     userID,
-    activeBlockID: workout.active_block_id,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout.weekly_plan_id ?? null,
     triggerEventID: event.id,
     reason: "Check-in suggests lowering today's dose while preserving the training intent.",
     mutations: [
@@ -2492,29 +2670,30 @@ async function checkInToWorkout(
 }
 
 async function scheduledRefreshDueWindows(admin: SupabaseAdminClient, model: string) {
-  const blocks = await list(
+  const strategies = await list(
     admin
-      .from("active_fitness_blocks")
-      .select("id,user_id,timezone")
+      .from("fitness_strategies")
+      .select("id,user_id,context_json")
       .eq("status", "active"),
   );
 
-  const dueBlocks = blocks.filter((block: Record<string, any>) => isSundayEveningInTimezone(block.timezone || "UTC"));
+  const dueStrategies = strategies.filter((strategy: Record<string, any>) => isSundayEveningInTimezone(strategy.context_json?.timezone || "UTC"));
   const refreshed: string[] = [];
   const failed: Array<{ userID: string; error: string }> = [];
 
-  for (const block of dueBlocks) {
+  for (const strategy of dueStrategies) {
     try {
-      await refreshPlanWindowForUser(admin, block.user_id, undefined, model, "scheduled");
-      refreshed.push(block.user_id);
+      await promoteDraftWeeklyPlan(admin, strategy.user_id, strategy.id);
+      await refreshPlanWindowForUser(admin, strategy.user_id, undefined, model, "scheduled", true);
+      refreshed.push(strategy.user_id);
     } catch (error) {
-      failed.push({ userID: block.user_id, error: errorMessage(error) });
+      failed.push({ userID: strategy.user_id, error: errorMessage(error) });
     }
   }
 
   return {
     model: "deterministic",
-    due: dueBlocks.length,
+    due: dueStrategies.length,
     refreshed,
     failed,
   };
@@ -2534,7 +2713,7 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
         {
           role: "system",
           content:
-            "You are HAYF's fitness planning engine. Return strict JSON for an active block, optional phases, and a two-week plan window. HAYF uses one active fitness block, weekly rhythm, and daily adaptation. Do not create fake phases for consistency blocks. Do not ask follow-up questions. Use compact HealthKit-derived summaries only; never request raw samples.",
+            "You are HAYF's fitness planning engine. Return strict JSON for an accepted strategy, optional phases, and a two-week plan window. HAYF uses one active fitness strategy, committed/draft weekly plans, and daily adaptation. Do not create fake phases for consistency goals. Do not ask follow-up questions. Use compact HealthKit-derived summaries only; never request raw samples.",
         },
         {
           role: "user",
@@ -2542,7 +2721,7 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
             task,
             context,
             rules:
-              "Generate current week and next week. Include full workout prescriptions for every workout and a one-line fuelingSummary. Keep distant block context directional; make only the next two weeks concrete. The active block title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in block.context.planningRationale, not in block.title.",
+              "Generate the committed week and draft week. If context.planOwnerStartDate is present, the committed week must include planned workouts only on or after that date; earlier committed-week dates are HealthKit history ledger days, not missed planned sessions. Include full workout prescriptions for every returned workout and a one-line fuelingSummary. Keep distant strategy context directional; make only the next two weeks concrete. Strategy title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in strategy context, not in the title.",
           }),
         },
       ],
@@ -2584,7 +2763,7 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
         {
           role: "system",
           content:
-            "You are HAYF's fitness planning engine. Recommend replacement workouts when a user does not want to do a planned session. Preserve the active block intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
+            "You are HAYF's fitness planning engine. Recommend replacement workouts when a user does not want to do a planned session. Preserve the active strategy intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
         },
         {
           role: "user",
@@ -2634,7 +2813,7 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
         {
           role: "system",
           content:
-            "You are HAYF's fitness planning engine. Recommend workouts a user can add to a selected day. Preserve the active block intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
+            "You are HAYF's fitness planning engine. Recommend workouts a user can add to a selected day. Preserve the active strategy intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
         },
         {
           role: "user",
@@ -2828,19 +3007,21 @@ function fallbackReplacementTitle(workout: Record<string, any>, index: number) {
 async function loadWorkoutPlanningContext(
   admin: SupabaseAdminClient,
   userID: string,
-  block: Record<string, any>,
+  scope: PlanningScope,
   scheduledDate: string,
 ) {
   const date = parseDateOnly(scheduledDate) ?? new Date();
   const window = twoWeekWindow(date);
   const weekStart = isoDate(startOfWeek(date));
-  const [surroundingWorkouts, phases, weeklyRhythms] = await Promise.all([
+  const weeklyPlans = await visibleWeeklyPlans(admin, userID, scope.strategy.id, window);
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  const [surroundingWorkouts, phases] = await Promise.all([
     list(
       admin
         .from("planned_workouts")
         .select()
         .eq("user_id", userID)
-        .eq("active_block_id", block.id)
+        .in("weekly_plan_id", planIDs.length > 0 ? planIDs : ["00000000-0000-0000-0000-000000000000"])
         .gte("scheduled_date", window.start)
         .lte("scheduled_date", window.end)
         .not("status", "in", "(deleted,superseded)")
@@ -2849,28 +3030,22 @@ async function loadWorkoutPlanningContext(
     ),
     list(
       admin
-        .from("fitness_block_phases")
+        .from("fitness_strategy_phases")
         .select()
         .eq("user_id", userID)
-        .eq("active_block_id", block.id)
-        .order("start_date", { ascending: true }),
-    ),
-    list(
-      admin
-        .from("weekly_rhythms")
-        .select()
-        .eq("user_id", userID)
-        .eq("active_block_id", block.id)
-        .gte("week_start_date", window.start)
-        .lte("week_start_date", window.end)
-        .order("week_start_date", { ascending: true }),
+        .eq("fitness_strategy_id", scope.strategy.id)
+        .order("sequence_order", { ascending: true }),
     ),
   ]);
+  const weeklyRhythms = weeklyPlans.map(weeklyPlanAsRhythm);
+  const weeklyPlan = weeklyPlans.find((plan: Record<string, any>) => plan.week_start_date === weekStart) ?? null;
 
   return {
-    block,
+    block: scope.block,
+    strategy: scope.strategy,
     scheduledDate,
     weekStart,
+    weeklyPlan,
     weeklyRhythm: weeklyRhythms.find((rhythm: Record<string, any>) => rhythm.week_start_date === weekStart) ?? null,
     surroundingWorkouts,
     phases,
@@ -3063,6 +3238,453 @@ function throwIfPastPlanningDate(scheduledDate: string, timezone: string) {
   }
 }
 
+function parseTimestamp(value: string | undefined) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function timezoneDateParts(date: Date, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value;
+  return {
+    weekday: value("weekday") ?? "",
+    year: value("year") ?? "1970",
+    month: value("month") ?? "01",
+    day: value("day") ?? "01",
+    hour: Number(value("hour") ?? "0"),
+  };
+}
+
+function dateOnlyInTimezone(date: Date, timezone: string) {
+  const parts = timezoneDateParts(date, timezone);
+  return parseDateOnly(`${parts.year}-${parts.month}-${parts.day}`) ?? date;
+}
+
+function firstCommittedWeekStart(acceptedAt: Date, timezone: string) {
+  const localDate = dateOnlyInTimezone(acceptedAt, timezone);
+  const weekStart = startOfWeek(localDate);
+  const parts = timezoneDateParts(acceptedAt, timezone);
+  return parts.weekday === "Sun" && parts.hour >= 21 ? addDays(weekStart, 7) : weekStart;
+}
+
+async function supersedeActivePlanningRows(admin: SupabaseAdminClient, userID: string) {
+  await throwOnError(
+    admin
+      .from("fitness_strategies")
+      .update({ status: "superseded" })
+      .eq("user_id", userID)
+      .eq("status", "active"),
+  );
+  await throwOnError(
+    admin
+      .from("user_goals")
+      .update({ status: "superseded" })
+      .eq("user_id", userID)
+      .eq("status", "active"),
+  );
+}
+
+async function ensureAthleteProfile(admin: SupabaseAdminClient, userID: string) {
+  const existing = await maybeSingle(admin.from("athlete_profiles").select().eq("user_id", userID).limit(1));
+  if (existing) return existing;
+
+  return single(
+    admin.from("athlete_profiles").insert({ user_id: userID }).select().single(),
+    "Could not create athlete profile",
+  );
+}
+
+async function createAcceptedBlueprintRevision(
+  admin: SupabaseAdminClient,
+  userID: string,
+  athleteProfile: Record<string, any>,
+  acceptedBlueprint: Record<string, unknown>,
+  healthSnapshot: Record<string, unknown> | null | undefined,
+  acceptedAt: Date,
+) {
+  const existing = await list(
+    admin
+      .from("athlete_blueprint_revisions")
+      .select("revision_number")
+      .eq("athlete_profile_id", athleteProfile.id)
+      .order("revision_number", { ascending: false })
+      .limit(1),
+  );
+  const revisionNumber = Number(existing[0]?.revision_number ?? 0) + 1;
+  const revision = await single(
+    admin
+      .from("athlete_blueprint_revisions")
+      .insert({
+        athlete_profile_id: athleteProfile.id,
+        user_id: userID,
+        revision_number: revisionNumber,
+        generation_reason: "initial_post_onboarding",
+        coach_read: stringAt(objectAt(acceptedBlueprint, "coachRead"), "text") || stringAt(acceptedBlueprint, "coachRead") || "",
+        athlete_archetype_json: objectAt(acceptedBlueprint, "archetype") ?? {},
+        current_training_state_json: objectAt(acceptedBlueprint, "currentTrainingState") ?? {},
+        history_findings_json: arrayAt(acceptedBlueprint, "historyFindings"),
+        goal_fit_json: objectAt(acceptedBlueprint, "goalFit") ?? {},
+        planning_inputs_json: { acceptedBlueprint },
+        evidence_packet_json: { healthSnapshot: healthSnapshot ?? null },
+        evidence_packet_version: "v1",
+        accepted_at: acceptedAt.toISOString(),
+      })
+      .select()
+      .single(),
+    "Could not create athlete blueprint revision",
+  );
+
+  await throwOnError(
+    admin
+      .from("athlete_profiles")
+      .update({ current_blueprint_revision_id: revision.id })
+      .eq("id", athleteProfile.id)
+      .eq("user_id", userID),
+  );
+
+  return revision;
+}
+
+function acceptedStrategyGoalTitle(strategy: Record<string, unknown>, onboarding: Record<string, any>) {
+  const fromStrategy = stringAt(objectAt(strategy, "goalTargetContext"), "title");
+  const selected = onboarding.selected_answers ?? {};
+  return fromStrategy || selected.chosenGoal?.title || selected.goalBrief || "Active goal";
+}
+
+function acceptedStrategyTitle(strategy: Record<string, unknown>, goalKind: string) {
+  const explicit = stringAt(strategy, "title");
+  if (explicit) return explicit;
+  const hasPhases = acceptedStrategyPhases(strategy).length > 0;
+  if (goalKind === "consistency") return "Consistency Strategy";
+  return hasPhases ? "Goal Build Strategy" : "Fitness Strategy";
+}
+
+function acceptedStrategyTimeframeWeeks(strategy: Record<string, unknown>, onboarding: Record<string, any>) {
+  const snapshotItems = arrayAt(strategy, "snapshotItems");
+  const item = snapshotItems.find((entry) => stringAt(entry, "id") === "timeframe");
+  const fromSnapshot = Number(stringAt(item ?? {}, "value") ?? NaN);
+  if (Number.isFinite(fromSnapshot) && fromSnapshot > 0) return Math.round(fromSnapshot);
+  const selected = onboarding.selected_answers ?? {};
+  const candidate = Number(selected.chosenGoal?.timeline?.weeks ?? selected.goalTimeline?.weeks ?? NaN);
+  if (Number.isFinite(candidate) && candidate > 0) return Math.round(candidate);
+  return blockKind(String(onboarding.intent ?? "")) === "consistency" ? 12 : 8;
+}
+
+function normalizedGoalPayload(strategy: Record<string, unknown>, onboarding: Record<string, any>, timeframeWeeks: number) {
+  return {
+    title: acceptedStrategyGoalTitle(strategy, onboarding),
+    timeframeWeeks,
+    source: "accepted_strategy",
+    onboardingIntent: onboarding.intent ?? null,
+    goalTargetContext: objectAt(strategy, "goalTargetContext") ?? null,
+  };
+}
+
+function acceptedStrategyPhases(strategy: Record<string, unknown>) {
+  return arrayAt(strategy, "phases");
+}
+
+async function insertAcceptedStrategyPhases(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  strategy: Record<string, unknown>,
+) {
+  const phases = acceptedStrategyPhases(strategy);
+  const rows: Record<string, any>[] = [];
+  for (const [index, phase] of phases.entries()) {
+    const saved = await single(
+      admin
+        .from("fitness_strategy_phases")
+        .insert({
+          fitness_strategy_id: strategyID,
+          user_id: userID,
+          sequence_order: index + 1,
+          name: stringAt(phase, "name") || `Phase ${index + 1}`,
+          objective: stringAt(phase, "objective") || "",
+          focus_json: [stringAt(phase, "targetSummary")].filter(Boolean),
+          risk_json: [],
+        })
+        .select()
+        .single(),
+      "Could not create strategy phase",
+    );
+    rows.push({ ...saved, artifact_id: stringAt(phase, "id") || saved.id, artifact: phase });
+  }
+  return rows;
+}
+
+async function insertAcceptedPlanningTargets(
+  admin: SupabaseAdminClient,
+  userID: string,
+  goal: Record<string, any>,
+  strategy: Record<string, any>,
+  phaseRows: Record<string, any>[],
+  strategyArtifact: Record<string, unknown>,
+  startDate: string,
+  targetDate: string | null,
+) {
+  const rows: Record<string, unknown>[] = [];
+  const addTarget = (target: Record<string, unknown>, phaseID?: string | null) => {
+    const scope = normalizedTargetScope(stringAt(target, "scope"), phaseID);
+    const row = planningTargetRowFromArtifact({
+      userID,
+      goalID: goal.id,
+      strategyID: strategy.id,
+      phaseID: phaseID ?? null,
+      target,
+      scope,
+      startDate,
+      targetDate,
+    });
+    if (row) rows.push(row);
+  };
+
+  for (const target of arrayAt(strategyArtifact, "targets")) {
+    addTarget(target);
+  }
+
+  for (const phase of phaseRows) {
+    for (const target of arrayAt(phase.artifact ?? {}, "targets")) {
+      addTarget(target, phase.id);
+    }
+  }
+
+  if (rows.length > 0) {
+    await throwOnError(admin.from("planning_targets").insert(rows));
+  }
+}
+
+function normalizedTargetScope(scope: string | undefined, phaseID?: string | null) {
+  if (phaseID) return "phase";
+  if (scope === "goal" || scope === "strategy" || scope === "phase" || scope === "week" || scope === "session") return scope;
+  return "strategy";
+}
+
+function planningTargetRowFromArtifact(args: {
+  userID: string;
+  goalID: string;
+  strategyID: string;
+  phaseID: string | null;
+  target: Record<string, unknown>;
+  scope: string;
+  startDate: string;
+  targetDate: string | null;
+}) {
+  const title = stringAt(args.target, "title");
+  if (!title) return null;
+  const scope = args.scope === "week" || args.scope === "session" ? "strategy" : args.scope;
+  return {
+    user_id: args.userID,
+    user_goal_id: scope === "goal" ? args.goalID : null,
+    fitness_strategy_id: scope === "strategy" ? args.strategyID : null,
+    fitness_strategy_phase_id: scope === "phase" ? args.phaseID : null,
+    weekly_plan_id: null,
+    planned_workout_id: null,
+    target_scope: scope,
+    target_kind: normalizedTargetKind(stringAt(args.target, "kind")),
+    title,
+    description: stringAt(args.target, "summary") || null,
+    metric_key: stringAt(args.target, "metricKey") || null,
+    metric_category: stringAt(args.target, "metricCategory") || "strategy",
+    direction: normalizedTargetDirection(stringAt(args.target, "direction")),
+    baseline_value: null,
+    target_value: numberAt(args.target, "targetValue"),
+    unit: stringAt(args.target, "unit") || null,
+    start_date: args.startDate,
+    target_date: args.targetDate,
+    evaluation_rule_json: { source: "accepted_strategy", displayValue: stringAt(args.target, "displayValue") ?? null },
+    source: "planning_engine",
+    status: "needs_review",
+  };
+}
+
+function normalizedTargetKind(kind: string | undefined) {
+  return kind === "primary" ? "primary" : "supporting";
+}
+
+function normalizedTargetDirection(direction: string | undefined) {
+  if (["increase", "decrease", "maintain", "complete", "review"].includes(String(direction))) return direction;
+  return "maintain";
+}
+
+async function insertWeeklyPlansAndWorkouts(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    strategyID: string;
+    rhythms: GeneratedRhythm[];
+    source: "generated" | "replanned";
+    committedWeekStart: string;
+    ownerStartDate: string;
+  },
+) {
+  const savedPlans: Record<string, any>[] = [];
+  for (const rhythm of args.rhythms) {
+    const status = rhythm.weekStartDate === args.committedWeekStart ? "committed" : "draft";
+    const savedPlan = await single(
+      admin
+        .from("weekly_plans")
+        .upsert(
+          {
+            fitness_strategy_id: args.strategyID,
+            user_id: args.userID,
+            week_start_date: rhythm.weekStartDate,
+            week_end_date: rhythm.weekEndDate,
+            status,
+            objective: rhythm.objective,
+            rhythm_json: {
+              priorityOrder: rhythm.priorityOrder,
+              hardEasyDistribution: rhythm.hardEasyDistribution,
+              badDayFloor: rhythm.badDayFloor,
+              swapRules: rhythm.swapRules,
+            },
+            generated_at: new Date().toISOString(),
+          },
+          { onConflict: "fitness_strategy_id,week_start_date" },
+        )
+        .select()
+        .single(),
+      "Could not upsert weekly plan",
+    );
+    savedPlans.push(savedPlan);
+
+    const constraints = savedPlan.constraints_json ?? {};
+    const workouts = applyWeeklyConstraintsToGeneratedWorkouts(
+      rhythm.workouts.filter((workout) => status !== "committed" || workout.scheduledDate >= args.ownerStartDate),
+      constraints,
+    );
+    if (workouts.length === 0) continue;
+
+    await throwOnError(
+      admin.from("planned_workouts").insert(
+        workouts.map((workout) => ({
+          active_block_id: null,
+          weekly_rhythm_id: null,
+          weekly_plan_id: savedPlan.id,
+          user_id: args.userID,
+          scheduled_date: workout.scheduledDate,
+          sequence_order: workout.sequenceOrder,
+          activity_type: workout.activityType,
+          title: workout.title,
+          duration_minutes: workout.durationMinutes,
+          intensity_label: workout.intensityLabel,
+          purpose: workout.purpose,
+          status: "planned",
+          source: args.source,
+          prescription_json: workout.prescription,
+          fueling_summary: workout.fuelingSummary,
+        })),
+      ),
+    );
+  }
+  return savedPlans;
+}
+
+function applyWeeklyConstraintsToGeneratedWorkouts(workouts: GeneratedWorkout[], constraints: Record<string, any>) {
+  const days = constraints?.days ?? {};
+  return workouts.flatMap((workout) => {
+    const constraint = days[workout.scheduledDate];
+    if (constraint?.kind === "unavailable") return [];
+    if (constraint?.kind === "limited") {
+      return [{
+        ...workout,
+        durationMinutes: Math.min(workout.durationMinutes, 30),
+        intensityLabel: /high|hard|tempo|threshold/i.test(workout.intensityLabel) ? "Low" : workout.intensityLabel,
+        purpose: workout.purpose || "Limited-day training",
+      }];
+    }
+    return [workout];
+  });
+}
+
+async function evaluatePlanningTargets(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  snapshot: Record<string, any>,
+) {
+  const targets = await list(
+    admin
+      .from("planning_targets")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .order("created_at", { ascending: true }),
+  );
+  if (targets.length === 0) return;
+
+  const evaluations: Record<string, unknown>[] = [];
+  for (const target of targets) {
+    const currentValue = target.metric_key ? metricValueFor(snapshot, target.metric_key) : null;
+    const evaluation = evaluateGoalTarget(target, currentValue);
+    evaluations.push({
+      user_id: userID,
+      planning_target_id: target.id,
+      status: evaluation.status,
+      current_value: typeof currentValue === "number" ? currentValue : null,
+      target_value: target.target_value,
+      unit: target.unit,
+      progress_ratio: evaluation.progressRatio,
+      evidence_json: evaluation.evidence,
+      message: evaluation.message,
+      confidence: evaluation.confidence,
+    });
+    await throwOnError(
+      admin
+        .from("planning_targets")
+        .update({ status: evaluation.status })
+        .eq("id", target.id)
+        .eq("user_id", userID),
+    );
+  }
+
+  await throwOnError(admin.from("planning_target_evaluations").insert(evaluations));
+}
+
+function objectAt(object: Record<string, unknown> | undefined | null, key: string): Record<string, any> | null {
+  const value = object?.[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : null;
+}
+
+function arrayAt(object: Record<string, unknown> | undefined | null, key: string): Record<string, any>[] {
+  const value = object?.[key];
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Record<string, any>[] : [];
+}
+
+function stringAt(object: Record<string, unknown> | undefined | null, key: string): string | undefined {
+  const value = object?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberAt(object: Record<string, unknown> | undefined | null, key: string): number | null {
+  const value = object?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function weeklyPlanAsRhythm(plan: Record<string, any>) {
+  const rhythm = plan.rhythm_json ?? {};
+  return {
+    id: plan.id,
+    weekly_plan_id: plan.id,
+    week_start_date: plan.week_start_date,
+    week_end_date: plan.week_end_date,
+    objective: plan.objective ?? "",
+    priority_order_json: rhythm.priorityOrder ?? rhythm.priority_order ?? [],
+    swap_rules_json: rhythm.swapRules ?? rhythm.swap_rules ?? [],
+    status: plan.status,
+  };
+}
+
 function fallbackPlan(onboarding: Record<string, any>, start: Date, timezone: string): GeneratedPlan {
   const selected = onboarding.selected_answers ?? {};
   const intent = onboarding.intent as string;
@@ -3086,6 +3708,51 @@ function fallbackPlan(onboarding: Record<string, any>, start: Date, timezone: st
     },
     phases,
     rhythms,
+  };
+}
+
+function initialPlanFromAcceptedStrategy(
+  onboarding: Record<string, any>,
+  acceptedStrategy: Record<string, unknown>,
+  acceptedBlueprint: Record<string, unknown>,
+  start: Date,
+  timezone: string,
+): GeneratedPlan {
+  const plan = fallbackPlan(onboarding, start, timezone);
+  const strategyTitle = acceptedStrategyTitle(acceptedStrategy, plan.block.kind);
+  const goalTargetContext = objectAt(acceptedStrategy, "goalTargetContext");
+  const goalText = stringAt(goalTargetContext, "title") ||
+    stringAt(goalTargetContext, "summary") ||
+    plan.block.goalText;
+  const strategyPhases = acceptedStrategyPhases(acceptedStrategy);
+
+  return {
+    ...plan,
+    block: {
+      ...plan.block,
+      title: strategyTitle,
+      goalText,
+      context: {
+        onboardingIntent: String(onboarding.intent ?? ""),
+        planningRationale: stringAt(acceptedStrategy, "read") ||
+          stringAt(objectAt(acceptedBlueprint, "coachRead"), "text") ||
+          "Initial plan created from the accepted strategy.",
+        dataFreshness: "Created at strategy acceptance from onboarding and HealthKit summary context.",
+      },
+    },
+    phases: plan.block.kind === "consistency"
+      ? []
+      : strategyPhases.map((phase: Record<string, unknown>, index: number) => {
+        const fallback = plan.phases[index];
+        return {
+          name: stringAt(phase, "name") || fallback?.name || `Phase ${index + 1}`,
+          startDate: fallback?.startDate ?? isoDate(addDays(start, index * 28)),
+          endDate: fallback?.endDate ?? isoDate(addDays(start, index * 28 + 27)),
+          objective: stringAt(phase, "objective") || fallback?.objective || "Move the accepted strategy forward.",
+          focus: arrayAt(phase, "targets").map((target) => stringAt(target, "summary") || stringAt(target, "title") || "").filter(Boolean).slice(0, 3),
+          risk: ["Adjust load if recovery, knee comfort, or schedule constraints change."],
+        };
+      }),
   };
 }
 
@@ -3150,7 +3817,7 @@ function fallbackRhythms(start: Date, selected: Record<string, any>, kind: strin
     return {
       weekStartDate: isoDate(base),
       weekEndDate: isoDate(addDays(base, 6)),
-      objective: kind === "consistency" ? "Keep a balanced rhythm repeatable." : "Move the active block forward without crowding recovery.",
+      objective: kind === "consistency" ? "Keep a balanced rhythm repeatable." : "Move the strategy forward without crowding recovery.",
       priorityOrder: workouts.map((workout) => workout.title),
       hardEasyDistribution: { hard: 1, moderate: 2, easy: Math.max(1, workouts.length - 3) },
       badDayFloor: selected.badDayFloor || "20-minute easy session",
@@ -3164,24 +3831,40 @@ function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind
   const duration = durationMinutes(selected.sessionLength);
   const goalText = `${selected.goalBrief ?? ""} ${selected.chosenGoal?.title ?? ""}`.toLowerCase();
   const runningGoal = /run|half|marathon|5k|10k/.test(goalText);
+  const priorities = Array.isArray(selected.trainingOptions)
+    ? selected.trainingOptions.map((option: Record<string, unknown>) => String(option.activity ?? option.title ?? "").toLowerCase())
+    : [];
+  const cyclingPreferred = priorities.some((activity: string) => /cycl|bike|ride/.test(activity));
+  const strengthPreferred = priorities.some((activity: string) => /strength|gym|lift/.test(activity));
+  const runningPreferred = priorities.some((activity: string) => /run/.test(activity));
   const template = kind === "consistency"
     ? [
         { day: 0, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength anchor" },
-        { day: 1, type: "ride", title: "Easy ride", intensity: "Zone 2", purpose: "Aerobic base" },
+        { day: 1, type: "cycling", title: "Easy ride", intensity: "Zone 2", purpose: "Aerobic base" },
         { day: 4, type: "mobility", title: "Mobility", intensity: "Low", purpose: "Movement quality" },
         { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
       ]
-    : runningGoal
+    : cyclingPreferred && strengthPreferred
       ? [
-          { day: 0, type: "run", title: "Easy run", intensity: "Zone 2", purpose: "Aerobic base" },
+          { day: 0, type: "strength", title: "Strength anchor", intensity: "Moderate", purpose: "Preserve muscle and support the goal" },
+          { day: 1, type: "cycling", title: "Easy endurance ride", intensity: "Zone 2", purpose: "Aerobic base" },
+          { day: 2, type: runningPreferred ? "running" : "cycling", title: runningPreferred ? "Quality run" : "Aerobic intervals", intensity: "Hard", purpose: "Aerobic power stimulus" },
+          { day: 3, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength maintenance" },
+          { day: 5, type: "cycling", title: "Long endurance ride", intensity: "Moderate", purpose: "Weekly aerobic anchor" },
+          { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
+        ]
+      : runningGoal || runningPreferred
+      ? [
+          { day: 0, type: "running", title: "Easy run", intensity: "Zone 2", purpose: "Aerobic base" },
           { day: 2, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength maintenance" },
-          { day: 4, type: "run", title: "Quality run", intensity: "Moderate", purpose: "Goal progression" },
+          { day: 4, type: "running", title: "Quality run", intensity: "Moderate", purpose: "Goal progression" },
           { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
         ]
       : [
           { day: 0, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength anchor" },
-          { day: 1, type: "ride", title: "Easy ride", intensity: "Zone 2", purpose: "Aerobic base" },
+          { day: 1, type: "cycling", title: "Easy ride", intensity: "Zone 2", purpose: "Aerobic base" },
           { day: 3, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength progression" },
+          { day: 5, type: cyclingPreferred ? "cycling" : "conditioning", title: cyclingPreferred ? "Long ride" : "Conditioning", intensity: "Moderate", purpose: "Weekly aerobic anchor" },
           { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
         ];
 
@@ -3231,81 +3914,60 @@ function fallbackPhases(start: Date, targetDate: string | null): GeneratedPhase[
   ];
 }
 
-async function insertRhythmsAndWorkouts(
+async function markMissedWorkouts(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
-  rhythms: GeneratedRhythm[],
-  source: "generated" | "replanned",
-  minScheduledDate?: string,
+  strategyID: string,
+  syncEndDate?: string,
 ) {
-  for (const rhythm of rhythms) {
-    const savedRhythm = await single(
-      admin
-        .from("weekly_rhythms")
-        .upsert(
-          {
-            active_block_id: activeBlockID,
-            user_id: userID,
-            week_start_date: rhythm.weekStartDate,
-            week_end_date: rhythm.weekEndDate,
-            objective: rhythm.objective,
-            priority_order_json: rhythm.priorityOrder,
-            hard_easy_distribution_json: rhythm.hardEasyDistribution,
-            bad_day_floor: rhythm.badDayFloor,
-            swap_rules_json: rhythm.swapRules,
-            status: "active",
-          },
-          { onConflict: "active_block_id,week_start_date" },
-        )
-        .select()
-        .single(),
-      "Could not upsert weekly rhythm",
-    );
-
-    const workouts = minScheduledDate
-      ? rhythm.workouts.filter((workout) => workout.scheduledDate >= minScheduledDate)
-      : rhythm.workouts;
-
-    if (workouts.length === 0) {
-      continue;
-    }
-
-    await throwOnError(
-      admin.from("planned_workouts").insert(
-        workouts.map((workout) => ({
-          active_block_id: activeBlockID,
-          weekly_rhythm_id: savedRhythm.id,
-          user_id: userID,
-          scheduled_date: workout.scheduledDate,
-          sequence_order: workout.sequenceOrder,
-          activity_type: workout.activityType,
-          title: workout.title,
-          duration_minutes: workout.durationMinutes,
-          intensity_label: workout.intensityLabel,
-          purpose: workout.purpose,
-          status: "planned",
-          source,
-          prescription_json: workout.prescription,
-          fueling_summary: workout.fuelingSummary,
-        })),
-      ),
-    );
-  }
+  const cutoff = parseDateOnly(syncEndDate) ?? new Date();
+  const cutoffDate = isoDate(cutoff);
+  const plans = await list(
+    admin
+      .from("weekly_plans")
+      .select("id")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .in("status", ["committed", "draft"]),
+  );
+  const planIDs = plans.map((plan: Record<string, any>) => plan.id);
+  if (planIDs.length === 0) return [];
+  return list(
+    admin
+      .from("planned_workouts")
+      .update({ status: "missed" })
+      .eq("user_id", userID)
+      .in("weekly_plan_id", planIDs)
+      .lt("scheduled_date", cutoffDate)
+      .in("status", ["planned", "current", "checked_in", "adjusted"])
+      .in("source", ["generated", "replanned", "user_moved", "user_added", "checkin_adjusted"])
+      .select("id, scheduled_date, title"),
+  );
 }
 
-async function markCurrentWorkout(
+async function markCurrentWorkoutForStrategy(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
-  now: Date,
+  strategyID: string,
+  today: Date,
 ) {
+  const plans = await list(
+    admin
+      .from("weekly_plans")
+      .select("id")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .in("status", ["committed", "draft"]),
+  );
+  const planIDs = plans.map((plan: Record<string, any>) => plan.id);
+  if (planIDs.length === 0) return;
+
   await throwOnError(
     admin
       .from("planned_workouts")
       .update({ status: "planned" })
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
+      .in("weekly_plan_id", planIDs)
       .eq("status", "current"),
   );
 
@@ -3314,8 +3976,8 @@ async function markCurrentWorkout(
       .from("planned_workouts")
       .select()
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
-      .gte("scheduled_date", isoDate(now))
+      .in("weekly_plan_id", planIDs)
+      .gte("scheduled_date", isoDate(today))
       .in("status", ["planned", "checked_in", "adjusted"])
       .order("scheduled_date", { ascending: true })
       .order("sequence_order", { ascending: true })
@@ -3327,80 +3989,163 @@ async function markCurrentWorkout(
   }
 }
 
-async function markMissedWorkouts(
-  admin: SupabaseAdminClient,
-  userID: string,
-  activeBlockID: string,
-  syncEndDate?: string,
-) {
-  const cutoff = parseDateOnly(syncEndDate) ?? new Date();
-  const cutoffDate = isoDate(cutoff);
-  return list(
+async function promoteDraftWeeklyPlan(admin: SupabaseAdminClient, userID: string, strategyID: string) {
+  const drafts = await list(
     admin
-      .from("planned_workouts")
-      .update({ status: "missed" })
+      .from("weekly_plans")
+      .select()
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
-      .lt("scheduled_date", cutoffDate)
-      .in("status", ["planned", "current", "checked_in", "adjusted"])
-      .in("source", ["generated", "replanned", "user_moved", "user_added", "checkin_adjusted"])
-      .select("id, scheduled_date, title"),
+      .eq("fitness_strategy_id", strategyID)
+      .eq("status", "draft")
+      .order("week_start_date", { ascending: true })
+      .limit(1),
   );
-}
+  const draft = drafts[0];
+  if (!draft) return null;
 
-async function archiveActiveBlocks(admin: SupabaseAdminClient, userID: string) {
   await throwOnError(
     admin
-      .from("active_fitness_blocks")
+      .from("weekly_plans")
       .update({ status: "archived" })
       .eq("user_id", userID)
-      .eq("status", "active"),
+      .eq("fitness_strategy_id", strategyID)
+      .eq("status", "committed"),
   );
+  const promotedAt = new Date().toISOString();
+  await throwOnError(
+    admin
+      .from("weekly_plans")
+      .update({ status: "committed", promoted_at: promotedAt })
+      .eq("id", draft.id)
+      .eq("user_id", userID),
+  );
+  await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: strategyID,
+    weeklyPlanID: draft.id,
+    eventType: "weekly_plan_promoted",
+    payload: { weekStartDate: draft.week_start_date, promotedAt },
+  });
+  return draft;
 }
 
-async function loadActiveBlock(admin: SupabaseAdminClient, userID: string) {
-  return single(
+async function loadActivePlanningScope(admin: SupabaseAdminClient, userID: string): Promise<PlanningScope> {
+  const strategy = await single(
     admin
-      .from("active_fitness_blocks")
+      .from("fitness_strategies")
       .select()
       .eq("user_id", userID)
       .eq("status", "active")
       .single(),
-    "Active fitness block not found",
+    "Active fitness strategy not found",
+  );
+  const goal = await single(
+    admin
+      .from("user_goals")
+      .select()
+      .eq("id", strategy.user_goal_id)
+      .eq("user_id", userID)
+      .single(),
+    "Active user goal not found",
+  );
+  const timezone = strategy.context_json?.timezone || "UTC";
+  return {
+    goal,
+    strategy,
+    timezone,
+    block: {
+      id: strategy.id,
+      kind: goal.goal_kind,
+      title: strategy.title,
+      goal_text: goal.title,
+      start_date: strategy.start_date,
+      target_date: strategy.target_date,
+      review_cadence_days: strategy.review_cadence_days,
+      timezone,
+      context_json: strategy.context_json ?? {},
+    },
+  };
+}
+
+async function visibleWeeklyPlans(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  window: { start: string; end: string },
+) {
+  return list(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end)
+      .order("week_start_date", { ascending: true }),
   );
 }
 
-async function loadPlannedWorkout(
+async function weeklyPlanForDate(admin: SupabaseAdminClient, userID: string, strategyID: string, scheduledDate: string) {
+  const weekStart = isoDate(startOfWeek(parseDateOnly(scheduledDate) ?? new Date()));
+  return maybeSingle(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .eq("week_start_date", weekStart)
+      .limit(1),
+  );
+}
+
+async function loadPlannedWorkoutForActiveStrategy(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  strategyID: string,
   plannedWorkoutID: string,
 ) {
-  return single(
+  const workout = await single(
     admin
       .from("planned_workouts")
       .select()
       .eq("id", plannedWorkoutID)
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
       .single(),
     "Planned workout not found",
   );
+  if (!workout.weekly_plan_id) {
+    throw new Error("Planned workout is not attached to a weekly plan.");
+  }
+  const weeklyPlan = await single(
+    admin
+      .from("weekly_plans")
+      .select("id,fitness_strategy_id")
+      .eq("id", workout.weekly_plan_id)
+      .eq("user_id", userID)
+      .single(),
+    "Workout weekly plan not found",
+  );
+  if (weeklyPlan.fitness_strategy_id !== strategyID) {
+    throw new Error("Planned workout is not part of the active strategy.");
+  }
+  return workout;
 }
 
 async function findWorkoutMatch(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  scope: PlanningScope,
   actual: ActualWorkoutInput,
 ) {
   const actualDate = actual.start_date.slice(0, 10);
+  const weeklyPlan = await weeklyPlanForDate(admin, userID, scope.strategy.id, actualDate);
+  if (!weeklyPlan) return null;
   const candidates = await list(
     admin
       .from("planned_workouts")
       .select()
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
+      .eq("weekly_plan_id", weeklyPlan.id)
       .eq("scheduled_date", actualDate)
       .in("status", ["planned", "current", "checked_in", "adjusted"]),
   );
@@ -3420,16 +4165,18 @@ async function findWorkoutMatch(
 async function insertDetectedWorkout(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  scope: PlanningScope,
   actual: ActualWorkoutInput,
 ) {
+  const actualDate = actual.start_date.slice(0, 10);
+  const weeklyPlan = await weeklyPlanForDate(admin, userID, scope.strategy.id, actualDate);
   const existing = await list(
     admin
       .from("planned_workouts")
       .select("sequence_order")
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
-      .eq("scheduled_date", actual.start_date.slice(0, 10)),
+      .eq("scheduled_date", actualDate)
+      .eq("weekly_plan_id", weeklyPlan?.id ?? "00000000-0000-0000-0000-000000000000"),
   );
 
   return single(
@@ -3437,8 +4184,10 @@ async function insertDetectedWorkout(
       .from("planned_workouts")
       .insert({
         user_id: userID,
-        active_block_id: activeBlockID,
-        scheduled_date: actual.start_date.slice(0, 10),
+        active_block_id: null,
+        weekly_rhythm_id: null,
+        weekly_plan_id: weeklyPlan?.id ?? null,
+        scheduled_date: actualDate,
         sequence_order: existing.length + 1,
         activity_type: normalizeActivity(actual.activity_type),
         title: `${titleCase(actual.activity_type)} (detected)`,
@@ -3458,7 +4207,7 @@ async function insertDetectedWorkout(
 async function persistFitnessEvidence(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  activeBlockID: string | null,
   snapshot: Record<string, any>,
 ) {
   const profile = snapshot.fitnessHistory ?? snapshot.fitness_history;
@@ -3499,7 +4248,7 @@ async function persistFitnessEvidence(
 
 function fitnessMetricObservations(
   userID: string,
-  activeBlockID: string,
+  activeBlockID: string | null,
   snapshot: Record<string, any>,
   profile: Record<string, any>,
   observedAt: string,
@@ -3581,7 +4330,7 @@ function fitnessMetricObservations(
 function pushBodyTrendObservations(
   rows: Array<Record<string, unknown>>,
   userID: string,
-  activeBlockID: string,
+  activeBlockID: string | null,
   observedAt: string,
   metricPrefix: "body_mass" | "body_fat",
   metricLabel: string,
@@ -3642,347 +4391,6 @@ function recentBodyMetricValue(value: unknown, sampleDate: unknown) {
   const cutoff = new Date();
   cutoff.setUTCDate(cutoff.getUTCDate() - 90);
   return parsed >= cutoff ? value : null;
-}
-
-async function createInitialGoalTargets(
-  admin: SupabaseAdminClient,
-  userID: string,
-  block: Record<string, any>,
-  snapshot: Record<string, any>,
-) {
-  const existingWeekly: Array<Record<string, any>> = await list(
-    admin
-      .from("fitness_goal_targets")
-      .select("id,metric_key,metric_category,target_kind")
-      .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .like("metric_category", "weekly_%")
-  );
-
-  const plannedWorkouts = await list(
-    admin
-      .from("planned_workouts")
-      .select("scheduled_date,activity_type,title,duration_minutes,status")
-      .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .in("status", ["planned", "current", "checked_in", "adjusted", "done"]),
-  );
-  const targets = buildInitialGoalTargets(userID, block, snapshot, plannedWorkouts);
-  if (targets.length === 0) {
-    return;
-  }
-
-  if (existingWeekly.length > 0) {
-    await throwOnError(
-      admin
-        .from("fitness_goal_targets")
-        .delete()
-        .eq("user_id", userID)
-        .eq("active_block_id", block.id)
-        .like("metric_category", "weekly_%"),
-    );
-  }
-
-  await throwOnError(admin.from("fitness_goal_targets").insert(targets));
-  await createPlanEvent(admin, {
-    userID,
-    activeBlockID: block.id,
-    eventType: "goal_targets_created",
-    payload: { count: targets.length, source: "weekly_plan_targets", replaced: existingWeekly.length },
-  });
-}
-
-function buildInitialGoalTargets(
-  userID: string,
-  block: Record<string, any>,
-  snapshot: Record<string, any>,
-  plannedWorkouts: Array<Record<string, any>> = [],
-) {
-  const text = `${block.goal_text ?? ""} ${block.title ?? ""}`.toLowerCase();
-  const startDate = isoDate(startOfWeek(new Date()));
-  const targetDate = isoDate(addDays(parseDateOnly(startDate) ?? new Date(), 6));
-  const profile = snapshot.fitnessHistory ?? snapshot.fitness_history ?? {};
-  const isCyclingGoal = /cycle|cycling|bike|ride|climb/.test(text);
-  const isRunningGoal = /run|running|5k|10k|marathon|pace/.test(text);
-  const week = weeklyPlanSummary(plannedWorkouts, startDate);
-  const modalities = new Set([
-    ...(profile.trainingIdentity?.dominantModalities ?? []),
-    ...week.modalities,
-  ].map((value: string) => normalizeWorkoutModality(value)));
-  if (isCyclingGoal) modalities.add("cycling");
-  if (isRunningGoal) modalities.add("running");
-  if (/strength|lift|gym|boulder|climb/.test(text)) modalities.add("strength");
-
-  const rows: Array<Record<string, unknown>> = [];
-  const pushWeeklyTarget = (args: {
-    kind?: "primary" | "sub_goal";
-    title: string;
-    description: string;
-    metricKey: string;
-    metricCategory: string;
-    targetValue: number | null;
-    unit: string;
-    rule: Record<string, unknown>;
-  }) => {
-    rows.push(goalTargetRow({
-      userID,
-      blockID: block.id,
-      kind: args.kind ?? "sub_goal",
-      title: args.title,
-      description: args.description,
-      metricKey: args.metricKey,
-      metricCategory: args.metricCategory,
-      direction: "maintain",
-      baselineValue: metricValueFor(snapshot, args.metricKey),
-      targetValue: args.targetValue,
-      unit: args.unit,
-      startDate,
-      targetDate,
-      rule: { ...args.rule, source: "weekly_plan_target", window: "7d", profileLabel: profile.trainingIdentity?.label ?? null },
-    }));
-  };
-
-  pushWeeklyTarget({
-    kind: "primary",
-    title: "Weekly training time",
-    description: "The total planned training dose for this week. Adjust the week by moving, adding, or resizing sessions.",
-    metricKey: "training_minutes_7d",
-    metricCategory: "weekly_volume",
-    targetValue: week.totalMinutes || fallbackWeeklyMinutes(profile),
-    unit: "min",
-    rule: { plannedSessions: week.sessionCount },
-  });
-
-  if (modalities.has("cycling")) {
-    const planned = Math.round((week.minutesByModality.cycling ?? 0) * 0.42);
-    pushWeeklyTarget({
-      title: "Cycling distance this week",
-      description: "A weekly cycling exposure target based on the rides in the plan and the active block goal.",
-      metricKey: "cycling_distance_7d_km",
-      metricCategory: "weekly_cycling",
-      targetValue: planned > 0 ? planned : 40,
-      unit: "km",
-      rule: { modality: "cycling", plannedMinutes: week.minutesByModality.cycling ?? 0 },
-    });
-  }
-
-  if (modalities.has("running")) {
-    const planned = Math.round((week.minutesByModality.running ?? 0) * 0.13);
-    pushWeeklyTarget({
-      title: "Running distance this week",
-      description: "A weekly run-distance target that can be shaped by adding, moving, or reducing run sessions.",
-      metricKey: "running_distance_7d_km",
-      metricCategory: "weekly_running",
-      targetValue: planned > 0 ? planned : 12,
-      unit: "km",
-      rule: { modality: "running", plannedMinutes: week.minutesByModality.running ?? 0 },
-    });
-  }
-
-  if (modalities.has("strength")) {
-    pushWeeklyTarget({
-      title: "Strength sessions this week",
-      description: "The gym or strength anchors HAYF is trying to keep alive in this week.",
-      metricKey: "strength_workouts_7d",
-      metricCategory: "weekly_strength",
-      targetValue: Math.max(1, week.countByModality.strength ?? 0),
-      unit: "sessions",
-      rule: { modality: "strength", plannedMinutes: week.minutesByModality.strength ?? 0 },
-    });
-  }
-
-  const recoveryCount = (week.countByModality.recovery ?? 0) + (week.countByModality.walking ?? 0) + (week.countByModality.mobility ?? 0);
-  pushWeeklyTarget({
-    title: "Recovery sessions this week",
-    description: "Low-friction recovery work that keeps the plan adjustable instead of brittle.",
-    metricKey: "recovery_sessions_7d",
-    metricCategory: "weekly_recovery",
-    targetValue: Math.max(1, recoveryCount),
-    unit: "sessions",
-    rule: { modalities: ["recovery", "walking", "mobility"] },
-  });
-
-  return rows.slice(0, 5);
-}
-
-function weeklyPlanSummary(plannedWorkouts: Array<Record<string, any>>, startDate: string) {
-  const weekStart = startOfWeek(parseDateOnly(startDate) ?? new Date());
-  const weekEnd = addDays(weekStart, 6);
-  const summary: {
-    totalMinutes: number;
-    sessionCount: number;
-    modalities: string[];
-    minutesByModality: Record<string, number>;
-    countByModality: Record<string, number>;
-  } = {
-    totalMinutes: 0,
-    sessionCount: 0,
-    modalities: [],
-    minutesByModality: {},
-    countByModality: {},
-  };
-
-  for (const workout of plannedWorkouts) {
-    const scheduled = parseDateOnly(String(workout.scheduled_date ?? ""));
-    if (!scheduled || scheduled < weekStart || scheduled > weekEnd) continue;
-
-    const modality = normalizeWorkoutModality(`${workout.activity_type ?? ""} ${workout.title ?? ""}`);
-    const minutes = Math.max(0, Number(workout.duration_minutes ?? 0));
-    summary.totalMinutes += minutes;
-    summary.sessionCount += 1;
-    summary.minutesByModality[modality] = (summary.minutesByModality[modality] ?? 0) + minutes;
-    summary.countByModality[modality] = (summary.countByModality[modality] ?? 0) + 1;
-  }
-
-  summary.modalities = Object.keys(summary.countByModality);
-  summary.totalMinutes = Math.round(summary.totalMinutes);
-  return summary;
-}
-
-function fallbackWeeklyMinutes(profile: Record<string, any>) {
-  const average = profile.consistency?.averageMinutesPerActiveWeek;
-  if (typeof average === "number" && !Number.isNaN(average)) {
-    return Math.max(90, Math.round(average));
-  }
-  return 150;
-}
-
-function normalizeWorkoutModality(value: string) {
-  const text = String(value ?? "").toLowerCase();
-  if (/cycle|cycling|bike|ride/.test(text)) return "cycling";
-  if (/run|running|jog/.test(text)) return "running";
-  if (/strength|lift|lifting|gym|barbell|dumbbell|kettlebell|boulder|climb/.test(text)) return "strength";
-  if (/walk|hike/.test(text)) return "walking";
-  if (/mobility|yoga|pilates|stretch/.test(text)) return "mobility";
-  if (/recover|rest/.test(text)) return "recovery";
-  return text.trim() || "training";
-}
-
-function goalTargetRow(args: {
-  userID: string;
-  blockID: string;
-  kind: "primary" | "sub_goal";
-  title: string;
-  description: string;
-  metricKey: string;
-  metricCategory: string;
-  direction: "increase" | "decrease" | "maintain" | "complete" | "review";
-  baselineValue?: number | null;
-  targetValue?: number | null;
-  unit?: string | null;
-  startDate: string;
-  targetDate?: string | null;
-  rule: Record<string, unknown>;
-}) {
-  return {
-    user_id: args.userID,
-    active_block_id: args.blockID,
-    target_kind: args.kind,
-    title: args.title,
-    description: args.description,
-    metric_key: args.metricKey,
-    metric_category: args.metricCategory,
-    direction: args.direction,
-    baseline_value: typeof args.baselineValue === "number" ? args.baselineValue : null,
-    target_value: typeof args.targetValue === "number" ? args.targetValue : null,
-    unit: args.unit ?? null,
-    start_date: args.startDate,
-    target_date: args.targetDate ?? null,
-    evaluation_rule_json: args.rule,
-    source: "planning_engine",
-    status: "needs_review",
-  };
-}
-
-async function evaluateGoalTargets(
-  admin: SupabaseAdminClient,
-  userID: string,
-  block: Record<string, any>,
-  snapshot: Record<string, any>,
-) {
-  const targets = await list(
-    admin
-      .from("fitness_goal_targets")
-      .select()
-      .eq("user_id", userID)
-      .eq("active_block_id", block.id)
-      .order("created_at", { ascending: true }),
-  );
-  if (targets.length === 0) {
-    return;
-  }
-
-  let achievedPrimary = false;
-  let reviewPrimary = false;
-  const evaluations: Array<Record<string, unknown>> = [];
-  for (const target of targets) {
-    const currentValue = target.metric_key ? metricValueFor(snapshot, target.metric_key) : null;
-    const evaluation = evaluateGoalTarget(target, currentValue);
-    evaluations.push({
-      user_id: userID,
-      active_block_id: block.id,
-      goal_target_id: target.id,
-      status: evaluation.status,
-      current_value: typeof currentValue === "number" ? currentValue : null,
-      target_value: target.target_value,
-      unit: target.unit,
-      progress_ratio: evaluation.progressRatio,
-      evidence_json: evaluation.evidence,
-      message: evaluation.message,
-      confidence: evaluation.confidence,
-    });
-
-    if (target.status !== evaluation.status) {
-      await createPlanEvent(admin, {
-        userID,
-        activeBlockID: block.id,
-        eventType: "goal_status_changed",
-        payload: { goalTargetID: target.id, from: target.status, to: evaluation.status, title: target.title },
-      });
-    }
-
-    if (target.target_kind === "primary" && evaluation.status === "achieved") {
-      achievedPrimary = true;
-      await createPlanEvent(admin, {
-        userID,
-        activeBlockID: block.id,
-        eventType: "goal_achieved",
-        payload: { goalTargetID: target.id, title: target.title, currentValue, targetValue: target.target_value },
-      });
-    }
-
-    if (target.target_kind === "primary" && evaluation.status === "needs_review") {
-      reviewPrimary = true;
-    }
-
-    await throwOnError(
-      admin
-        .from("fitness_goal_targets")
-        .update({ status: evaluation.status })
-        .eq("id", target.id)
-        .eq("user_id", userID),
-    );
-  }
-
-  await throwOnError(admin.from("fitness_goal_evaluations").insert(evaluations));
-  await createPlanEvent(admin, {
-    userID,
-    activeBlockID: block.id,
-    eventType: "goal_progress_evaluated",
-    payload: { count: evaluations.length, generatedAt: snapshotGeneratedAt(snapshot) },
-  });
-
-  if (achievedPrimary) {
-    await createGoalReviewProposal(admin, userID, block.id, "Primary goal achieved. Review whether to maintain, extend, or start a new block.");
-  } else if (reviewPrimary) {
-    await createPlanEvent(admin, {
-      userID,
-      activeBlockID: block.id,
-      eventType: "goal_review_needed",
-      payload: { reason: "primary_goal_not_measurable" },
-    });
-    await createGoalReviewProposal(admin, userID, block.id, "Primary goal needs review because HAYF does not have enough measurable evidence yet.");
-  }
 }
 
 function evaluateGoalTarget(target: Record<string, any>, currentValue: number | null | undefined) {
@@ -4088,7 +4496,7 @@ function metricValueFor(snapshot: Record<string, any>, metricKey: string): numbe
 async function createWorkoutDebriefRequest(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  activeBlockID: string | null,
   plannedWorkoutID: string | null,
   actualWorkoutID: string | null,
 ) {
@@ -4150,15 +4558,27 @@ async function createGoalReviewProposal(
 async function hasUsablePlanWindow(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID: string,
+  strategyID: string,
   window: { start: string; end: string },
 ) {
+  const weeklyPlans = await list(
+    admin
+      .from("weekly_plans")
+      .select("id,status")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end)
+      .in("status", ["committed", "draft"]),
+  );
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  if (weeklyPlans.length < 2 || planIDs.length === 0) return false;
   const workouts = await list(
     admin
       .from("planned_workouts")
       .select("scheduled_date,status")
       .eq("user_id", userID)
-      .eq("active_block_id", activeBlockID)
+      .in("weekly_plan_id", planIDs)
       .gte("scheduled_date", window.start)
       .lte("scheduled_date", window.end)
       .in("status", ["planned", "current", "checked_in", "adjusted", "done"]),
@@ -4178,6 +4598,9 @@ async function createPlanEvent(
   args: {
     userID: string;
     activeBlockID?: string | null;
+    userGoalID?: string | null;
+    fitnessStrategyID?: string | null;
+    weeklyPlanID?: string | null;
     plannedWorkoutID?: string | null;
     eventType: string;
     payload: Record<string, unknown>;
@@ -4189,6 +4612,9 @@ async function createPlanEvent(
       .insert({
         user_id: args.userID,
         active_block_id: args.activeBlockID ?? null,
+        user_goal_id: args.userGoalID ?? null,
+        fitness_strategy_id: args.fitnessStrategyID ?? null,
+        weekly_plan_id: args.weeklyPlanID ?? null,
         planned_workout_id: args.plannedWorkoutID ?? null,
         event_type: args.eventType,
         payload_json: args.payload,
@@ -4204,13 +4630,16 @@ async function createReplanProposal(
   args: {
     userID: string;
     activeBlockID?: string | null;
+    userGoalID?: string | null;
+    fitnessStrategyID?: string | null;
+    weeklyPlanID?: string | null;
     triggerEventID?: string | null;
     reason: string;
     mutations: Array<Record<string, unknown>>;
     metadata?: Record<string, unknown>;
   },
 ) {
-  await expirePendingReplanProposals(admin, args.userID, args.activeBlockID ?? null);
+  await expirePendingReplanProposals(admin, args.userID, args.fitnessStrategyID ?? args.activeBlockID ?? null);
 
   const proposal = await single(
     admin
@@ -4218,6 +4647,9 @@ async function createReplanProposal(
       .insert({
         user_id: args.userID,
         active_block_id: args.activeBlockID ?? null,
+        user_goal_id: args.userGoalID ?? null,
+        fitness_strategy_id: args.fitnessStrategyID ?? null,
+        weekly_plan_id: args.weeklyPlanID ?? null,
         trigger_event_id: args.triggerEventID ?? null,
         reason: args.reason,
         proposed_mutations_json: args.mutations,
@@ -4231,6 +4663,9 @@ async function createReplanProposal(
   await createPlanEvent(admin, {
     userID: args.userID,
     activeBlockID: args.activeBlockID,
+    userGoalID: args.userGoalID,
+    fitnessStrategyID: args.fitnessStrategyID,
+    weeklyPlanID: args.weeklyPlanID,
     eventType: "proposal_created",
     payload: { proposalID: proposal.id, reason: args.reason, ...(args.metadata ?? {}) },
   });
@@ -4241,17 +4676,17 @@ async function createReplanProposal(
 async function expirePendingReplanProposals(
   admin: SupabaseAdminClient,
   userID: string,
-  activeBlockID?: string | null,
+  scopeID?: string | null,
   excludeProposalID?: string | null,
 ) {
-  if (!activeBlockID) return;
+  if (!scopeID) return;
 
   let query = admin
     .from("replan_proposals")
     .update({ status: "expired" })
     .eq("user_id", userID)
-    .eq("active_block_id", activeBlockID)
     .eq("status", "pending");
+  query = query.or(`fitness_strategy_id.eq.${scopeID},active_block_id.eq.${scopeID}`);
 
   if (excludeProposalID) {
     query = query.neq("id", excludeProposalID);

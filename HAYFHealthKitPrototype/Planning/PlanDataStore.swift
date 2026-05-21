@@ -70,52 +70,61 @@ final class PlanDataStore: ObservableObject {
 
     private func fetchActiveBlock() async throws -> PlanActiveFitnessBlock? {
         do {
-            let block: PlanActiveFitnessBlock = try await supabase
-                .from("active_fitness_blocks")
-                .select("id, kind, title, goal_text, status, start_date, target_date, review_cadence_days, timezone, context_json")
+            let strategy: PlanRawFitnessStrategy = try await supabase
+                .from("fitness_strategies")
+                .select("id, user_goal_id, status, title, summary, rationale, review_cadence_days, start_date, target_date, requires_phases, context_json")
                 .eq("status", value: "active")
                 .single()
                 .execute()
                 .value
 
-            return block
+            let goal: PlanRawUserGoal = try await supabase
+                .from("user_goals")
+                .select("id, goal_kind, title, status, start_date, target_date, timeframe_weeks, requires_phases, normalized_goal_json")
+                .eq("id", value: strategy.userGoalID.uuidString.lowercased())
+                .single()
+                .execute()
+                .value
+
+            return PlanActiveFitnessBlock(strategy: strategy, goal: goal)
         } catch let error as PostgrestError where error.code == "PGRST116" {
             return nil
         }
     }
 
-    private func fetchPhases(for blockID: UUID) async throws -> [PlanFitnessBlockPhase] {
+    private func fetchPhases(for strategyID: UUID) async throws -> [PlanFitnessBlockPhase] {
         try await supabase
-            .from("fitness_block_phases")
-            .select("id, active_block_id, name, start_date, end_date, objective, focus_json, risk_json")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
-            .order("start_date", ascending: true)
+            .from("fitness_strategy_phases")
+            .select("id, fitness_strategy_id, name, start_date, end_date, objective, focus_json, risk_json")
+            .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
+            .order("sequence_order", ascending: true)
             .execute()
             .value
     }
 
-    private func fetchWeeklyRhythms(for blockID: UUID) async throws -> [PlanWeeklyRhythm] {
+    private func fetchWeeklyRhythms(for strategyID: UUID) async throws -> [PlanWeeklyRhythm] {
         let window = visibleWindow()
 
-        return try await supabase
-            .from("weekly_rhythms")
-            .select("id, active_block_id, week_start_date, week_end_date, objective, bad_day_floor, status")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
-            .eq("status", value: "active")
+        let plans: [PlanWeeklyRhythm] = try await supabase
+            .from("weekly_plans")
+            .select("id, fitness_strategy_id, week_start_date, week_end_date, objective, status, rhythm_json, constraints_json")
+            .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .gte("week_start_date", value: PlanCalendar.dateFormatter.string(from: window.start))
             .lte("week_start_date", value: PlanCalendar.dateFormatter.string(from: window.end))
             .order("week_start_date", ascending: true)
             .execute()
             .value
+
+        return plans.filter { $0.status == "committed" || $0.status == "draft" }
     }
 
-    private func fetchWorkouts(for blockID: UUID) async throws -> [PlanWorkout] {
+    private func fetchWorkouts(for strategyID: UUID) async throws -> [PlanWorkout] {
         let window = visibleWindow()
+        let planIDs = try await fetchWeeklyPlanIDs(for: strategyID, window: window)
 
-        return try await supabase
+        let workouts: [PlanWorkout] = try await supabase
             .from("planned_workouts")
-            .select("id, active_block_id, weekly_rhythm_id, scheduled_date, sequence_order, activity_type, title, duration_minutes, intensity_label, purpose, status, source, fueling_summary")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .select("id, active_block_id, weekly_rhythm_id, weekly_plan_id, scheduled_date, sequence_order, activity_type, title, duration_minutes, intensity_label, purpose, status, source, fueling_summary")
             .gte("scheduled_date", value: PlanCalendar.dateFormatter.string(from: window.start))
             .lte("scheduled_date", value: PlanCalendar.dateFormatter.string(from: window.end))
             .not("status", operator: .in, value: "(deleted,superseded)")
@@ -123,57 +132,59 @@ final class PlanDataStore: ObservableObject {
             .order("sequence_order", ascending: true)
             .execute()
             .value
+
+        return workouts.filter { workout in
+            guard let weeklyPlanID = workout.weeklyPlanID else { return false }
+            return planIDs.contains(weeklyPlanID)
+        }
     }
 
-    private func fetchGoalTargets(for blockID: UUID) async throws -> [PlanGoalTarget] {
+    private func fetchGoalTargets(for strategyID: UUID) async throws -> [PlanGoalTarget] {
         try await supabase
-            .from("fitness_goal_targets")
-            .select("id, active_block_id, parent_goal_target_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .from("planning_targets")
+            .select("id, fitness_strategy_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at")
+            .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .order("target_kind", ascending: true)
             .order("created_at", ascending: true)
             .execute()
             .value
     }
 
-    private func fetchGoalEvaluations(for blockID: UUID) async throws -> [PlanGoalEvaluation] {
+    private func fetchGoalEvaluations(for strategyID: UUID) async throws -> [PlanGoalEvaluation] {
         try await supabase
-            .from("fitness_goal_evaluations")
-            .select("id, active_block_id, goal_target_id, status, current_value, target_value, unit, progress_ratio, evaluated_at, evidence_json, message, confidence")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .from("planning_target_evaluations")
+            .select("id, planning_target_id, status, current_value, target_value, unit, progress_ratio, evaluated_at, evidence_json, message, confidence")
             .order("evaluated_at", ascending: false)
             .limit(50)
             .execute()
             .value
     }
 
-    private func fetchHistoryInsights(for blockID: UUID) async throws -> [FitnessHistoryInsight] {
+    private func fetchHistoryInsights(for strategyID: UUID) async throws -> [FitnessHistoryInsight] {
         try await supabase
             .from("fitness_history_insights")
             .select("id, active_block_id, insight_key, category, title, summary, evidence_json, source, confidence, valid_from, valid_until, updated_at")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
             .order("updated_at", ascending: false)
             .limit(12)
             .execute()
             .value
     }
 
-    private func fetchDebriefRequests(for blockID: UUID) async throws -> [WorkoutDebriefRequest] {
+    private func fetchDebriefRequests(for strategyID: UUID) async throws -> [WorkoutDebriefRequest] {
         try await supabase
             .from("workout_debrief_requests")
             .select("id, active_block_id, planned_workout_id, actual_workout_id, status, prompt_reason, created_at")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
             .eq("status", value: "needed")
             .order("created_at", ascending: false)
             .execute()
             .value
     }
 
-    private func fetchPendingReplanProposals(for blockID: UUID) async throws -> [PlanReplanProposal] {
+    private func fetchPendingReplanProposals(for strategyID: UUID) async throws -> [PlanReplanProposal] {
         let proposals: [PlanReplanProposal] = try await supabase
             .from("replan_proposals")
-            .select("id, active_block_id, trigger_event_id, reason, proposed_mutations_json, status, created_at, updated_at")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .select("id, active_block_id, user_goal_id, fitness_strategy_id, weekly_plan_id, trigger_event_id, reason, proposed_mutations_json, status, created_at, updated_at")
+            .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .eq("status", value: "pending")
             .order("created_at", ascending: false)
             .limit(10)
@@ -184,11 +195,20 @@ final class PlanDataStore: ObservableObject {
     }
 
     private func visibleWindow() -> DateInterval {
-        let now = Date()
-        let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
-        let nextWeekStart = calendar.date(byAdding: .weekOfYear, value: 1, to: currentWeekStart) ?? now
-        let nextWeekEnd = calendar.date(byAdding: .day, value: 6, to: nextWeekStart) ?? nextWeekStart
-        return DateInterval(start: currentWeekStart, end: nextWeekEnd)
+        PlanCalendar.visibleWindow(calendar: calendar)
+    }
+
+    private func fetchWeeklyPlanIDs(for strategyID: UUID, window: DateInterval) async throws -> Set<UUID> {
+        let plans: [PlanWeeklyPlanIDRow] = try await supabase
+            .from("weekly_plans")
+            .select("id, status")
+            .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
+            .gte("week_start_date", value: PlanCalendar.dateFormatter.string(from: window.start))
+            .lte("week_start_date", value: PlanCalendar.dateFormatter.string(from: window.end))
+            .execute()
+            .value
+
+        return Set(plans.filter { $0.status == "committed" || $0.status == "draft" }.map(\.id))
     }
 }
 
@@ -206,9 +226,83 @@ enum PlanCalendar {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+
+    static func currentCommittedWeekStart(calendar: Calendar = iso, now: Date = Date()) -> Date {
+        let currentStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? calendar.startOfDay(for: now)
+        let components = calendar.dateComponents([.weekday, .hour], from: now)
+        if components.weekday == 1, (components.hour ?? 0) >= 21 {
+            return calendar.date(byAdding: .weekOfYear, value: 1, to: currentStart) ?? currentStart
+        }
+
+        return currentStart
+    }
+
+    static func visibleWindow(calendar: Calendar = iso, now: Date = Date()) -> DateInterval {
+        let start = currentCommittedWeekStart(calendar: calendar, now: now)
+        let nextWeekStart = calendar.date(byAdding: .weekOfYear, value: 1, to: start) ?? start
+        let nextWeekEnd = calendar.date(byAdding: .day, value: 6, to: nextWeekStart) ?? nextWeekStart
+        return DateInterval(start: start, end: nextWeekEnd)
+    }
 }
 
-struct PlanActiveFitnessBlock: Decodable, Identifiable {
+private struct PlanRawFitnessStrategy: Decodable {
+    let id: UUID
+    let userGoalID: UUID
+    let status: String
+    let title: String
+    let summary: String
+    let rationale: String
+    let reviewCadenceDays: Int
+    let startDate: String
+    let targetDate: String?
+    let requiresPhases: Bool
+    let context: PlanBlockContext
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userGoalID = "user_goal_id"
+        case status
+        case title
+        case summary
+        case rationale
+        case reviewCadenceDays = "review_cadence_days"
+        case startDate = "start_date"
+        case targetDate = "target_date"
+        case requiresPhases = "requires_phases"
+        case context = "context_json"
+    }
+}
+
+private struct PlanRawUserGoal: Decodable {
+    let id: UUID
+    let goalKind: String
+    let title: String
+    let status: String
+    let startDate: String
+    let targetDate: String?
+    let timeframeWeeks: Int?
+    let requiresPhases: Bool
+    let normalizedGoal: JSONValue
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case goalKind = "goal_kind"
+        case title
+        case status
+        case startDate = "start_date"
+        case targetDate = "target_date"
+        case timeframeWeeks = "timeframe_weeks"
+        case requiresPhases = "requires_phases"
+        case normalizedGoal = "normalized_goal_json"
+    }
+}
+
+private struct PlanWeeklyPlanIDRow: Decodable {
+    let id: UUID
+    let status: String
+}
+
+struct PlanActiveFitnessBlock: Identifiable {
     let id: UUID
     let kind: String
     let title: String
@@ -220,17 +314,57 @@ struct PlanActiveFitnessBlock: Decodable, Identifiable {
     let timezone: String
     let context: PlanBlockContext
 
-    enum CodingKeys: String, CodingKey {
-        case id
-        case kind
-        case title
-        case goalText = "goal_text"
-        case status
-        case startDate = "start_date"
-        case targetDate = "target_date"
-        case reviewCadenceDays = "review_cadence_days"
-        case timezone
-        case context = "context_json"
+    init(
+        id: UUID,
+        kind: String,
+        title: String,
+        goalText: String?,
+        status: String,
+        startDate: String,
+        targetDate: String?,
+        reviewCadenceDays: Int,
+        timezone: String,
+        context: PlanBlockContext
+    ) {
+        self.id = id
+        self.kind = kind
+        self.title = title
+        self.goalText = goalText
+        self.status = status
+        self.startDate = startDate
+        self.targetDate = targetDate
+        self.reviewCadenceDays = reviewCadenceDays
+        self.timezone = timezone
+        self.context = context
+    }
+
+    fileprivate init(strategy: PlanRawFitnessStrategy, goal: PlanRawUserGoal) {
+        self.init(
+            id: strategy.id,
+            kind: goal.goalKind,
+            title: strategy.title,
+            goalText: goal.title,
+            status: strategy.status,
+            startDate: strategy.startDate,
+            targetDate: strategy.targetDate ?? goal.targetDate,
+            reviewCadenceDays: strategy.reviewCadenceDays,
+            timezone: strategy.context.timezone ?? TimeZone.current.identifier,
+            context: PlanBlockContext(
+            onboardingIntent: goal.goalKind,
+            planningRationale: strategy.rationale.planNilIfEmpty ?? strategy.summary.planNilIfEmpty,
+            dataFreshness: nil,
+            timezone: strategy.context.timezone ?? TimeZone.current.identifier,
+            acceptedAt: strategy.context.acceptedAt,
+            planOwnerStartDate: strategy.context.planOwnerStartDate
+            )
+        )
+    }
+}
+
+private extension String {
+    var planNilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -239,6 +373,8 @@ struct PlanBlockContext: Decodable {
     let planningRationale: String?
     let dataFreshness: String?
     let timezone: String?
+    let acceptedAt: String?
+    let planOwnerStartDate: String?
 }
 
 struct PlanFitnessBlockPhase: Decodable, Identifiable {
@@ -253,7 +389,7 @@ struct PlanFitnessBlockPhase: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case activeBlockID = "active_block_id"
+        case activeBlockID = "fitness_strategy_id"
         case name
         case startDate = "start_date"
         case endDate = "end_date"
@@ -271,22 +407,61 @@ struct PlanWeeklyRhythm: Decodable, Identifiable {
     let objective: String
     let badDayFloor: String?
     let status: String
+    let rhythm: JSONValue?
+    let constraints: JSONValue?
 
     enum CodingKeys: String, CodingKey {
         case id
-        case activeBlockID = "active_block_id"
+        case activeBlockID = "fitness_strategy_id"
         case weekStartDate = "week_start_date"
         case weekEndDate = "week_end_date"
         case objective
         case badDayFloor = "bad_day_floor"
         case status
+        case rhythm = "rhythm_json"
+        case constraints = "constraints_json"
     }
+
+    func constraint(for date: String) -> PlanDayConstraint? {
+        guard case let .object(root)? = constraints,
+              case let .object(days)? = root["days"],
+              case let .object(day)? = days[date],
+              case let .string(kindValue)? = day["kind"],
+              let kind = PlanningWeeklyPlanConstraintKind(rawValue: kindValue),
+              kind != .available else {
+            return nil
+        }
+
+        let note: String?
+        if case let .string(value)? = day["note"] {
+            note = value
+        } else {
+            note = nil
+        }
+
+        let updatedAt: String?
+        if case let .string(value)? = day["updatedAt"] {
+            updatedAt = value
+        } else {
+            updatedAt = nil
+        }
+
+        return PlanDayConstraint(date: date, kind: kind, note: note, updatedAt: updatedAt)
+    }
+}
+
+struct PlanDayConstraint: Equatable {
+    let date: String
+    let kind: PlanningWeeklyPlanConstraintKind
+    let note: String?
+    let updatedAt: String?
 }
 
 struct PlanWorkout: Decodable, Identifiable {
     let id: UUID
-    let activeBlockID: UUID
+    let activeBlockID: UUID?
     let weeklyRhythmID: UUID?
+    let weeklyPlanID: UUID?
     let scheduledDate: String
     let sequenceOrder: Int
     let activityType: String
@@ -302,6 +477,7 @@ struct PlanWorkout: Decodable, Identifiable {
         case id
         case activeBlockID = "active_block_id"
         case weeklyRhythmID = "weekly_rhythm_id"
+        case weeklyPlanID = "weekly_plan_id"
         case scheduledDate = "scheduled_date"
         case sequenceOrder = "sequence_order"
         case activityType = "activity_type"
@@ -317,7 +493,7 @@ struct PlanWorkout: Decodable, Identifiable {
 
 struct PlanGoalTarget: Decodable, Identifiable {
     let id: UUID
-    let activeBlockID: UUID
+    let activeBlockID: UUID?
     let parentGoalTargetID: UUID?
     let targetKind: PlanGoalTargetKind
     let title: String
@@ -336,7 +512,7 @@ struct PlanGoalTarget: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case activeBlockID = "active_block_id"
+        case activeBlockID = "fitness_strategy_id"
         case parentGoalTargetID = "parent_goal_target_id"
         case targetKind = "target_kind"
         case title
@@ -357,6 +533,7 @@ struct PlanGoalTarget: Decodable, Identifiable {
 
 enum PlanGoalTargetKind: String, Decodable {
     case primary
+    case supporting
     case subGoal = "sub_goal"
 }
 
@@ -382,7 +559,7 @@ enum PlanGoalStatus: String, Decodable {
 
 struct PlanGoalEvaluation: Decodable, Identifiable {
     let id: UUID
-    let activeBlockID: UUID
+    let activeBlockID: UUID?
     let goalTargetID: UUID
     let status: PlanGoalStatus
     let currentValue: Double?
@@ -397,7 +574,7 @@ struct PlanGoalEvaluation: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case activeBlockID = "active_block_id"
-        case goalTargetID = "goal_target_id"
+        case goalTargetID = "planning_target_id"
         case status
         case currentValue = "current_value"
         case targetValue = "target_value"
@@ -463,6 +640,9 @@ struct WorkoutDebriefRequest: Decodable, Identifiable {
 struct PlanReplanProposal: Decodable, Identifiable {
     let id: UUID
     let activeBlockID: UUID?
+    let userGoalID: UUID?
+    let fitnessStrategyID: UUID?
+    let weeklyPlanID: UUID?
     let triggerEventID: UUID?
     let reason: String
     let proposedMutations: JSONValue
@@ -473,6 +653,9 @@ struct PlanReplanProposal: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case activeBlockID = "active_block_id"
+        case userGoalID = "user_goal_id"
+        case fitnessStrategyID = "fitness_strategy_id"
+        case weeklyPlanID = "weekly_plan_id"
         case triggerEventID = "trigger_event_id"
         case reason
         case proposedMutations = "proposed_mutations_json"

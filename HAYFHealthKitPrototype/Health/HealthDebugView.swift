@@ -111,9 +111,9 @@ final class HealthDebugViewModel: ObservableObject {
     }
 
     private func fetchRemoteDiagnostics() async throws -> HealthRemoteDiagnostics {
-        async let activeBlocks: [HealthRemoteActiveBlockRow] = supabase
-            .from("active_fitness_blocks")
-            .select("id, title, goal_text, status, updated_at")
+        async let activeStrategies: [HealthRemoteActiveStrategyRow] = supabase
+            .from("fitness_strategies")
+            .select("id, title, status, updated_at")
             .eq("status", value: "active")
             .limit(1)
             .execute()
@@ -136,7 +136,7 @@ final class HealthDebugViewModel: ObservableObject {
             .value
 
         async let targets: [HealthRemoteTargetRow] = supabase
-            .from("fitness_goal_targets")
+            .from("planning_targets")
             .select("id, title, status, updated_at")
             .order("updated_at", ascending: false)
             .limit(10)
@@ -152,7 +152,7 @@ final class HealthDebugViewModel: ObservableObject {
             .value
 
         return try await HealthRemoteDiagnostics(
-            activeBlock: activeBlocks.first,
+            activeStrategy: activeStrategies.first,
             snapshotRows: snapshots,
             insights: insights,
             targets: targets,
@@ -162,24 +162,22 @@ final class HealthDebugViewModel: ObservableObject {
 }
 
 struct HealthRemoteDiagnostics {
-    let activeBlock: HealthRemoteActiveBlockRow?
+    let activeStrategy: HealthRemoteActiveStrategyRow?
     let snapshotRows: [HealthRemoteSnapshotRow]
     let insights: [HealthRemoteInsightRow]
     let targets: [HealthRemoteTargetRow]
     let traces: [HealthRemoteTraceRow]
 }
 
-struct HealthRemoteActiveBlockRow: Decodable, Identifiable {
+struct HealthRemoteActiveStrategyRow: Decodable, Identifiable {
     let id: UUID
     let title: String
-    let goalText: String?
     let status: String
     let updatedAt: String
 
     enum CodingKeys: String, CodingKey {
         case id
         case title
-        case goalText = "goal_text"
         case status
         case updatedAt = "updated_at"
     }
@@ -382,11 +380,11 @@ struct HealthDebugView: View {
 
                 if let diagnostics = viewModel.remoteDiagnostics {
                     Section("Remote sync status") {
-                        if let block = diagnostics.activeBlock {
-                            LabeledContent("Active block", value: block.title)
-                            LabeledContent("Block updated", value: DebugDateFormatter.short(block.updatedAt))
+                        if let strategy = diagnostics.activeStrategy {
+                            LabeledContent("Active strategy", value: strategy.title)
+                            LabeledContent("Strategy updated", value: DebugDateFormatter.short(strategy.updatedAt))
                         } else {
-                            Text("No active block returned for this user.")
+                            Text("No active strategy returned for this user.")
                                 .font(.system(size: 14))
                                 .foregroundStyle(HAYFColor.error)
                         }

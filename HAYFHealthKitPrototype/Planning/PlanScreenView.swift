@@ -15,6 +15,8 @@ struct PlanScreenView: View {
     @State private var movingWorkout: PlanWorkout?
     @State private var activeEditAnalysis: PlanEditAnalysis?
     @State private var workoutCandidateLoadID: UUID?
+    @State private var selectedConstraintDay: PlanConstraintEditingContext?
+    @State private var isSavingConstraint = false
 
     private let planningAIProvider = PlanningAIProvider()
 
@@ -79,6 +81,9 @@ struct PlanScreenView: View {
                             },
                             addWorkout: { date, sequenceOrder in
                                 showWorkoutPlanning(WorkoutPlanningContext(mode: .add(date: date, sequenceOrder: sequenceOrder)))
+                            },
+                            editConstraint: { group in
+                                showConstraintEditor(for: group)
                             },
                             reload: {
                                 await store.loadVisiblePlan()
@@ -170,6 +175,17 @@ struct PlanScreenView: View {
                 }
             )
             .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $selectedConstraintDay) { context in
+            WeeklyPlanConstraintSheet(
+                context: context,
+                isSaving: isSavingConstraint,
+                save: { kind, note in
+                    Task { await saveConstraint(context: context, kind: kind, note: note) }
+                }
+            )
+            .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
     }
@@ -391,6 +407,46 @@ struct PlanScreenView: View {
             store.errorMessage = error.localizedDescription
         }
     }
+
+    private func showConstraintEditor(for group: PlanWorkoutDayGroup) {
+        guard let weeklyPlanID = group.weeklyPlanID else {
+            store.errorMessage = "This day is not attached to a visible weekly plan yet."
+            return
+        }
+
+        selectedConstraintDay = PlanConstraintEditingContext(
+            weeklyPlanID: weeklyPlanID,
+            date: group.date,
+            constraint: group.constraint
+        )
+    }
+
+    private func saveConstraint(
+        context: PlanConstraintEditingContext,
+        kind: PlanningWeeklyPlanConstraintKind,
+        note: String?
+    ) async {
+        guard let scheduledDate = PlanDate.date(from: context.date) else {
+            store.errorMessage = "Could not read the selected date."
+            return
+        }
+
+        isSavingConstraint = true
+        defer { isSavingConstraint = false }
+
+        do {
+            _ = try await planningAIProvider.recordWeeklyPlanConstraint(
+                weeklyPlanID: context.weeklyPlanID,
+                scheduledDate: scheduledDate,
+                kind: kind,
+                note: note
+            )
+            selectedConstraintDay = nil
+            await store.loadVisiblePlan()
+        } catch {
+            store.errorMessage = error.localizedDescription
+        }
+    }
 }
 
 private enum PlanEditAnalysis: Identifiable {
@@ -510,10 +566,28 @@ private struct WorkoutPlanningContext: Identifiable {
             return [
                 "Checking the week before adding more load.",
                 "Finding a workout that fits this date.",
-                "Matching the idea to the active block targets.",
+                "Matching the idea to the active strategy targets.",
                 "Estimating whether nearby sessions need more space."
             ]
         }
+    }
+}
+
+private struct PlanConstraintEditingContext: Identifiable {
+    let weeklyPlanID: UUID
+    let date: String
+    let constraint: PlanDayConstraint?
+
+    var id: String {
+        "\(weeklyPlanID.uuidString)-\(date)"
+    }
+
+    var initialKind: PlanningWeeklyPlanConstraintKind {
+        constraint?.kind ?? .available
+    }
+
+    var initialNote: String {
+        constraint?.note ?? ""
     }
 }
 
@@ -571,6 +645,7 @@ private struct PlanContentView: View {
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
     let addWorkout: (String, Int) -> Void
+    let editConstraint: (PlanWorkoutDayGroup) -> Void
     let reload: () async -> Void
 
     var body: some View {
@@ -614,7 +689,8 @@ private struct PlanContentView: View {
                         cancelMoveWorkout: cancelMoveWorkout,
                         deleteWorkout: deleteWorkout,
                         replaceWorkout: replaceWorkout,
-                        addWorkout: addWorkout
+                        addWorkout: addWorkout,
+                        editConstraint: editConstraint
                     )
                 }
             }
@@ -686,7 +762,7 @@ private struct PlanBlockCard: View {
             HStack(alignment: .center, spacing: 16) {
                 Button(action: showActiveBlockDetail) {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("ACTIVE BLOCK")
+                        Text("STRATEGY")
                             .font(.system(size: 11, weight: .semibold))
                             .tracking(1.1)
                             .foregroundStyle(HAYFColor.muted)
@@ -706,7 +782,7 @@ private struct PlanBlockCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open active block details")
+                .accessibilityLabel("Open strategy details")
 
                 Spacer(minLength: 16)
 
@@ -1041,12 +1117,20 @@ private struct PlanWorkoutsPanel: View {
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
     let addWorkout: (String, Int) -> Void
+    let editConstraint: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Current + next week")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("This week + draft week")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text("Your committed week is the plan to execute. Next week stays draft until Sunday at 9pm.")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(alignment: .leading, spacing: 0) {
                 if let movingWorkout {
@@ -1055,7 +1139,7 @@ private struct PlanWorkoutsPanel: View {
                 }
 
                 PlanWeekSection(
-                    title: "THIS WEEK",
+                    title: "This week",
                     rhythm: rhythm(for: .current),
                     groups: groups(for: .current),
                     movingWorkout: movingWorkout,
@@ -1064,7 +1148,8 @@ private struct PlanWorkoutsPanel: View {
                     beginMoveWorkout: beginMoveWorkout,
                     deleteWorkout: deleteWorkout,
                     replaceWorkout: replaceWorkout,
-                    addWorkout: addWorkout
+                    addWorkout: addWorkout,
+                    editConstraint: editConstraint
                 )
 
                 Divider()
@@ -1072,7 +1157,7 @@ private struct PlanWorkoutsPanel: View {
                     .padding(.vertical, 14)
 
                 PlanWeekSection(
-                    title: "NEXT WEEK",
+                    title: "Next week",
                     rhythm: rhythm(for: .next),
                     groups: groups(for: .next),
                     movingWorkout: movingWorkout,
@@ -1081,7 +1166,8 @@ private struct PlanWorkoutsPanel: View {
                     beginMoveWorkout: beginMoveWorkout,
                     deleteWorkout: deleteWorkout,
                     replaceWorkout: replaceWorkout,
-                    addWorkout: addWorkout
+                    addWorkout: addWorkout,
+                    editConstraint: editConstraint
                 )
 
             }
@@ -1100,11 +1186,18 @@ private struct PlanWorkoutsPanel: View {
     }
 
     private func groups(for week: PlanWeekBucket) -> [PlanWorkoutDayGroup] {
+        let weekRhythm = rhythm(for: week)
         let filtered = workouts.filter { PlanDate.bucket(for: $0.scheduledDate) == week }
         let grouped = Dictionary(grouping: filtered, by: \.scheduledDate)
 
         return PlanDate.weekDates(for: week).map { date in
-            PlanWorkoutDayGroup(date: date, workouts: grouped[date] ?? [])
+            PlanWorkoutDayGroup(
+                date: date,
+                workouts: grouped[date] ?? [],
+                weeklyPlanID: weekRhythm?.id,
+                weekStatus: weekRhythm?.status,
+                constraint: weekRhythm?.constraint(for: date)
+            )
         }
     }
 }
@@ -1120,14 +1213,22 @@ private struct PlanWeekSection: View {
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
     let addWorkout: (String, Int) -> Void
+    let editConstraint: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .tracking(1.2)
-                    .foregroundStyle(HAYFColor.muted)
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    if let rhythm {
+                        PlanWeekStatusChip(status: rhythm.status)
+                    }
+
+                    Spacer(minLength: 8)
+                }
 
                 if let objective = rhythm?.objective,
                    !objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1135,6 +1236,12 @@ private struct PlanWeekSection: View {
                         .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(HAYFColor.muted)
                         .lineLimit(2)
+                }
+
+                if rhythm?.status == "draft" {
+                    Text("Finalizes Sunday 9pm")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(HAYFColor.orange)
                 }
             }
 
@@ -1148,11 +1255,30 @@ private struct PlanWeekSection: View {
                         beginMoveWorkout: beginMoveWorkout,
                         deleteWorkout: deleteWorkout,
                         replaceWorkout: replaceWorkout,
-                        addWorkout: addWorkout
+                        addWorkout: addWorkout,
+                        editConstraint: editConstraint
                     )
                 }
             }
         }
+    }
+}
+
+private struct PlanWeekStatusChip: View {
+    let status: String
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(status == "draft" ? HAYFColor.orange : HAYFColor.primary)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background((status == "draft" ? HAYFColor.orange : HAYFColor.primary).opacity(0.08))
+            .clipShape(Capsule())
+    }
+
+    private var label: String {
+        status == "draft" ? "Draft" : "Committed"
     }
 }
 
@@ -1165,6 +1291,7 @@ private struct PlanWorkoutDayRow: View {
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
     let addWorkout: (String, Int) -> Void
+    let editConstraint: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1187,14 +1314,20 @@ private struct PlanWorkoutDayRow: View {
                 if group.workouts.isEmpty {
                     if isMoveTarget {
                         PlanEmptyDayDropZone(isMoveTarget: true)
+                    } else if group.constraint?.kind == .unavailable {
+                        PlanConstraintStatusRow(constraint: group.constraint)
                     } else if canAddWorkout {
                         PlanAddWorkoutRow(
                             add: { addWorkout(group.date, nextSequenceOrder) }
                         )
                     } else {
-                        PlanEmptyDayDropZone(isMoveTarget: false)
+                        PlanHistoryEmptyRow()
                     }
                 } else {
+                    if let constraint = group.constraint {
+                        PlanConstraintStatusRow(constraint: constraint)
+                    }
+
                     ForEach(group.workouts) { workout in
                         PlanWorkoutCard(
                             workout: workout,
@@ -1210,6 +1343,13 @@ private struct PlanWorkoutDayRow: View {
                             add: { addWorkout(group.date, nextSequenceOrder) }
                         )
                     }
+                }
+
+                if canEditConstraint {
+                    PlanAvailabilityButton(
+                        constraint: group.constraint,
+                        open: { editConstraint(group) }
+                    )
                 }
             }
         }
@@ -1240,11 +1380,172 @@ private struct PlanWorkoutDayRow: View {
     }
 
     private var canAddWorkout: Bool {
-        !isAnalyzingEdit && PlanDate.isTodayOrFuture(group.date)
+        !isAnalyzingEdit && PlanDate.isTodayOrFuture(group.date) && group.constraint?.kind != .unavailable
+    }
+
+    private var canEditConstraint: Bool {
+        !isAnalyzingEdit && !isMoveTarget && PlanDate.isTodayOrFuture(group.date) && group.weeklyPlanID != nil
     }
 
     private var nextSequenceOrder: Int {
         (group.workouts.map(\.sequenceOrder).max() ?? 0) + 1
+    }
+}
+
+private struct PlanHistoryEmptyRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(HAYFColor.muted)
+                .frame(width: 24, height: 24)
+
+            Text("No imported workout")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(HAYFColor.muted)
+
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 52)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface.opacity(0.56))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct PlanConstraintStatusRow: View {
+    let constraint: PlanDayConstraint?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: iconName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                if let note = constraint?.note?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !note.isEmpty {
+                    Text(note)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(HAYFColor.muted)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(tint.opacity(0.22), lineWidth: 1)
+        }
+    }
+
+    private var title: String {
+        switch constraint?.kind {
+        case .limited:
+            return "Limited day"
+        case .unavailable:
+            return "Unavailable"
+        default:
+            return "Available"
+        }
+    }
+
+    private var tint: Color {
+        switch constraint?.kind {
+        case .limited:
+            return HAYFColor.orange
+        case .unavailable:
+            return HAYFColor.error
+        default:
+            return HAYFColor.muted
+        }
+    }
+
+    private var iconName: String {
+        switch constraint?.kind {
+        case .limited:
+            return "speedometer"
+        case .unavailable:
+            return "nosign"
+        default:
+            return "checkmark.circle"
+        }
+    }
+}
+
+private struct PlanAvailabilityButton: View {
+    let constraint: PlanDayConstraint?
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 24, height: 24)
+
+                Text(label)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.neutral)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Edit day availability")
+    }
+
+    private var label: String {
+        switch constraint?.kind {
+        case .limited:
+            return "Limited"
+        case .unavailable:
+            return "Unavailable"
+        default:
+            return "Available"
+        }
+    }
+
+    private var tint: Color {
+        switch constraint?.kind {
+        case .limited:
+            return HAYFColor.orange
+        case .unavailable:
+            return HAYFColor.error
+        default:
+            return HAYFColor.muted
+        }
     }
 }
 
@@ -1695,6 +1996,109 @@ private struct PlanErrorBanner: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(HAYFColor.error.opacity(0.35), lineWidth: 1)
             }
+    }
+}
+
+private struct WeeklyPlanConstraintSheet: View {
+    let context: PlanConstraintEditingContext
+    let isSaving: Bool
+    let save: (PlanningWeeklyPlanConstraintKind, String?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var kind: PlanningWeeklyPlanConstraintKind
+    @State private var note: String
+
+    init(
+        context: PlanConstraintEditingContext,
+        isSaving: Bool,
+        save: @escaping (PlanningWeeklyPlanConstraintKind, String?) -> Void
+    ) {
+        self.context = context
+        self.isSaving = isSaving
+        self.save = save
+        _kind = State(initialValue: context.initialKind)
+        _note = State(initialValue: context.initialNote)
+    }
+
+    var body: some View {
+        ZStack {
+            HAYFColor.neutral
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 20) {
+                SheetHeader(
+                    overline: "DAY AVAILABILITY",
+                    title: PlanDate.longLabel(context.date),
+                    dismiss: { dismiss() }
+                )
+
+                Picker("Availability", selection: $kind) {
+                    ForEach(PlanningWeeklyPlanConstraintKind.allCases) { option in
+                        Text(option.planLabel)
+                            .tag(option)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Note")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(HAYFColor.secondary)
+
+                    TextField("Optional", text: $note, axis: .vertical)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(HAYFColor.primary)
+                        .lineLimit(3...5)
+                        .textFieldStyle(.plain)
+                        .padding(14)
+                        .background(HAYFColor.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                        }
+                }
+
+                Spacer(minLength: 0)
+
+                Button {
+                    save(kind, note)
+                } label: {
+                    HStack(spacing: 10) {
+                        if isSaving {
+                            ProgressView()
+                                .tint(.white)
+                        }
+
+                        Text("Save")
+                            .font(.system(size: 17, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 54)
+                    .background(HAYFColor.primary)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isSaving)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 20)
+        }
+    }
+}
+
+private extension PlanningWeeklyPlanConstraintKind {
+    var planLabel: String {
+        switch self {
+        case .available:
+            return "Available"
+        case .limited:
+            return "Limited"
+        case .unavailable:
+            return "Unavailable"
+        }
     }
 }
 
@@ -2606,7 +3010,7 @@ private struct ActiveBlockDetailSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             SheetHeader(
-                overline: "ACTIVE BLOCK",
+                overline: "STRATEGY",
                 title: PlanDisplay.title(for: block, workouts: workouts),
                 dismiss: dismiss
             )
@@ -2621,7 +3025,7 @@ private struct ActiveBlockDetailSheet: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 DetailSection(
-                    title: "Why this plan",
+                    title: "Why this strategy",
                     text: PlanDisplay.whyThisPlan(for: block, phases: phases, workouts: workouts)
                 )
 
@@ -2670,7 +3074,7 @@ private struct PhaseDetailSheet: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 DetailSection(
-                    title: "Role in the block",
+                    title: "Role in the strategy",
                     text: item.objective
                 )
 
@@ -2888,6 +3292,9 @@ private struct PlanPhaseContextRow: View {
 private struct PlanWorkoutDayGroup: Identifiable {
     let date: String
     let workouts: [PlanWorkout]
+    let weeklyPlanID: UUID?
+    let weekStatus: String?
+    let constraint: PlanDayConstraint?
 
     var id: String { date }
 }
@@ -3003,7 +3410,7 @@ private struct PlanRoadmapSummary {
         case "Steady":
             return "Hold the pattern long enough for consistency and recovery signals to become useful."
         default:
-            return "Reduce friction, review what held, and decide how the block should continue."
+            return "Reduce friction, review what held, and decide how the strategy should continue."
         }
     }
 
@@ -3057,7 +3464,7 @@ private enum PlanDisplay {
         } else if block.kind == "consistency" {
             return "Consistency Rhythm"
         } else {
-            return "Active Fitness Block"
+            return "Fitness Strategy"
         }
     }
 
@@ -3076,7 +3483,7 @@ private enum PlanDisplay {
             return "Focus: consistency"
         }
 
-        return "Focus: active block"
+        return "Focus: strategy"
     }
 
     static func strengthFrequency(from workouts: [PlanWorkout]) -> String {
@@ -3112,13 +3519,13 @@ private enum PlanDisplay {
             return phase.objective
         }
 
-        return "This block turns onboarding into a repeatable training rhythm, then adapts it as recovery, adherence, and real workouts come in."
+        return "This strategy turns onboarding into a repeatable training rhythm, then adapts it as recovery, adherence, and real workouts come in."
     }
 
     static func firstChange(for block: PlanActiveFitnessBlock, workouts: [PlanWorkout]) -> String {
         let title = title(for: block, workouts: workouts).lowercased()
         if title.contains("aerobic") && title.contains("strength") {
-            return "Easy aerobic work becomes the main signal. Strength stays moderate so it supports the block instead of competing with it."
+            return "Easy aerobic work becomes the main signal. Strength stays moderate so it supports the strategy instead of competing with it."
         }
 
         if block.kind == "consistency" {
@@ -3273,32 +3680,32 @@ private enum PlanTargetDisplay {
         case "weekly_volume":
             return "This is the total weekly training dose you can adjust by moving, adding, or shrinking sessions."
         case "weekly_cycling":
-            return "This keeps the cycling work concrete for the week, instead of leaving the block goal abstract."
+            return "This keeps the cycling work concrete for the week, instead of leaving the strategy goal abstract."
         case "weekly_running":
             return "This keeps the running work concrete for the week, so run volume can move with the plan."
         case "weekly_strength":
-            return "This protects the strength or gym anchors that support the broader block."
+            return "This protects the strength or gym anchors that support the broader strategy."
         case "weekly_recovery":
             return "This keeps recovery visible as something to plan, not just something left over."
         case "body":
-            return "This is tied to the body-composition outcome for the current block."
+            return "This is tied to the body-composition outcome for the current strategy."
         case "volume":
-            return "This keeps training exposure high enough to move the block without guessing from workouts alone."
+            return "This keeps training exposure high enough to move the strategy without guessing from workouts alone."
         case "balance":
-            return "This protects the support work that keeps the block from becoming one-dimensional."
+            return "This protects the support work that keeps the strategy from becoming one-dimensional."
         case "activity_floor":
             return "This helps HAYF notice whether movement outside workouts is supporting the plan."
         case "consistency":
-            return "This keeps the block focused on repeatable training, not one perfect week."
+            return "This keeps the strategy focused on repeatable training, not one perfect week."
         default:
-            return "This target gives HAYF a measurable signal for the current block."
+            return "This target gives HAYF a measurable signal for the current strategy."
         }
     }
 
     static func planImpactText(for target: PlanGoalTarget) -> String {
         switch target.metricCategory {
         case "weekly_volume":
-            return "If this slips, HAYF should rebalance the week before changing the whole block."
+            return "If this slips, HAYF should rebalance the week before changing the whole strategy."
         case "weekly_cycling", "weekly_running":
             return "If this slips, HAYF should protect the most important sport-specific session first."
         case "weekly_strength":
@@ -3308,7 +3715,7 @@ private enum PlanTargetDisplay {
         case "body":
             return "HAYF should keep the plan steady and use this trend cautiously, alongside training, recovery, and feedback."
         case "volume":
-            return "If this slips, HAYF may protect easy aerobic work or reduce lower-priority sessions before changing the whole block."
+            return "If this slips, HAYF may protect easy aerobic work or reduce lower-priority sessions before changing the whole strategy."
         case "balance":
             return "If this slips, HAYF should keep strength exposure alive even when the week gets compressed."
         case "activity_floor":
@@ -3333,6 +3740,8 @@ private enum PlanTargetDisplay {
         switch target.targetKind {
         case .primary:
             return "Primary"
+        case .supporting:
+            return "Support"
         case .subGoal:
             return "Support"
         }
@@ -3404,10 +3813,9 @@ private enum PlanDate {
         guard let date = date(from: dateString) else { return .outside }
 
         let calendar = PlanCalendar.iso
-        let now = Date()
-        let currentStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
-        let nextStart = calendar.date(byAdding: .weekOfYear, value: 1, to: currentStart) ?? now
-        let afterNextStart = calendar.date(byAdding: .weekOfYear, value: 2, to: currentStart) ?? now
+        let currentStart = PlanCalendar.currentCommittedWeekStart(calendar: calendar)
+        let nextStart = calendar.date(byAdding: .weekOfYear, value: 1, to: currentStart) ?? currentStart
+        let afterNextStart = calendar.date(byAdding: .weekOfYear, value: 2, to: currentStart) ?? nextStart
 
         if date >= currentStart && date < nextStart {
             return .current
@@ -3420,8 +3828,7 @@ private enum PlanDate {
 
     static func weekDates(for bucket: PlanWeekBucket) -> [String] {
         let calendar = PlanCalendar.iso
-        let now = Date()
-        let currentStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? now
+        let currentStart = PlanCalendar.currentCommittedWeekStart(calendar: calendar)
 
         let weekStart: Date
         switch bucket {

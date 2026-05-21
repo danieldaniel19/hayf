@@ -8,17 +8,21 @@ struct PlanningAIProvider {
         self.supabase = supabase
     }
 
-    func bootstrapAfterOnboarding(
+    func acceptStrategyAndCreateInitialPlan(
         healthSnapshot: HealthFeatureSnapshot?,
+        acceptedBlueprint: JSONValue,
+        acceptedStrategy: JSONValue,
         deviceTimezone: String = TimeZone.current.identifier,
-        startDate: Date = Date()
+        acceptedAt: Date = Date()
     ) async throws -> PlanningFunctionResponse {
         try await invoke(
             PlanningFunctionRequest(
-                task: .bootstrapAfterOnboarding,
+                task: .acceptStrategyAndCreateInitialPlan,
                 healthSnapshot: healthSnapshot,
                 deviceTimezone: deviceTimezone,
-                startDate: Self.dateOnlyFormatter.string(from: startDate)
+                acceptedBlueprint: acceptedBlueprint,
+                acceptedStrategy: acceptedStrategy,
+                acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
             )
         )
     }
@@ -160,6 +164,25 @@ struct PlanningAIProvider {
         return response.output
     }
 
+    func recordWeeklyPlanConstraint(
+        weeklyPlanID: UUID,
+        scheduledDate: Date,
+        kind: PlanningWeeklyPlanConstraintKind,
+        note: String?
+    ) async throws -> PlanningFunctionResponse {
+        try await invoke(
+            PlanningFunctionRequest(
+                task: .recordWeeklyPlanConstraint,
+                weeklyPlanConstraint: PlanningWeeklyPlanConstraintInput(
+                    weeklyPlanID: weeklyPlanID,
+                    scheduledDate: Self.dateOnlyFormatter.string(from: scheduledDate),
+                    kind: kind,
+                    note: note
+                )
+            )
+        )
+    }
+
     func applyReplanProposal(
         proposalID: UUID,
         decision: PlanningProposalDecision
@@ -243,6 +266,12 @@ struct PlanningAIProvider {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+
+    private static let isoDateTimeFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }
 
 struct PlanningHealthSyncPayload {
@@ -324,6 +353,37 @@ enum PlanningProposalDecision: String, Codable {
 enum PlanningRepairPolicy: String, Codable {
     case immediate
     case deferred
+}
+
+enum PlanningWeeklyPlanConstraintKind: String, Codable, CaseIterable, Identifiable {
+    case available
+    case limited
+    case unavailable
+
+    var id: String { rawValue }
+}
+
+struct PlanningWeeklyPlanConstraintInput: Encodable {
+    let weeklyPlanID: UUID
+    let scheduledDate: String
+    let kind: PlanningWeeklyPlanConstraintKind
+    let note: String?
+
+    enum CodingKeys: String, CodingKey {
+        case weeklyPlanID = "weekly_plan_id"
+        case scheduledDate = "scheduled_date"
+        case kind
+        case note
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(weeklyPlanID.uuidString.lowercased(), forKey: .weeklyPlanID)
+        try container.encode(scheduledDate, forKey: .scheduledDate)
+        try container.encode(kind, forKey: .kind)
+        let trimmedNote = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        try container.encodeIfPresent(trimmedNote?.isEmpty == false ? trimmedNote : nil, forKey: .note)
+    }
 }
 
 enum PlanningPlanEdit: Encodable {
@@ -448,10 +508,11 @@ private struct PlanningWorkoutInterpretationFunctionResponse: Decodable {
 }
 
 enum PlanningAITask: String, Codable {
-    case bootstrapAfterOnboarding = "bootstrap_after_onboarding"
+    case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"
     case refreshPlanWindow = "refresh_plan_window"
     case recordPlanEdit = "record_plan_edit"
+    case recordWeeklyPlanConstraint = "record_weekly_plan_constraint"
     case recommendWorkoutReplacements = "recommend_workout_replacements"
     case recommendWorkoutAdditions = "recommend_workout_additions"
     case interpretWorkoutDescription = "interpret_workout_description"
@@ -471,6 +532,9 @@ private struct PlanningFunctionRequest: Encodable {
     let deviceTimezone: String?
     let startDate: String?
     let windowStart: String?
+    let acceptedBlueprint: JSONValue?
+    let acceptedStrategy: JSONValue?
+    let acceptedAt: String?
     let edit: PlanningPlanEdit?
     let proposalID: UUID?
     let eventID: UUID?
@@ -484,6 +548,7 @@ private struct PlanningFunctionRequest: Encodable {
     let textContext: String?
     let currentDerivedSnapshot: HealthFeatureSnapshot?
     let repairPolicy: PlanningRepairPolicy?
+    let weeklyPlanConstraint: PlanningWeeklyPlanConstraintInput?
 
     init(
         task: PlanningAITask,
@@ -493,6 +558,9 @@ private struct PlanningFunctionRequest: Encodable {
         deviceTimezone: String? = nil,
         startDate: String? = nil,
         windowStart: String? = nil,
+        acceptedBlueprint: JSONValue? = nil,
+        acceptedStrategy: JSONValue? = nil,
+        acceptedAt: String? = nil,
         edit: PlanningPlanEdit? = nil,
         proposalID: UUID? = nil,
         eventID: UUID? = nil,
@@ -505,7 +573,8 @@ private struct PlanningFunctionRequest: Encodable {
         mood: PlanningMoodInput? = nil,
         textContext: String? = nil,
         currentDerivedSnapshot: HealthFeatureSnapshot? = nil,
-        repairPolicy: PlanningRepairPolicy? = nil
+        repairPolicy: PlanningRepairPolicy? = nil,
+        weeklyPlanConstraint: PlanningWeeklyPlanConstraintInput? = nil
     ) {
         self.task = task
         self.healthSnapshot = healthSnapshot
@@ -514,6 +583,9 @@ private struct PlanningFunctionRequest: Encodable {
         self.deviceTimezone = deviceTimezone
         self.startDate = startDate
         self.windowStart = windowStart
+        self.acceptedBlueprint = acceptedBlueprint
+        self.acceptedStrategy = acceptedStrategy
+        self.acceptedAt = acceptedAt
         self.edit = edit
         self.proposalID = proposalID
         self.eventID = eventID
@@ -527,6 +599,7 @@ private struct PlanningFunctionRequest: Encodable {
         self.textContext = textContext
         self.currentDerivedSnapshot = currentDerivedSnapshot
         self.repairPolicy = repairPolicy
+        self.weeklyPlanConstraint = weeklyPlanConstraint
     }
 
     enum CodingKeys: String, CodingKey {
@@ -537,6 +610,9 @@ private struct PlanningFunctionRequest: Encodable {
         case deviceTimezone
         case startDate
         case windowStart
+        case acceptedBlueprint = "accepted_blueprint"
+        case acceptedStrategy = "accepted_strategy"
+        case acceptedAt = "accepted_at"
         case edit
         case proposalID = "proposal_id"
         case eventID = "event_id"
@@ -550,6 +626,7 @@ private struct PlanningFunctionRequest: Encodable {
         case textContext
         case currentDerivedSnapshot = "current_derived_snapshot"
         case repairPolicy = "repair_policy"
+        case weeklyPlanConstraint = "weekly_plan_constraint"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -561,6 +638,9 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(deviceTimezone, forKey: .deviceTimezone)
         try container.encodeIfPresent(startDate, forKey: .startDate)
         try container.encodeIfPresent(windowStart, forKey: .windowStart)
+        try container.encodeIfPresent(acceptedBlueprint, forKey: .acceptedBlueprint)
+        try container.encodeIfPresent(acceptedStrategy, forKey: .acceptedStrategy)
+        try container.encodeIfPresent(acceptedAt, forKey: .acceptedAt)
         try container.encodeIfPresent(edit, forKey: .edit)
         try container.encodeIfPresent(proposalID?.uuidString.lowercased(), forKey: .proposalID)
         try container.encodeIfPresent(eventID?.uuidString.lowercased(), forKey: .eventID)
@@ -575,6 +655,7 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(trimmedTextContext?.isEmpty == false ? trimmedTextContext : nil, forKey: .textContext)
         try container.encodeIfPresent(currentDerivedSnapshot, forKey: .currentDerivedSnapshot)
         try container.encodeIfPresent(repairPolicy, forKey: .repairPolicy)
+        try container.encodeIfPresent(weeklyPlanConstraint, forKey: .weeklyPlanConstraint)
     }
 }
 

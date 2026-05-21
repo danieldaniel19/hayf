@@ -31,6 +31,7 @@ struct OnboardingFlowView: View {
     private let healthKitManager = HealthKitManager()
     private let aiProvider: any OnboardingAIProvider = RemoteOnboardingAIProvider()
     private let planningAIProvider = PlanningAIProvider()
+    private let completionLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "HAYF", category: "onboarding.completion")
     private let onboardingProfileStore: OnboardingProfileStore
 
     init(
@@ -1809,11 +1810,20 @@ struct OnboardingFlowView: View {
         guard !isCompleting else { return }
 
         Task {
-            isCompleting = true
-            completionErrorMessage = nil
-            defer { isCompleting = false }
+            await MainActor.run {
+                isCompleting = true
+                completionErrorMessage = nil
+            }
+            defer {
+                Task { @MainActor in
+                    isCompleting = false
+                }
+            }
 
             do {
+                let acceptedAt = Date()
+                let acceptedBlueprint = currentAthleteBlueprint
+                let acceptedStrategy = currentFitnessStrategy
                 let healthSnapshot: HealthFeatureSnapshot?
                 if let pendingHealthSnapshot {
                     healthSnapshot = pendingHealthSnapshot
@@ -1826,16 +1836,143 @@ struct OnboardingFlowView: View {
                     summary: currentSummary,
                     healthRequestState: healthRequestState
                 )
-                _ = try await planningAIProvider.bootstrapAfterOnboarding(
+                _ = try await planningAIProvider.acceptStrategyAndCreateInitialPlan(
                     healthSnapshot: healthSnapshot,
-                    deviceTimezone: TimeZone.current.identifier
+                    acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
+                    acceptedStrategy: acceptedStrategyArtifact(from: acceptedStrategy),
+                    deviceTimezone: TimeZone.current.identifier,
+                    acceptedAt: acceptedAt
                 )
-                onboardingProfileStore.useProfile(completedProfile)
-                onComplete()
+                await MainActor.run {
+                    onboardingProfileStore.useProfile(completedProfile)
+                    onComplete()
+                }
             } catch {
-                completionErrorMessage = "Could not finish onboarding yet: \(error.localizedDescription)"
+                completionLogger.error("Onboarding completion failed: \(error.localizedDescription, privacy: .public)")
+                await MainActor.run {
+                    completionErrorMessage = "Could not finish onboarding yet: \(error.localizedDescription)"
+                }
             }
         }
+    }
+
+    private func acceptedBlueprintArtifact(from blueprint: AthleteBlueprintOutput) -> JSONValue {
+        .object([
+            "coachRead": .object([
+                "preview": .string(blueprint.coachRead.preview),
+                "text": .string(blueprint.coachRead.text),
+                "detail": blueprintDetailArtifact(blueprint.coachRead.detail)
+            ]),
+            "archetype": .object([
+                "label": .string(blueprint.archetype.label),
+                "explanation": .string(blueprint.archetype.explanation),
+                "detail": blueprintDetailArtifact(blueprint.archetype.detail)
+            ]),
+            "currentTrainingState": .object([
+                "label": .string(blueprint.currentTrainingState.label),
+                "summary": .string(blueprint.currentTrainingState.summary),
+                "detail": blueprintDetailArtifact(blueprint.currentTrainingState.detail)
+            ]),
+            "physicalBaseline": .object([
+                "label": .string(blueprint.physicalBaseline.label),
+                "summary": .string(blueprint.physicalBaseline.summary),
+                "detail": blueprintDetailArtifact(blueprint.physicalBaseline.detail)
+            ]),
+            "historyFindings": .array(blueprint.historyFindings.map { finding in
+                .object([
+                    "id": .string(finding.id),
+                    "title": .string(finding.title),
+                    "summary": .string(finding.summary),
+                    "detail": blueprintDetailArtifact(finding.detail)
+                ])
+            }),
+            "goalFit": .object([
+                "headline": .string(blueprint.goalFit.headline),
+                "summary": .string(blueprint.goalFit.summary),
+                "supports": .array(blueprint.goalFit.supports.map { .string($0) }),
+                "gaps": .array(blueprint.goalFit.gaps.map { .string($0) }),
+                "detail": blueprintDetailArtifact(blueprint.goalFit.detail)
+            ])
+        ])
+    }
+
+    private func blueprintDetailArtifact(_ detail: AthleteBlueprintDetail) -> JSONValue {
+        .object([
+            "id": .string(detail.id),
+            "title": .string(detail.title),
+            "summary": .string(detail.summary),
+            "body": detail.body.map(JSONValue.string) ?? .null,
+            "confidence": .string(detail.confidence),
+            "observationWindow": .string(detail.observationWindow),
+            "evidence": .array(detail.evidence.map { .string($0) }),
+            "caveat": detail.caveat.map(JSONValue.string) ?? .null
+        ])
+    }
+
+    private func acceptedStrategyArtifact(from strategy: FitnessStrategyOutput) -> JSONValue {
+        .object([
+            "read": .string(strategy.read),
+            "goalTargetContext": .object([
+                "title": .string(strategy.goalTargetContext.title),
+                "summary": .string(strategy.goalTargetContext.summary)
+            ]),
+            "snapshotItems": .array(strategy.snapshotItems.map { item in
+                .object([
+                    "id": .string(item.id),
+                    "systemImage": .string(item.systemImage),
+                    "value": .string(item.value),
+                    "label": .string(item.label)
+                ])
+            }),
+            "fitReasons": .array(strategy.fitReasons.map { reason in
+                .object([
+                    "id": .string(reason.id),
+                    "systemImage": .string(reason.systemImage),
+                    "title": .string(reason.title),
+                    "summary": .string(reason.summary)
+                ])
+            }),
+            "pillars": .array(strategy.pillars.map { pillar in
+                .object([
+                    "id": .string(pillar.id),
+                    "title": .string(pillar.title),
+                    "summary": .string(pillar.summary)
+                ])
+            }),
+            "phases": .array(strategy.phases.map { phase in
+                .object([
+                    "id": .string(phase.id),
+                    "name": .string(phase.name),
+                    "objective": .string(phase.objective),
+                    "targetSummary": .string(phase.targetSummary),
+                    "targets": .array(phase.targets.map(strategyTargetArtifact)
+                    )
+                ])
+            }),
+            "operatingRhythm": strategy.operatingRhythm.map { rhythm in
+                .object([
+                    "summary": .string(rhythm.summary),
+                    "anchors": .array(rhythm.anchors.map { .string($0) })
+                ])
+            } ?? .null,
+            "targets": .array(strategy.targets.map(strategyTargetArtifact))
+        ])
+    }
+
+    private func strategyTargetArtifact(_ target: FitnessStrategyTarget) -> JSONValue {
+        .object([
+            "id": .string(target.id),
+            "scope": .string(target.scope.rawValue),
+            "kind": .string(target.kind.rawValue),
+            "title": .string(target.title),
+            "summary": .string(target.summary),
+            "metricKey": target.metricKey.map(JSONValue.string) ?? .null,
+            "metricCategory": .string(target.metricCategory),
+            "direction": .string(target.direction.rawValue),
+            "targetValue": target.targetValue.map(JSONValue.number) ?? .null,
+            "unit": target.unit.map(JSONValue.string) ?? .null,
+            "displayValue": target.displayValue.map(JSONValue.string) ?? .null
+        ])
     }
 
     private func compactHealthSnapshot() async -> OnboardingAIHealthSnapshot? {

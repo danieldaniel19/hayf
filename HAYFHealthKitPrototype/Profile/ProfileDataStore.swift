@@ -45,36 +45,62 @@ final class ProfileDataStore: ObservableObject {
 
     private func fetchActiveBlock() async throws -> PlanActiveFitnessBlock? {
         do {
-            let block: PlanActiveFitnessBlock = try await supabase
-                .from("active_fitness_blocks")
-                .select("id, kind, title, goal_text, status, start_date, target_date, review_cadence_days, timezone, context_json")
+            let strategy: ProfileRawFitnessStrategy = try await supabase
+                .from("fitness_strategies")
+                .select("id, user_goal_id, status, title, summary, rationale, review_cadence_days, start_date, target_date, context_json")
                 .eq("status", value: "active")
                 .single()
                 .execute()
                 .value
 
-            return block
+            let goal: ProfileRawUserGoal = try await supabase
+                .from("user_goals")
+                .select("id, goal_kind, title, target_date")
+                .eq("id", value: strategy.userGoalID.uuidString.lowercased())
+                .single()
+                .execute()
+                .value
+
+            let timezone = strategy.context.timezone ?? TimeZone.current.identifier
+            return PlanActiveFitnessBlock(
+                id: strategy.id,
+                kind: goal.goalKind,
+                title: strategy.title,
+                goalText: goal.title,
+                status: strategy.status,
+                startDate: strategy.startDate,
+                targetDate: strategy.targetDate ?? goal.targetDate,
+                reviewCadenceDays: strategy.reviewCadenceDays,
+                timezone: timezone,
+                context: PlanBlockContext(
+                    onboardingIntent: goal.goalKind,
+                    planningRationale: strategy.rationale.profileNilIfEmpty ?? strategy.summary.profileNilIfEmpty,
+                    dataFreshness: nil,
+                    timezone: timezone,
+                    acceptedAt: strategy.context.acceptedAt,
+                    planOwnerStartDate: strategy.context.planOwnerStartDate
+                )
+            )
         } catch let error as PostgrestError where error.code == "PGRST116" {
             return nil
         }
     }
 
-    private func fetchGoalTargets(for blockID: UUID) async throws -> [PlanGoalTarget] {
+    private func fetchGoalTargets(for strategyID: UUID) async throws -> [PlanGoalTarget] {
         try await supabase
-            .from("fitness_goal_targets")
-            .select("id, active_block_id, parent_goal_target_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .from("planning_targets")
+            .select("id, fitness_strategy_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at")
+            .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .order("target_kind", ascending: true)
             .order("created_at", ascending: true)
             .execute()
             .value
     }
 
-    private func fetchGoalEvaluations(for blockID: UUID) async throws -> [PlanGoalEvaluation] {
+    private func fetchGoalEvaluations(for strategyID: UUID) async throws -> [PlanGoalEvaluation] {
         try await supabase
-            .from("fitness_goal_evaluations")
-            .select("id, active_block_id, goal_target_id, status, current_value, target_value, unit, progress_ratio, evaluated_at, evidence_json, message, confidence")
-            .eq("active_block_id", value: blockID.uuidString.lowercased())
+            .from("planning_target_evaluations")
+            .select("id, planning_target_id, status, current_value, target_value, unit, progress_ratio, evaluated_at, evidence_json, message, confidence")
             .order("evaluated_at", ascending: false)
             .limit(50)
             .execute()
@@ -89,5 +115,52 @@ final class ProfileDataStore: ObservableObject {
             .limit(12)
             .execute()
             .value
+    }
+}
+
+private struct ProfileRawFitnessStrategy: Decodable {
+    let id: UUID
+    let userGoalID: UUID
+    let status: String
+    let title: String
+    let summary: String
+    let rationale: String
+    let reviewCadenceDays: Int
+    let startDate: String
+    let targetDate: String?
+    let context: PlanBlockContext
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userGoalID = "user_goal_id"
+        case status
+        case title
+        case summary
+        case rationale
+        case reviewCadenceDays = "review_cadence_days"
+        case startDate = "start_date"
+        case targetDate = "target_date"
+        case context = "context_json"
+    }
+}
+
+private struct ProfileRawUserGoal: Decodable {
+    let id: UUID
+    let goalKind: String
+    let title: String
+    let targetDate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case goalKind = "goal_kind"
+        case title
+        case targetDate = "target_date"
+    }
+}
+
+private extension String {
+    var profileNilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
