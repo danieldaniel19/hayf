@@ -5,6 +5,7 @@ type OnboardingTask =
   | "generate_goal_candidates"
   | "generate_blended_candidate"
   | "generate_athlete_blueprint"
+  | "generate_fitness_strategy_targets"
   | "generate_fitness_strategy";
 
 type OnboardingAIRequest = {
@@ -67,7 +68,7 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
           properties: {
             id: { type: "string" },
             title: { type: "string" },
-            summary: { type: "string" },
+            summary: { type: "string", maxLength: 90 },
           },
         },
       },
@@ -82,12 +83,66 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
       },
     },
   },
+  generate_fitness_strategy_targets: {
+    type: "object",
+    additionalProperties: false,
+    required: ["strategyTargets", "phaseOutline"],
+    properties: {
+      strategyTargets: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: fitnessStrategyTargetProposalSchema(),
+      },
+      phaseOutline: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "phaseTargets"],
+          properties: {
+            id: { type: "string" },
+            phaseTargets: {
+              type: "array",
+              minItems: 3,
+              maxItems: 3,
+              items: fitnessStrategyTargetProposalSchema(),
+            },
+          },
+        },
+      },
+    },
+  },
   generate_fitness_strategy: {
     type: "object",
     additionalProperties: false,
-    required: ["strategyRead", "strategyPillars", "phaseOutline", "operatingRhythm", "strategyTargets"],
+    required: ["strategyRead", "goalTargetContext", "fitReasons", "strategyPillars", "phaseOutline", "operatingRhythm"],
     properties: {
       strategyRead: { type: "string" },
+      goalTargetContext: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "summary"],
+        properties: {
+          title: { type: "string" },
+          summary: { type: "string" },
+        },
+      },
+      fitReasons: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "title", "summary"],
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string", maxLength: 90 },
+          },
+        },
+      },
       strategyPillars: {
         type: "array",
         items: {
@@ -122,19 +177,6 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
         properties: {
           summary: { type: "string" },
           anchors: { type: "array", items: { type: "string" } },
-        },
-      },
-      strategyTargets: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["id", "title", "summary"],
-          properties: {
-            id: { type: "string" },
-            title: { type: "string" },
-            summary: { type: "string" },
-          },
         },
       },
     },
@@ -270,7 +312,7 @@ function taskSystemPrompt(task: OnboardingTask) {
         "Write like a calm coach speaking to an excited athlete at the start of a shared training project.",
         "Use direct second-person language: you, your, we will, and you will.",
         "Never refer to the user as 'the athlete', 'athlete', 'user', or 'client'.",
-        "Never write analyst fragments like 'Primary priority cycling' or 'Athlete wants'.",
+        "Never write analyst fragments or third-person shorthand.",
       ].join(" ");
     case "generate_blended_candidate":
       return [
@@ -281,6 +323,8 @@ function taskSystemPrompt(task: OnboardingTask) {
       ].join(" ");
     case "generate_athlete_blueprint":
       return "When writing an Athlete Blueprint, sound like an elite coach who has studied the athlete closely, but stay fully inside the approved evidence.";
+    case "generate_fitness_strategy_targets":
+      return "When designing Fitness Strategy targets, act like a coaching strategist who can turn a goal into measurable success signals without writing workouts.";
     case "generate_fitness_strategy":
       return "When writing a Fitness Strategy, sound like a coach explaining the plan of attack after assessing the athlete.";
     case "generate_summary":
@@ -306,13 +350,13 @@ function taskRules(task: OnboardingTask) {
       return [
         "Return exactly three distinct goal candidates.",
         "Each title must name the outcome only and must not include the timeframe because timeframeWeeks is displayed separately.",
-        "Titles may use two short sentences when that reads better, for example: 'Increase compound strength. Add 10% to squat and deadlift.'",
+        "Titles may use two short sentences when that reads better.",
         "Never use em dashes, en dashes, semicolons, colons, slashes, or plus signs in titles.",
         "Never start a title with punctuation.",
         "Set timeframeWeeks to 4, 8, or 12.",
         "Write rationale as warm coach copy for an excited athlete at the start of a project you will work on together.",
         "Rationale must speak directly to the user with words like you, your, we will, and you will.",
-        "Do not write note-style fragments like 'Primary interest in cycling' or third-person phrases like 'athlete's preference'.",
+        "Do not write note-style fragments or third-person phrases.",
         "Rationale must be one sentence when possible, two short sentences at most.",
         "Rationale must explain why this goal fits the user's priority and challenge style, then make the payoff feel motivating and concrete.",
         "Do not use semicolons, em dashes, en dashes, slashes, or plus signs.",
@@ -328,7 +372,7 @@ function taskRules(task: OnboardingTask) {
         "Never start a title with punctuation.",
         "Write rationale as warm coach copy for an excited athlete at the start of a project you will work on together.",
         "Rationale must speak directly to the user with words like you, your, we will, and you will.",
-        "Do not write note-style fragments like 'Primary interest in cycling' or third-person phrases like 'athlete's preference'.",
+        "Do not write note-style fragments or third-person phrases.",
         "Rationale must be one sentence when possible, two short sentences at most.",
         "Do not use semicolons, em dashes, en dashes, slashes, or plus signs.",
         "Do not use the word 'Tracks' or describe tracking in the rationale.",
@@ -348,15 +392,60 @@ function taskRules(task: OnboardingTask) {
         "Do not turn goalFit into a mini-plan: no prescriptions, no weekly session counts, no exercise programming.",
         "Rephrase goals in natural English; never echo a first-person brief such as 'I want to...' verbatim after 'your goal of'.",
       ].join(" ");
+    case "generate_fitness_strategy_targets":
+      return [
+        "Return target proposals only. Do not write strategyRead, fitReasons, pillars, workout plans, weekly plans, or session plans.",
+        "Use targetSlots as the exact structural contract. Preserve every target id exactly.",
+        "Use targetBrief to choose the target concepts. Do not use sectionSeeds because this task receives no prebuilt target titles or metric contracts.",
+        "Infer the progress type from targetBrief: adherence, completion, speed, capacity, strength, skill, body composition, mobility, recovery, or general athleticism.",
+        "Return exactly three strategyTargets for the full strategy horizon.",
+        "For phased strategies, return exactly the seeded phase ids and exactly three phaseTargets per phase. For consistency strategies, phaseOutline must stay empty.",
+        "A strategy target is an end-of-horizon success signal. It answers what should be true by the end of this strategy for HAYF to believe the approach worked.",
+        "A phase target is a shorter proof point. It answers what should be true by the end of this phase for HAYF to know the strategy is progressing.",
+        "Every target must be measurable, numeric, and trackable from imported performance, body, or workout/adherence data.",
+        "Every target title and proposedDisplayValue must make the measurable outcome obvious without the user needing to infer it.",
+        "Target titles are UI labels, not explanations: use one short label, 2 to 6 words, ideally under 32 characters. Do not use title: subtitle formatting, colons, or labels like 'thing: explanation'.",
+        "proposedDisplayValue is a small pill: keep it under 14 characters whenever possible, using compact forms like +8%, -30 sec, 8/12, 7 days, 3 wks, or 2x/wk.",
+        "Put the measurement explanation in summary, but keep summary to one short sentence of 10 to 18 words because it is displayed inside a compact card.",
+        "A title must name the measured thing, not the activity of measuring it. Prefer labels like 5K pace, FTP, rhythm weeks, strength weeks, max gap, weekly run minutes, body weight.",
+        "When targetBrief.concreteGoalTargets contains one or more targets, include as many of those concrete targets as strategy-level targets as the three available strategy target slots allow.",
+        "When targetBrief.concreteGoalTargets contains two targets, use two strategy target slots for those concrete outcomes and one slot for the strongest adherence, modality-presence, body, or capstone support target.",
+        "Do not use non-target labels such as review, signal, decision, check-in, stable, before skip, next move, or generic result count.",
+        "Do not use the word benchmark anywhere in target titles, target display values, phase objectives, or summaries.",
+        "Do not ask the user to reflect, decide, create a plan, or review evidence as a target.",
+        "Onboarding choices and targetBrief define the training path. They take precedence over historical modalities.",
+        "Use historical data only to size confidence or feasibility when it supports the selected goal and selected modalities.",
+        "Do not confuse high general training volume with high goal-specific volume.",
+        "Do not introduce modalities, locations, equipment, or dependencies that are absent from targetBrief, unavailable in onboardingSignals, or marked as something the user wants to avoid.",
+        "Do not turn a historical modality into a strategy target, phase target, anchor, capstone, or headline unless it is in targetBrief.allowedModalities.",
+        "Capstones are optional. Propose a capstone only when it naturally proves the user's goal and matches goal semantics, selected modality, access, horizon, and athlete evidence.",
+        "A capstone must be one target inside the strategy, never the whole strategy. Do not create a capstone from historical data alone.",
+        "If the user supplied a concrete number, date, or event, treat it as a constraint. If not, do not invent exact pace, weight, load, distance, or body-composition outcomes.",
+        "When no exact performance number is supplied, use a numeric threshold, adherence target, comparable-effort improvement, presence count, volume change, distance change, load change, max-gap guardrail, or body-data change that HAYF can track.",
+        "Do not create targets like one imported result, final test completed, plan adjusted, confidence improved, recovery reviewed, or next goal selected.",
+        "Do not prescribe workouts, session formats, intensity schedules, weekly workout composition, named workout types, or exact training sessions.",
+        "Never mention metricKey values, snake_case field names, comparison operators, or internal measurement names in user-facing target copy.",
+        "Each target family must come from targetBrief.allowedTargetFamilies.",
+      ].join(" ");
     case "generate_fitness_strategy":
       return [
         "Return authored copy for the Fitness Strategy reveal only.",
         "Use sectionSeeds as the exact structural contract and preserve every id exactly.",
+        "The targets in sectionSeeds are already validated. Do not redesign, replace, resize, or add targets.",
         "strategyRead should explain the coaching approach, not repeat the user's goal summary. Use 2 to 4 short sentences.",
-        "strategyPillars should explain the few steering rules HAYF will prioritize. Keep every seeded id and write concrete user-facing copy.",
+        "goalTargetContext should frame the user's goal target as context that HAYF translates into strategy. It is not a HAYF target.",
+        "fitReasons should explain why this strategy fits the athlete, using only the seeded ids and supplied evidence. Each summary must be one short sentence, 8 to 12 words.",
+        "strategyPillars should explain the few steering rules HAYF will prioritize. Keep every seeded id and write concrete user-facing copy. Each summary must be one short sentence, 8 to 12 words.",
         "For consistency goals, phaseOutline must stay empty and operatingRhythm must be present.",
-        "For non-consistency goals, phaseOutline should preserve the seeded ids and operatingRhythm should be null.",
-        "strategyTargets should explain what HAYF will watch to know whether the strategy is working. They are not workout prescriptions. Keep titles consistent with seeded metricKey, targetValue, unit, scope, and kind because deterministic code owns the measurement contract.",
+        "For non-consistency goals, phaseOutline should preserve the seeded phase ids and operatingRhythm should be null.",
+        "Onboarding choices and validated sectionSeeds define the training path for this strategy. They take precedence over historical modalities.",
+        "Do not confuse high general training volume with high goal-specific volume.",
+        "Do not introduce modalities, locations, equipment, or dependencies that are absent from sectionSeeds, unavailable in onboardingSignals, or marked as something the user wants to avoid.",
+        "Do not turn a historical modality into a strategy target, phase target, anchor, capstone, or headline unless validated sectionSeeds already include it.",
+        "Do not prescribe workouts, session formats, intensity schedules, weekly workout composition, named workout types, or exact training sessions.",
+        "Do not use the word benchmark anywhere in strategyRead, pillars, fitReasons, phase objectives, or phase target summaries.",
+        "Never mention metricKey values, snake_case field names, comparison operators, or internal measurement names in user-facing target copy.",
+        "Do not create or mention weekly targets in the Fitness Strategy reveal; weekly targets are shown later in Plan.",
         "Do not create new athlete facts beyond the supplied blueprint summary and onboarding signals.",
       ].join(" ");
   }
@@ -395,6 +484,18 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "onboardingSignals",
       "evidenceSummary",
       "sectionSeeds",
+      "doNotClaim",
+    ]);
+  }
+
+  if (task === "generate_fitness_strategy_targets") {
+    return pick(context, [
+      "intent",
+      "normalizedGoal",
+      "blueprint",
+      "onboardingSignals",
+      "targetBrief",
+      "targetSlots",
       "doNotClaim",
     ]);
   }
@@ -571,6 +672,55 @@ function goalCandidateProperties() {
     tracking: { type: "string" },
     timeframeWeeks: { type: "integer", enum: [4, 8, 12] },
     systemImage: { type: "string" },
+  };
+}
+
+function fitnessStrategyTargetProposalSchema() {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "id",
+      "family",
+      "modality",
+      "title",
+      "summary",
+      "proposedDisplayValue",
+      "targetValue",
+      "unit",
+      "rationale",
+      "capstone",
+    ],
+    properties: {
+      id: { type: "string" },
+      family: {
+        type: "string",
+        enum: [
+          "consistency",
+          "modality_presence",
+          "capacity_metric",
+          "performance_metric",
+          "body_trend",
+          "capstone",
+        ],
+      },
+      modality: { type: ["string", "null"] },
+      title: { type: "string", maxLength: 48 },
+      summary: { type: "string", maxLength: 120 },
+      proposedDisplayValue: { type: ["string", "null"], maxLength: 18 },
+      targetValue: { type: ["number", "null"] },
+      unit: { type: ["string", "null"] },
+      rationale: { type: "string" },
+      capstone: {
+        type: "object",
+        additionalProperties: false,
+        required: ["isCapstone", "whyAppropriate"],
+        properties: {
+          isCapstone: { type: "boolean" },
+          whyAppropriate: { type: ["string", "null"] },
+        },
+      },
+    },
   };
 }
 

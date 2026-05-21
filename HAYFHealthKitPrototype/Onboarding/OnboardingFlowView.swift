@@ -61,6 +61,7 @@ struct OnboardingFlowView: View {
                         .padding(.top, 30)
                         .padding(.bottom, 24)
                 }
+                .id(step)
 
                 bottomAction
                     .padding(.horizontal, 24)
@@ -203,6 +204,8 @@ struct OnboardingFlowView: View {
             loadingScreen(title: "Building your strategy.", copy: "HAYF is turning your goal and Athlete Blueprint into the approach it will coach from.")
         case .fitnessStrategy:
             fitnessStrategyScreen
+        case .fitnessStrategyPhases:
+            fitnessStrategyPhasesScreen
         }
     }
 
@@ -1117,29 +1120,22 @@ struct OnboardingFlowView: View {
         return VStack(alignment: .leading, spacing: 26) {
             OnboardingIntro(
                 eyebrow: "FITNESS STRATEGY",
-                title: "Here's how HAYF\nwill coach this.",
-                copy: "Built from your goal and Athlete Blueprint, this is the approach HAYF believes gives you the best chance of getting there."
+                title: "Your strategy\nis ready.",
+                copy: "Built from your goal and Athlete Blueprint, this is the approach HAYF will coach from before it turns the first weeks into workouts."
             )
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("STRATEGY READ")
-                    .font(.system(size: 10, weight: .medium))
-                    .kerning(1.2)
-                    .foregroundStyle(HAYFColor.secondary)
-
-                Text(strategy.read)
-                    .font(.system(size: 18, weight: .regular))
-                    .lineSpacing(5)
-                    .foregroundStyle(HAYFColor.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+            SummarySection(title: "Strategy snapshot") {
+                FitnessStrategySnapshotGrid(items: strategy.snapshotItems)
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+
+            FitnessStrategyReadCard(read: strategy.read)
+
+            SummarySection(title: "Why this fits you") {
+                VStack(spacing: 10) {
+                    ForEach(strategy.fitReasons) { reason in
+                        FitnessStrategyFitReasonRow(reason: reason)
+                    }
+                }
             }
 
             SummarySection(title: "What HAYF will prioritize") {
@@ -1150,27 +1146,41 @@ struct OnboardingFlowView: View {
                 }
             }
 
-            if let operatingRhythm = strategy.operatingRhythm {
-                SummarySection(title: "Operating rhythm") {
-                    FitnessStrategyOperatingRhythmCard(rhythm: operatingRhythm)
-                }
-            } else if !strategy.phases.isEmpty {
-                SummarySection(title: "How the strategy unfolds") {
-                    VStack(spacing: 10) {
-                        ForEach(strategy.phases) { phase in
-                            FitnessStrategyPhaseRow(phase: phase)
-                        }
+            SummarySection(title: "Strategy targets") {
+                VStack(spacing: 10) {
+                    ForEach(strategy.targets) { target in
+                        FitnessStrategyTargetRow(target: target, label: "Strategy target")
                     }
                 }
             }
 
-            SummarySection(title: "Targets that keep you on track") {
+            if let operatingRhythm = strategy.operatingRhythm {
+                SummarySection(title: "Operating rhythm") {
+                    FitnessStrategyOperatingRhythmCard(rhythm: operatingRhythm)
+                }
+            }
+        }
+    }
+
+    private var fitnessStrategyPhasesScreen: some View {
+        let strategy = currentFitnessStrategy
+
+        return VStack(alignment: .leading, spacing: 26) {
+            OnboardingIntro(
+                eyebrow: "STRATEGY PHASES",
+                title: "How HAYF will\nsequence this.",
+                copy: "These phases turn the strategy targets into a simple progression. Weekly targets come next with your plan."
+            )
+
+            SummarySection(title: "How the strategy unfolds") {
                 VStack(spacing: 10) {
-                    ForEach(strategy.targets) { target in
-                        FitnessStrategyTargetRow(target: target)
+                    ForEach(strategy.phases) { phase in
+                        FitnessStrategyPhaseRow(phase: phase)
                     }
                 }
             }
+
+            FitnessStrategyPlanBridgeCard()
         }
     }
 
@@ -1276,6 +1286,11 @@ struct OnboardingFlowView: View {
         case .athleteBlueprint:
             return "Accept blueprint"
         case .fitnessStrategy:
+            if currentFitnessStrategy.phases.isEmpty {
+                return "Accept strategy"
+            }
+            return "Review phases"
+        case .fitnessStrategyPhases:
             return "Accept strategy"
         case .blendPreview:
             return "Use blended goal"
@@ -1442,6 +1457,12 @@ struct OnboardingFlowView: View {
         case .athleteBlueprint:
             prepareFitnessStrategy()
         case .fitnessStrategy:
+            if !currentFitnessStrategy.phases.isEmpty {
+                step = .fitnessStrategyPhases
+                return
+            }
+            completeOnboarding()
+        case .fitnessStrategyPhases:
             completeOnboarding()
         case .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
             break
@@ -1518,6 +1539,8 @@ struct OnboardingFlowView: View {
             step = .health
         case .generatingStrategy, .fitnessStrategy:
             step = .athleteBlueprint
+        case .fitnessStrategyPhases:
+            step = .fitnessStrategy
         }
     }
 
@@ -1884,6 +1907,7 @@ private enum OnboardingStep: Equatable {
     case athleteBlueprint
     case generatingStrategy
     case fitnessStrategy
+    case fitnessStrategyPhases
 
     var isGenerating: Bool {
         switch self {
@@ -1899,9 +1923,9 @@ private enum OnboardingStep: Equatable {
         case .stayConsistent:
             return 17
         case .concreteGoal:
-            return 20
+            return 21
         case .findGoal:
-            return 20
+            return 21
         }
     }
 
@@ -1950,6 +1974,7 @@ private enum OnboardingStep: Equatable {
             case .health, .generatingBlueprint: return 18
             case .athleteBlueprint, .generatingStrategy: return 19
             case .fitnessStrategy: return 20
+            case .fitnessStrategyPhases: return 21
             default: return 1
             }
         case .findGoal:
@@ -1974,6 +1999,7 @@ private enum OnboardingStep: Equatable {
             case .health, .generatingBlueprint: return 18
             case .athleteBlueprint, .generatingStrategy: return 19
             case .fitnessStrategy: return 20
+            case .fitnessStrategyPhases: return 21
             default: return 1
             }
         }
@@ -2286,6 +2312,7 @@ private enum OnboardingAITask: String, Codable {
     case generateGoalCandidates = "generate_goal_candidates"
     case generateBlendedCandidate = "generate_blended_candidate"
     case generateAthleteBlueprint = "generate_athlete_blueprint"
+    case generateFitnessStrategyTargets = "generate_fitness_strategy_targets"
     case generateFitnessStrategy = "generate_fitness_strategy"
 }
 
@@ -2442,6 +2469,11 @@ private struct AthleteBlueprintAIFunctionRequest: Codable {
 private struct FitnessStrategyAIFunctionRequest: Codable {
     let task: OnboardingAITask
     let context: FitnessStrategyAICompactContext
+}
+
+private struct FitnessStrategyTargetAIFunctionRequest: Codable {
+    let task: OnboardingAITask
+    let context: FitnessStrategyAITargetGenerationContext
 }
 
 private struct AthleteBlueprintAICompactContext: Codable {
@@ -2731,6 +2763,296 @@ private struct FitnessStrategyAICompactContext: Codable {
     }
 }
 
+private struct FitnessStrategyAITargetGenerationContext: Codable {
+    let intent: String
+    let normalizedGoal: AthleteBlueprintAIGoalPayload
+    let blueprint: FitnessStrategyAIBlueprintSummary
+    let onboardingSignals: AthleteBlueprintAIOnboardingSignals
+    let targetBrief: FitnessStrategyAITargetBrief
+    let targetSlots: FitnessStrategyAITargetSlots
+    let doNotClaim: [String]
+
+    init(
+        intent: OnboardingIntent,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        fallback: FitnessStrategyOutput
+    ) {
+        let goal = AthleteBlueprintBuilder.normalizedGoal(intent: intent, draft: draft)
+        self.intent = intent.rawValue
+        normalizedGoal = AthleteBlueprintAIGoalPayload(goal: goal)
+        self.blueprint = FitnessStrategyAIBlueprintSummary(blueprint: blueprint)
+        onboardingSignals = AthleteBlueprintAIOnboardingSignals(
+            goalPriority: draft.prioritySummary,
+            frequencyPreference: draft.frequency?.summary ?? "",
+            sessionLengthPreference: draft.sessionLength?.title ?? "",
+            availableDays: draft.availableDays.map(\.title).sorted(),
+            availableDayParts: draft.availableDayParts.map(\.title).sorted(),
+            infrastructureAccess: draft.infrastructureAccess.map(\.title).sorted(),
+            blockers: draft.blockers.map(\.title).sorted(),
+            blockerNote: draft.blockerNote.trimmed,
+            supportStyle: draft.supportSummary,
+            badDayFloor: draft.floorSummary,
+            injuryNotes: draft.injuryNotes.trimmed,
+            bodyBaseline: BodyBaselinePayload(draft: draft)
+        )
+        targetBrief = FitnessStrategyAITargetBrief(goal: goal, draft: draft, blueprint: blueprint, fallback: fallback)
+        targetSlots = FitnessStrategyAITargetSlots(strategy: fallback)
+        doNotClaim = [
+            "Do not repeat the user's goal summary back to them as a target.",
+            "Do not invent phases for consistency goals.",
+            "Do not create new athlete facts beyond the Athlete Blueprint summary and onboarding signals."
+        ]
+    }
+}
+
+private struct FitnessStrategyAITargetBrief: Codable {
+    let goalText: String
+    let goalCategory: String
+    let horizonWeeks: Int
+    let progressType: String
+    let goalDistanceLabel: String?
+    let goalDistanceKilometers: Double?
+    let selectedTrainingPriorities: [String]
+    let allowedModalities: [String]
+    let supportModalities: [String]
+    let availableAccess: [String]
+    let avoidances: [String]
+    let availability: FitnessStrategyAIAvailabilityBrief
+    let blockers: [String]
+    let badDayFloor: String
+    let historySignals: [String]
+    let caveats: [String]
+    let concreteGoalTargets: [FitnessStrategyAIConcreteTarget]
+    let allowedTargetFamilies: [String]
+    let phases: [String]
+
+    init(
+        goal: AthleteBlueprintGoal,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        fallback: FitnessStrategyOutput
+    ) {
+        let priorities = draft.trainingOptions.map(\.title)
+        let allowed = FitnessStrategyAITargetBrief.allowedModalities(from: draft)
+        let distance = FitnessStrategyAITargetBrief.goalDistance(in: goal.displayText)
+
+        goalText = goal.displayText
+        goalCategory = goal.category.rawValue
+        horizonWeeks = goal.horizonWeeks
+        progressType = FitnessStrategyAITargetBrief.progressType(for: goal)
+        goalDistanceLabel = distance?.label
+        goalDistanceKilometers = distance?.kilometers
+        selectedTrainingPriorities = priorities
+        allowedModalities = allowed
+        supportModalities = Array(allowed.dropFirst())
+        availableAccess = draft.infrastructureAccess.map(\.title).sorted()
+        avoidances = draft.goalAvoidances.map(\.title).sorted()
+        availability = FitnessStrategyAIAvailabilityBrief(draft: draft)
+        blockers = draft.blockers.map(\.title).sorted()
+        badDayFloor = draft.floorSummary
+        historySignals = [
+            blueprint.currentTrainingState.summary,
+            blueprint.archetype.explanation
+        ] + blueprint.historyFindings.map { "\($0.title): \($0.summary)" }
+        caveats = [
+            "Selected training priorities, access, avoidances, and availability outrank historical modalities.",
+            "General training volume is not the same as goal-specific volume.",
+            "Historical data may size confidence and feasibility, but must not create targets outside the selected training path."
+        ]
+        concreteGoalTargets = FitnessStrategyAITargetBrief.concreteTargets(in: goal.displayText)
+        allowedTargetFamilies = [
+            "consistency",
+            "modality_presence",
+            "capacity_metric",
+            "performance_metric",
+            "body_trend",
+            "capstone"
+        ]
+        phases = fallback.phases.map(\.id)
+    }
+
+    private static func allowedModalities(from draft: ConsistencyOnboardingDraft) -> [String] {
+        draft.trainingOptions
+            .filter { option in
+                switch option {
+                case .running:
+                    return !draft.goalAvoidances.contains(.running)
+                case .strength:
+                    return !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)
+                default:
+                    return true
+                }
+            }
+            .filter { option in
+                let required = option.infrastructureOptions
+                return required.isEmpty || !draft.infrastructureAccess.isDisjoint(with: Set(required))
+            }
+            .map { normalizedModality($0.title) }
+    }
+
+    private static func progressType(for goal: AthleteBlueprintGoal) -> String {
+        let text = goal.displayText.lowercased()
+        if goal.category == .consistency {
+            return "adherence_consistency"
+        }
+        if goal.category == .bodyComposition {
+            return "body_composition"
+        }
+        if text.contains("pace") || text.contains("speed") || text.contains("faster") || text.contains("pr") || text.contains("race pace") || text.contains("time") {
+            return "speed_performance"
+        }
+        if text.contains("event") || text.contains("race") || text.contains("complete") || text.contains("finish") {
+            return "completion_event_readiness"
+        }
+        if goal.category == .strength {
+            return "strength_power"
+        }
+        if goal.category == .sportPerformance {
+            return "skill_sport_readiness"
+        }
+        if goal.category == .endurance {
+            return "capacity_endurance"
+        }
+        return "general_fitness_athleticism"
+    }
+
+    private static func normalizedModality(_ value: String) -> String {
+        let lowercased = value.lowercased()
+        if lowercased.contains("run") { return "running" }
+        if lowercased.contains("swim") { return "swimming" }
+        if lowercased.contains("cycl") || lowercased.contains("bike") { return "cycling" }
+        if lowercased.contains("strength") || lowercased.contains("lift") { return "strength" }
+        if lowercased.contains("mobility") { return "mobility" }
+        if lowercased.contains("tennis") { return "tennis" }
+        if lowercased.contains("football") { return "football" }
+        if lowercased.contains("basketball") { return "basketball" }
+        return lowercased
+    }
+
+    private static func goalDistance(in text: String) -> (label: String, kilometers: Double)? {
+        let lowercased = text.lowercased()
+        if lowercased.contains("5k") { return ("5K", 5) }
+        if lowercased.contains("10k") { return ("10K", 10) }
+        if lowercased.contains("half marathon") { return ("half marathon", 21.1) }
+        if lowercased.contains("marathon") { return ("marathon", 42.2) }
+
+        let pattern = #"(\d+(?:[\.,]\d+)?)\s*(?:k|km|kilometer|kilometers)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: lowercased, range: NSRange(lowercased.startIndex..., in: lowercased)),
+              let range = Range(match.range(at: 1), in: lowercased),
+              let value = Double(lowercased[range].replacingOccurrences(of: ",", with: ".")) else {
+            return nil
+        }
+        let label = value.rounded() == value ? "\(Int(value))K" : "\(value)K"
+        return (label, value)
+    }
+
+    static func concreteTargets(in text: String) -> [FitnessStrategyAIConcreteTarget] {
+        var targets: [FitnessStrategyAIConcreteTarget] = []
+        let lowercased = text.lowercased()
+
+        if lowercased.contains("ftp") || lowercased.contains("functional threshold power") {
+            let percentPattern = #"(?:(?:ftp|functional threshold power)[^\d]{0,32}(\d+(?:[\.,]\d+)?)\s*(?:%|percent))|(?:(\d+(?:[\.,]\d+)?)\s*(?:%|percent)[^\w]{0,12}(?:ftp|functional threshold power))"#
+            if let value = firstNumber(in: lowercased, pattern: percentPattern) {
+                targets.append(
+                    FitnessStrategyAIConcreteTarget(
+                        metric: "functional_threshold_power_percent_change",
+                        modality: "cycling",
+                        title: "FTP +\(formattedNumber(value))%",
+                        targetValue: value,
+                        unit: "%",
+                        direction: "increase",
+                        displayValue: "+\(formattedNumber(value))%"
+                    )
+                )
+            }
+        }
+
+        if lowercased.contains("5k") {
+            let secondsPattern = #"(?:(?:cut|reduce|drop|lower|improve)[^\d]{0,40}(\d+(?:[\.,]\d+)?)\s*(?:sec|second|seconds))|(?:(\d+(?:[\.,]\d+)?)\s*(?:sec|second|seconds)[^\w]{0,16}(?:faster|improvement|reduction))"#
+            if let value = firstNumber(in: lowercased, pattern: secondsPattern) {
+                targets.append(
+                    FitnessStrategyAIConcreteTarget(
+                        metric: "five_k_time_seconds_reduction",
+                        modality: "running",
+                        title: "5K -\(formattedNumber(value)) sec",
+                        targetValue: value,
+                        unit: "sec",
+                        direction: "decrease",
+                        displayValue: "-\(formattedNumber(value)) sec"
+                    )
+                )
+            }
+        }
+
+        return targets
+    }
+
+    private static func firstNumber(in text: String, pattern: String) -> Double? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else {
+            return nil
+        }
+
+        for index in 1..<match.numberOfRanges {
+            guard let range = Range(match.range(at: index), in: text) else { continue }
+            return Double(text[range].replacingOccurrences(of: ",", with: "."))
+        }
+        return nil
+    }
+
+    private static func formattedNumber(_ value: Double) -> String {
+        value.rounded() == value ? "\(Int(value))" : String(format: "%.1f", value)
+    }
+}
+
+private struct FitnessStrategyAIConcreteTarget: Codable {
+    let metric: String
+    let modality: String
+    let title: String
+    let targetValue: Double
+    let unit: String
+    let direction: String
+    let displayValue: String
+}
+
+private struct FitnessStrategyAIAvailabilityBrief: Codable {
+    let daysPerWeek: Int
+    let sessionLength: String
+    let sessionLengthMinutes: Int
+    let days: [String]
+    let dayParts: [String]
+
+    init(draft: ConsistencyOnboardingDraft) {
+        daysPerWeek = FitnessStrategyAIAvailabilityBrief.weeklySessions(from: draft.frequency)
+        sessionLength = draft.sessionLength?.title ?? ""
+        sessionLengthMinutes = FitnessStrategyAIAvailabilityBrief.sessionMinutes(from: draft.sessionLength)
+        days = draft.availableDays.map(\.title).sorted()
+        dayParts = draft.availableDayParts.map(\.title).sorted()
+    }
+
+    private static func weeklySessions(from frequency: TrainingFrequency?) -> Int {
+        switch frequency {
+        case .two: return 2
+        case .three: return 3
+        case .four: return 4
+        case .fivePlus: return 5
+        case .changes, nil: return 3
+        }
+    }
+
+    private static func sessionMinutes(from length: SessionLength?) -> Int {
+        switch length {
+        case .twenty: return 20
+        case .thirty: return 30
+        case .fortyFive: return 45
+        case .sixtyPlus: return 60
+        case .varies, nil: return 35
+        }
+    }
+}
+
 private struct FitnessStrategyAIBlueprintSummary: Codable {
     let coachRead: String
     let athleteArchetype: String
@@ -2748,16 +3070,72 @@ private struct FitnessStrategyAIBlueprintSummary: Codable {
 }
 
 private struct FitnessStrategyAISectionSeeds: Codable {
+    let goalTargetContext: FitnessStrategyAIGoalTargetContextSeed
+    let fitReasons: [FitnessStrategyAIFitReasonSeed]
     let strategyPillars: [FitnessStrategyAIPillarSeed]
     let phaseOutline: [FitnessStrategyAIPhaseSeed]
     let operatingRhythm: FitnessStrategyAIOperatingRhythmSeed?
     let strategyTargets: [FitnessStrategyAITargetSeed]
 
     init(strategy: FitnessStrategyOutput) {
+        goalTargetContext = FitnessStrategyAIGoalTargetContextSeed(context: strategy.goalTargetContext)
+        fitReasons = strategy.fitReasons.map(FitnessStrategyAIFitReasonSeed.init(reason:))
         strategyPillars = strategy.pillars.map(FitnessStrategyAIPillarSeed.init(pillar:))
         phaseOutline = strategy.phases.map(FitnessStrategyAIPhaseSeed.init(phase:))
         operatingRhythm = strategy.operatingRhythm.map(FitnessStrategyAIOperatingRhythmSeed.init(rhythm:))
         strategyTargets = strategy.targets.map(FitnessStrategyAITargetSeed.init(target:))
+    }
+}
+
+private struct FitnessStrategyAITargetSlots: Codable {
+    let strategyTargets: [FitnessStrategyAITargetSlot]
+    let phaseOutline: [FitnessStrategyAIPhaseTargetSlots]
+
+    init(strategy: FitnessStrategyOutput) {
+        strategyTargets = strategy.targets.map(FitnessStrategyAITargetSlot.init(target:))
+        phaseOutline = strategy.phases.map(FitnessStrategyAIPhaseTargetSlots.init(phase:))
+    }
+}
+
+private struct FitnessStrategyAIPhaseTargetSlots: Codable {
+    let id: String
+    let name: String
+    let phaseTargets: [FitnessStrategyAITargetSlot]
+
+    init(phase: FitnessStrategyPhase) {
+        id = phase.id
+        name = phase.name
+        phaseTargets = phase.targets.map(FitnessStrategyAITargetSlot.init(target:))
+    }
+}
+
+private struct FitnessStrategyAITargetSlot: Codable {
+    let id: String
+    let scope: String
+    let kind: String
+
+    init(target: FitnessStrategyTarget) {
+        id = target.id
+        scope = target.scope.rawValue
+        kind = target.kind.rawValue
+    }
+}
+
+private struct FitnessStrategyAIGoalTargetContextSeed: Codable {
+    let title: String
+
+    init(context: FitnessStrategyGoalTargetContext) {
+        title = context.title
+    }
+}
+
+private struct FitnessStrategyAIFitReasonSeed: Codable {
+    let id: String
+    let title: String
+
+    init(reason: FitnessStrategyFitReason) {
+        id = reason.id
+        title = reason.title
     }
 }
 
@@ -2774,10 +3152,12 @@ private struct FitnessStrategyAIPillarSeed: Codable {
 private struct FitnessStrategyAIPhaseSeed: Codable {
     let id: String
     let name: String
+    let phaseTargets: [FitnessStrategyAITargetSeed]
 
     init(phase: FitnessStrategyPhase) {
         id = phase.id
         name = phase.name
+        phaseTargets = phase.targets.map(FitnessStrategyAITargetSeed.init(target:))
     }
 }
 
@@ -2797,6 +3177,7 @@ private struct FitnessStrategyAITargetSeed: Codable {
     let metricKey: String?
     let targetValue: Double?
     let unit: String?
+    let displayValue: String?
 
     init(target: FitnessStrategyTarget) {
         id = target.id
@@ -2806,29 +3187,47 @@ private struct FitnessStrategyAITargetSeed: Codable {
         metricKey = target.metricKey
         targetValue = target.targetValue
         unit = target.unit
+        displayValue = target.displayValue
     }
 }
 
 private struct FitnessStrategyAIPayload: Codable {
     let strategyRead: String
+    let goalTargetContext: FitnessStrategyAIGoalTargetContextPayload?
+    let fitReasons: [FitnessStrategyAIFitReasonPayload]?
     let strategyPillars: [FitnessStrategyAIPillarPayload]
     let phaseOutline: [FitnessStrategyAIPhasePayload]
     let operatingRhythm: FitnessStrategyAIOperatingRhythmPayload?
-    let strategyTargets: [FitnessStrategyAITargetPayload]
+    let strategyTargets: [FitnessStrategyAITargetPayload]?
 
-    func merged(with fallback: FitnessStrategyOutput) -> FitnessStrategyOutput {
+    func merged(with fallback: FitnessStrategyOutput, targetBrief: FitnessStrategyAITargetBrief) -> FitnessStrategyOutput {
+        let validator = FitnessStrategyAITargetProposalValidator(brief: targetBrief)
+        let fitReasonCopy = Dictionary(uniqueKeysWithValues: (fitReasons ?? []).map { ($0.id, $0) })
         let pillarCopy = Dictionary(uniqueKeysWithValues: strategyPillars.map { ($0.id, $0) })
         let phaseCopy = Dictionary(uniqueKeysWithValues: phaseOutline.map { ($0.id, $0) })
-        let targetCopy = Dictionary(uniqueKeysWithValues: strategyTargets.map { ($0.id, $0) })
 
         return FitnessStrategyOutput(
-            read: strategyRead.trimmed.isEmpty ? fallback.read : strategyRead.trimmed,
+            read: validator.safeCopy(strategyRead, fallback: fallback.read),
+            goalTargetContext: FitnessStrategyGoalTargetContext(
+                title: goalTargetContext?.title.trimmed.isEmpty == false ? goalTargetContext?.title.trimmed ?? fallback.goalTargetContext.title : fallback.goalTargetContext.title,
+                summary: validator.safeCopy(goalTargetContext?.summary ?? "", fallback: fallback.goalTargetContext.summary)
+            ),
+            snapshotItems: fallback.snapshotItems,
+            fitReasons: fallback.fitReasons.map { reason in
+                guard let aiReason = fitReasonCopy[reason.id] else { return reason }
+                return FitnessStrategyFitReason(
+                    id: reason.id,
+                    systemImage: reason.systemImage,
+                    title: aiReason.title.trimmed.isEmpty ? reason.title : aiReason.title.trimmed,
+                    summary: validator.safeCopy(aiReason.summary, fallback: reason.summary)
+                )
+            },
             pillars: fallback.pillars.map { pillar in
                 guard let aiPillar = pillarCopy[pillar.id] else { return pillar }
                 return FitnessStrategyPillar(
                     id: pillar.id,
                     title: aiPillar.title.trimmed.isEmpty ? pillar.title : aiPillar.title.trimmed,
-                    summary: aiPillar.summary.trimmed.isEmpty ? pillar.summary : aiPillar.summary.trimmed
+                    summary: validator.safeCopy(aiPillar.summary, fallback: pillar.summary)
                 )
             },
             phases: fallback.phases.map { phase in
@@ -2836,34 +3235,75 @@ private struct FitnessStrategyAIPayload: Codable {
                 return FitnessStrategyPhase(
                     id: phase.id,
                     name: aiPhase.name.trimmed.isEmpty ? phase.name : aiPhase.name.trimmed,
-                    objective: aiPhase.objective.trimmed.isEmpty ? phase.objective : aiPhase.objective.trimmed,
-                    targetSummary: aiPhase.targetSummary.trimmed.isEmpty ? phase.targetSummary : aiPhase.targetSummary.trimmed
+                    objective: validator.safeCopy(aiPhase.objective, fallback: phase.objective),
+                    targetSummary: validator.safeCopy(aiPhase.targetSummary, fallback: phase.targetSummary),
+                    targets: validator.mergePhaseTargets(
+                        aiPhase.phaseTargets ?? [],
+                        fallback: phase.targets,
+                        phaseID: phase.id
+                    )
                 )
             },
             operatingRhythm: fallback.operatingRhythm.map { fallbackRhythm in
                 guard let operatingRhythm else { return fallbackRhythm }
                 return FitnessStrategyOperatingRhythm(
-                    summary: operatingRhythm.summary.trimmed.isEmpty ? fallbackRhythm.summary : operatingRhythm.summary.trimmed,
+                    summary: validator.safeCopy(operatingRhythm.summary, fallback: fallbackRhythm.summary),
                     anchors: operatingRhythm.anchors.isEmpty ? fallbackRhythm.anchors : operatingRhythm.anchors.map(\.trimmed).filter { !$0.isEmpty }
                 )
             },
-            targets: fallback.targets.map { target in
-                guard let aiTarget = targetCopy[target.id] else { return target }
-                return FitnessStrategyTarget(
-                    id: target.id,
-                    scope: target.scope,
-                    kind: target.kind,
-                    title: aiTarget.title.trimmed.isEmpty ? target.title : aiTarget.title.trimmed,
-                    summary: aiTarget.summary.trimmed.isEmpty ? target.summary : aiTarget.summary.trimmed,
-                    metricKey: target.metricKey,
-                    metricCategory: target.metricCategory,
-                    direction: target.direction,
-                    targetValue: target.targetValue,
-                    unit: target.unit
-                )
-            }
+            targets: validator.mergeStrategyTargets(strategyTargets ?? [], fallback: fallback.targets)
         )
     }
+}
+
+private struct FitnessStrategyAITargetProposalPayload: Codable {
+    let strategyTargets: [FitnessStrategyAITargetPayload]
+    let phaseOutline: [FitnessStrategyAIPhaseTargetProposalPayload]
+
+    func merged(with fallback: FitnessStrategyOutput, targetBrief: FitnessStrategyAITargetBrief) -> FitnessStrategyOutput {
+        let validator = FitnessStrategyAITargetProposalValidator(brief: targetBrief)
+        let phaseCopy = Dictionary(uniqueKeysWithValues: phaseOutline.map { ($0.id, $0) })
+
+        return FitnessStrategyOutput(
+            read: fallback.read,
+            goalTargetContext: fallback.goalTargetContext,
+            snapshotItems: fallback.snapshotItems,
+            fitReasons: fallback.fitReasons,
+            pillars: fallback.pillars,
+            phases: fallback.phases.map { phase in
+                guard let proposalPhase = phaseCopy[phase.id] else { return phase }
+                return FitnessStrategyPhase(
+                    id: phase.id,
+                    name: phase.name,
+                    objective: phase.objective,
+                    targetSummary: phase.targetSummary,
+                    targets: validator.mergePhaseTargets(
+                        proposalPhase.phaseTargets,
+                        fallback: phase.targets,
+                        phaseID: phase.id
+                    )
+                )
+            },
+            operatingRhythm: fallback.operatingRhythm,
+            targets: validator.mergeStrategyTargets(strategyTargets, fallback: fallback.targets)
+        )
+    }
+}
+
+private struct FitnessStrategyAIPhaseTargetProposalPayload: Codable {
+    let id: String
+    let phaseTargets: [FitnessStrategyAITargetPayload]
+}
+
+private struct FitnessStrategyAIGoalTargetContextPayload: Codable {
+    let title: String
+    let summary: String
+}
+
+private struct FitnessStrategyAIFitReasonPayload: Codable {
+    let id: String
+    let title: String
+    let summary: String
 }
 
 private struct FitnessStrategyAIPillarPayload: Codable {
@@ -2877,6 +3317,7 @@ private struct FitnessStrategyAIPhasePayload: Codable {
     let name: String
     let objective: String
     let targetSummary: String
+    let phaseTargets: [FitnessStrategyAITargetPayload]?
 }
 
 private struct FitnessStrategyAIOperatingRhythmPayload: Codable {
@@ -2888,6 +3329,437 @@ private struct FitnessStrategyAITargetPayload: Codable {
     let id: String
     let title: String
     let summary: String
+    let family: String?
+    let modality: String?
+    let proposedDisplayValue: String?
+    let targetValue: Double?
+    let unit: String?
+    let rationale: String?
+    let capstone: FitnessStrategyAICapstonePayload?
+}
+
+private struct FitnessStrategyAICapstonePayload: Codable {
+    let isCapstone: Bool
+    let whyAppropriate: String?
+}
+
+private struct FitnessStrategyAITargetProposalValidator {
+    let brief: FitnessStrategyAITargetBrief
+
+    private var allowedModalities: Set<String> {
+        Set(brief.allowedModalities.map(Self.normalizedModality))
+    }
+
+    func safeCopy(_ copy: String, fallback: String) -> String {
+        let trimmed = copy.trimmed
+        guard !trimmed.isEmpty else { return fallback }
+        return cleanUserFacingCopy(trimmed)
+    }
+
+    func mergeStrategyTargets(
+        _ proposals: [FitnessStrategyAITargetPayload],
+        fallback: [FitnessStrategyTarget]
+    ) -> [FitnessStrategyTarget] {
+        mergeTargets(proposals, fallback: fallback, phaseID: nil)
+    }
+
+    func mergePhaseTargets(
+        _ proposals: [FitnessStrategyAITargetPayload],
+        fallback: [FitnessStrategyTarget],
+        phaseID: String
+    ) -> [FitnessStrategyTarget] {
+        mergeTargets(proposals, fallback: fallback, phaseID: phaseID)
+    }
+
+    private func mergeTargets(
+        _ proposals: [FitnessStrategyAITargetPayload],
+        fallback: [FitnessStrategyTarget],
+        phaseID: String?
+    ) -> [FitnessStrategyTarget] {
+        let proposalByID = proposals.reduce(into: [String: FitnessStrategyAITargetPayload]()) { partial, proposal in
+            partial[proposal.id] = proposal
+        }
+
+        return fallback.map { fallbackTarget in
+            guard let proposal = proposalByID[fallbackTarget.id] else {
+                return fallbackTarget
+            }
+            return acceptedTarget(from: proposal, fallback: fallbackTarget, phaseID: phaseID)
+        }
+    }
+
+    private func acceptedTarget(
+        from proposal: FitnessStrategyAITargetPayload,
+        fallback: FitnessStrategyTarget,
+        phaseID: String?
+    ) -> FitnessStrategyTarget {
+        let family = normalizedFamily(proposal.family, fallback: fallback)
+        let modality = normalizedModality(proposal.modality ?? modalityFromText("\(proposal.title) \(proposal.summary)") ?? "")
+        let targetValue = proposal.targetValue ?? fallback.targetValue
+        let unit = sanitizedUnit(proposal.unit) ?? defaultUnit(for: family, fallback: fallback)
+        let displayValue = sanitizedDisplayValue(proposal.proposedDisplayValue)
+            ?? displayValue(from: targetValue, unit: unit)
+            ?? fallback.displayValue
+        let title = safeTargetTitle(proposal.title, family: family, modality: modality, displayValue: displayValue, fallback: fallback)
+        let summary = safeCopy(proposal.summary, fallback: fallback.summary)
+
+        return FitnessStrategyTarget(
+            id: fallback.id,
+            scope: fallback.scope,
+            kind: fallback.kind,
+            title: title,
+            summary: summary,
+            metricKey: metricKey(for: family, modality: modality, fallback: fallback),
+            metricCategory: metricCategory(for: family, modality: modality, fallback: fallback),
+            direction: direction(for: family, fallback: fallback),
+            targetValue: targetValue,
+            unit: unit,
+            displayValueOverride: displayValue
+        )
+    }
+
+    private func normalizedFamily(_ family: String?, fallback: FitnessStrategyTarget?) -> String {
+        let raw = family?.lowercased().replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_") ?? ""
+        if raw == "performance_benchmark" { return "performance_metric" }
+        if raw == "capacity_benchmark" { return "capacity_metric" }
+        if brief.allowedTargetFamilies.contains(raw) {
+            return raw
+        }
+
+        if let fallback {
+            if fallback.metricCategory == "consistency" { return "consistency" }
+            if fallback.metricCategory == "training_balance" { return "modality_presence" }
+            if fallback.title.lowercased().contains("capstone") { return "capstone" }
+        }
+
+        return "performance_metric"
+    }
+
+    private func metricKey(for family: String, modality: String, fallback: FitnessStrategyTarget) -> String? {
+        switch family {
+        case "consistency":
+            return fallback.metricKey == "weeks_with_min_sessions_12w" ? "weeks_with_min_sessions_strategy" : fallback.metricKey
+        case "modality_presence":
+            return "chosen_training_modalities_present_7d"
+        case "body_trend":
+            return "body_mass_28d_avg_kg"
+        case "capstone":
+            return modality.isEmpty ? "capstone_strategy" : "\(modality)_capstone_strategy"
+        case "performance_metric", "performance_benchmark":
+            if fallback.unit == "%" || fallback.displayValue?.contains("%") == true {
+                return modality.isEmpty ? "performance_percent_change" : "\(modality)_performance_percent_change"
+            }
+            if fallback.unit == "sec" || fallback.displayValue?.contains("sec") == true {
+                return modality.isEmpty ? "performance_seconds_delta" : "\(modality)_performance_seconds_delta"
+            }
+            return modality.isEmpty ? "performance_result_count" : "\(modality)_performance_result_count"
+        case "capacity_metric", "capacity_benchmark":
+            return modality.isEmpty ? "capacity_result_count" : "\(modality)_capacity_result_count"
+        default:
+            if !modality.isEmpty {
+                return "\(modality)_performance_result"
+            }
+            return fallback.metricKey
+        }
+    }
+
+    private func metricCategory(for family: String, modality: String, fallback: FitnessStrategyTarget) -> String {
+        if family == "body_trend" { return "body_composition" }
+        if family == "consistency" { return "consistency" }
+        if family == "modality_presence" { return "training_balance" }
+        if brief.progressType == "speed_performance", !modality.isEmpty {
+            return "\(modality)_speed"
+        }
+        if !modality.isEmpty {
+            return modality
+        }
+        return fallback.metricCategory
+    }
+
+    private func direction(for family: String, fallback: FitnessStrategyTarget) -> FitnessStrategyTargetDirection {
+        switch family {
+        case "consistency", "capacity_metric", "capacity_benchmark", "performance_metric", "performance_benchmark", "capstone":
+            return .increase
+        case "modality_presence", "body_trend":
+            return .maintain
+        default:
+            return fallback.direction == .review || fallback.direction == .complete ? .increase : fallback.direction
+        }
+    }
+
+    private func validatedTargetValue(_ value: Double?, family: String, fallback: FitnessStrategyTarget) -> Double? {
+        guard let value else { return fallback.targetValue }
+        if family == "consistency" {
+            return (1...Double(max(1, brief.horizonWeeks))).contains(value) ? value : fallback.targetValue
+        }
+        if value <= 0 { return fallback.targetValue }
+        return value
+    }
+
+    private func defaultUnit(for family: String, fallback: FitnessStrategyTarget) -> String? {
+        fallback.unit
+    }
+
+    private func defaultDisplayValue(
+        for family: String,
+        proposal: FitnessStrategyAITargetPayload,
+        fallback: FitnessStrategyTarget
+    ) -> String? {
+        if family == "consistency",
+           let value = validatedTargetValue(proposal.targetValue, family: family, fallback: fallback),
+           value.rounded() == value {
+            return "\(Int(value)) of \(brief.horizonWeeks)"
+        }
+        return fallback.displayValue
+    }
+
+    private func safeTargetTitle(
+        _ copy: String,
+        family: String,
+        modality: String,
+        displayValue: String?,
+        fallback: FitnessStrategyTarget
+    ) -> String {
+        var title = safeCopy(copy, fallback: fallback.title)
+        if let colonIndex = title.firstIndex(of: ":") {
+            let suffix = String(title[title.index(after: colonIndex)...]).trimmed
+            if !suffix.isEmpty {
+                title = suffix
+            }
+        }
+        title = compactTargetTitle(title)
+        if title.count <= 36 && title.split(separator: " ").count <= 6 {
+            return title
+        }
+
+        let words = title.split(separator: " ")
+        if words.count > 6 {
+            return words.prefix(6).joined(separator: " ")
+        }
+
+        return String(title.prefix(42)).trimmed
+    }
+
+    private func compactTargetTitle(_ title: String) -> String {
+        cleanUserFacingCopy(title)
+            .replacingOccurrences(of: "20-minute", with: "20-min")
+            .replacingOccurrences(of: "20 minute", with: "20-min")
+            .replacingOccurrences(of: "normalized power", with: "power")
+            .replacingOccurrences(of: "functional threshold power", with: "FTP", options: .caseInsensitive)
+            .replacingOccurrences(of: "completed per week", with: "per week")
+            .replacingOccurrences(of: "sessions/week", with: "sessions per week")
+            .replacingOccurrences(of: "meeting target sessions/week", with: "rhythm weeks")
+            .trimmed
+    }
+
+    private func sanitizedDisplayValue(_ value: String?) -> String? {
+        guard let value = value?.trimmed, !value.isEmpty else { return nil }
+        guard !containsInternalMetricLanguage(value) else { return nil }
+        let compact = compactDisplayValue(value)
+        return compact.count <= 14 ? compact : nil
+    }
+
+    private func sanitizedUnit(_ value: String?) -> String? {
+        guard let value = value?.trimmed, !value.isEmpty else { return nil }
+        guard !containsInternalMetricLanguage(value) else { return nil }
+        let unit = cleanUserFacingCopy(value)
+        return unit.lowercased() == "benchmark" ? "result" : unit
+    }
+
+    private func displayValue(from value: Double?, unit: String?) -> String? {
+        guard let value else { return nil }
+        let formatted = value.rounded() == value ? "\(Int(value))" : String(format: "%.1f", value)
+        guard let unit, !unit.isEmpty else { return formatted }
+
+        switch unit.lowercased() {
+        case "%":
+            return "\(formatted)%"
+        case "seconds", "second", "sec":
+            return "\(formatted) sec"
+        case "minutes", "minute", "min":
+            return "\(formatted) min"
+        case "weeks", "week":
+            return "\(formatted) wks"
+        case "sessions/week", "session/week":
+            return "\(formatted)/wk"
+        default:
+            return compactDisplayValue("\(formatted) \(unit)")
+        }
+    }
+
+    private func cleanUserFacingCopy(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "benchmark", with: "result", options: .caseInsensitive)
+            .replacingOccurrences(of: "Benchmark", with: "Result")
+            .trimmed
+    }
+
+    private func compactDisplayValue(_ value: String) -> String {
+        var compact = value
+            .replacingOccurrences(of: "seconds", with: "sec")
+            .replacingOccurrences(of: "second", with: "sec")
+            .replacingOccurrences(of: "minutes", with: "min")
+            .replacingOccurrences(of: "minute", with: "min")
+            .replacingOccurrences(of: "weeks", with: "wks")
+            .replacingOccurrences(of: "week", with: "wk")
+            .replacingOccurrences(of: "sessions/week", with: "sessions/wk")
+            .replacingOccurrences(of: "session/week", with: "session/wk")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let replacements = [
+            (#"(?i)^median sessions/wk\s*(?:>=|≥)\s*(\d+(?:\.\d+)?)$"#, "≥$1/wk"),
+            (#"(?i)^sessions/wk\s*(?:>=|≥)\s*(\d+(?:\.\d+)?)$"#, "≥$1/wk"),
+            (#"(?i)^strength sessions\s*(?:>=|≥)\s*(\d+(?:\.\d+)?)\s*total$"#, "$1 total"),
+            (#"(?i)^(\d+(?:\.\d+)?)\s*sessions/wk$"#, "$1/wk"),
+            (#"(?i)^(\d+(?:\.\d+)?)\s*of\s*(\d+(?:\.\d+)?)$"#, "$1/$2")
+        ]
+
+        for (pattern, template) in replacements {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(compact.startIndex..., in: compact)
+            let replaced = regex.stringByReplacingMatches(in: compact, range: range, withTemplate: template)
+            if replaced != compact {
+                compact = replaced
+                break
+            }
+        }
+
+        return compact
+    }
+
+    private func containsWorkoutProgramming(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        let banned = [
+            "tempo",
+            "interval",
+            "time trial",
+            "quality run",
+            "easy run",
+            "long run",
+            "long ride",
+            "workout split",
+            "sets and reps",
+            "twice within",
+            "two quality",
+            "zone 2",
+            "vo2"
+        ]
+        return banned.contains { lowercased.contains($0) }
+    }
+
+    private func containsNonTargetLanguage(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        let banned = [
+            "review",
+            "signal",
+            "reflect",
+            "decide",
+            "decision",
+            "next move",
+            "next plan",
+            "plan to iterate",
+            "check-in",
+            "check in",
+            "before skip",
+            "stable",
+            "felt better",
+            "confidence improved",
+            "plan adjusted",
+            "goal selected",
+            "goal selection"
+        ]
+        return banned.contains { lowercased.contains($0) }
+    }
+
+    private func containsDisallowedModality(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        let terms: [String: [String]] = [
+            "running": ["run", "running", "10k", "5k", "marathon"],
+            "cycling": ["cycling", "bike", "ride"],
+            "swimming": ["swim", "swimming", "pool"],
+            "strength": ["strength", "lifting", "weights", "gym"],
+            "tennis": ["tennis"],
+            "football": ["football"],
+            "basketball": ["basketball"]
+        ]
+
+        return terms.contains { modality, modalityTerms in
+            !allowedModalities.contains(modality) && modalityTerms.contains { lowercased.contains($0) }
+        }
+    }
+
+    private func containsAvoidedDependency(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        let avoidances = brief.avoidances.map { $0.lowercased() }
+        if avoidances.contains("running") && (lowercased.contains("run") || lowercased.contains("10k") || lowercased.contains("5k")) {
+            return true
+        }
+        if avoidances.contains("gym dependence") && lowercased.contains("gym") {
+            return true
+        }
+        if avoidances.contains("heavy lifting") && (lowercased.contains("heavy") || lowercased.contains("lifting")) {
+            return true
+        }
+        if avoidances.contains("long workouts") && (lowercased.contains("long run") || lowercased.contains("long ride") || lowercased.contains("long session")) {
+            return true
+        }
+        if avoidances.contains("high intensity") && (lowercased.contains("high intensity") || lowercased.contains("interval") || lowercased.contains("tempo")) {
+            return true
+        }
+        return false
+    }
+
+    private func containsInternalMetricLanguage(_ value: String) -> Bool {
+        value.contains("_") || value.contains(">=") || value.contains("<=")
+    }
+
+    private func isMeasurableDisplayValue(_ displayValue: String?, targetValue: Double?, unit: String?) -> Bool {
+        if let displayValue, displayValue.range(of: #"\d"#, options: .regularExpression) != nil {
+            return !containsNonTargetLanguage(displayValue)
+        }
+        return targetValue != nil && unit?.trimmed.isEmpty == false
+    }
+
+    private func modalityFromText(_ value: String) -> String? {
+        let lowercased = value.lowercased()
+        if lowercased.contains("run") || lowercased.contains("10k") || lowercased.contains("5k") { return "running" }
+        if lowercased.contains("swim") || lowercased.contains("pool") { return "swimming" }
+        if lowercased.contains("cycl") || lowercased.contains("bike") || lowercased.contains("ride") { return "cycling" }
+        if lowercased.contains("strength") || lowercased.contains("gym") || lowercased.contains("lifting") { return "strength" }
+        return nil
+    }
+
+    private func normalizedModality(_ value: String) -> String {
+        Self.normalizedModality(value)
+    }
+
+    private static func normalizedModality(_ value: String) -> String {
+        let lowercased = value.lowercased()
+        if lowercased.contains("run") { return "running" }
+        if lowercased.contains("swim") { return "swimming" }
+        if lowercased.contains("cycl") || lowercased.contains("bike") || lowercased.contains("ride") { return "cycling" }
+        if lowercased.contains("strength") || lowercased.contains("lift") || lowercased.contains("gym") { return "strength" }
+        if lowercased.contains("tennis") { return "tennis" }
+        if lowercased.contains("football") { return "football" }
+        if lowercased.contains("basketball") { return "basketball" }
+        return lowercased.trimmed
+    }
+
+    private func distanceKilometers(in value: String) -> Double? {
+        let lowercased = value.lowercased()
+        if lowercased.contains("5k") { return 5 }
+        if lowercased.contains("10k") { return 10 }
+        if lowercased.contains("half marathon") { return 21.1 }
+        if lowercased.contains("marathon") { return 42.2 }
+
+        let pattern = #"(\d+(?:[\.,]\d+)?)\s*(?:k|km|kilometer|kilometers)\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: lowercased, range: NSRange(lowercased.startIndex..., in: lowercased)),
+              let range = Range(match.range(at: 1), in: lowercased) else {
+            return nil
+        }
+        return Double(lowercased[range].replacingOccurrences(of: ",", with: "."))
+    }
 }
 
 private struct OnboardingAISummaryFunctionResponse: Decodable {
@@ -2904,6 +3776,10 @@ private struct OnboardingAIBlendedCandidateFunctionResponse: Decodable {
 
 private struct OnboardingAIAthleteBlueprintFunctionResponse: Decodable {
     let output: AthleteBlueprintAIPayload
+}
+
+private struct OnboardingAIFitnessStrategyTargetFunctionResponse: Decodable {
+    let output: FitnessStrategyAITargetProposalPayload
 }
 
 private struct OnboardingAIFitnessStrategyFunctionResponse: Decodable {
@@ -3032,17 +3908,31 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
         fallback: FitnessStrategyOutput
     ) async throws -> FitnessStrategyOutput {
         do {
+            let targetContext = FitnessStrategyAITargetGenerationContext(
+                intent: intent,
+                draft: draft,
+                blueprint: blueprint,
+                fallback: fallback
+            )
+            let targetRequest = FitnessStrategyTargetAIFunctionRequest(
+                task: .generateFitnessStrategyTargets,
+                context: targetContext
+            )
+            let targetResponse: OnboardingAIFitnessStrategyTargetFunctionResponse = try await invoke(targetRequest)
+            let targetStrategy = targetResponse.output.merged(with: fallback, targetBrief: targetContext.targetBrief)
+
+            let context = FitnessStrategyAICompactContext(
+                intent: intent,
+                draft: draft,
+                blueprint: blueprint,
+                fallback: targetStrategy
+            )
             let request = FitnessStrategyAIFunctionRequest(
                 task: .generateFitnessStrategy,
-                context: FitnessStrategyAICompactContext(
-                    intent: intent,
-                    draft: draft,
-                    blueprint: blueprint,
-                    fallback: fallback
-                )
+                context: context
             )
             let response: OnboardingAIFitnessStrategyFunctionResponse = try await invoke(request)
-            return response.output.merged(with: fallback)
+            return response.output.merged(with: targetStrategy, targetBrief: targetContext.targetBrief)
         } catch {
             logger.error("Fitness Strategy AI generation failed: \(error.localizedDescription, privacy: .public)")
             throw error
@@ -3072,6 +3962,17 @@ private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
     }
 
     private func invoke<Response: Decodable>(_ request: FitnessStrategyAIFunctionRequest) async throws -> Response {
+        do {
+            return try await supabase.functions.invoke(
+                "onboarding-ai",
+                options: FunctionInvokeOptions(body: request)
+            )
+        } catch {
+            throw Self.readableFunctionError(error)
+        }
+    }
+
+    private func invoke<Response: Decodable>(_ request: FitnessStrategyTargetAIFunctionRequest) async throws -> Response {
         do {
             return try await supabase.functions.invoke(
                 "onboarding-ai",
@@ -4640,7 +5541,7 @@ private struct SummarySection<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(title.uppercased())
                 .font(.system(size: 10, weight: .medium))
                 .kerning(1.2)
@@ -4797,10 +5698,32 @@ private struct CoachNote: View {
 
 private struct FitnessStrategyOutput {
     let read: String
+    let goalTargetContext: FitnessStrategyGoalTargetContext
+    let snapshotItems: [FitnessStrategySnapshotItem]
+    let fitReasons: [FitnessStrategyFitReason]
     let pillars: [FitnessStrategyPillar]
     let phases: [FitnessStrategyPhase]
     let operatingRhythm: FitnessStrategyOperatingRhythm?
     let targets: [FitnessStrategyTarget]
+}
+
+private struct FitnessStrategyGoalTargetContext {
+    let title: String
+    let summary: String
+}
+
+private struct FitnessStrategySnapshotItem: Identifiable {
+    let id: String
+    let systemImage: String
+    let value: String
+    let label: String
+}
+
+private struct FitnessStrategyFitReason: Identifiable {
+    let id: String
+    let systemImage: String
+    let title: String
+    let summary: String
 }
 
 private struct FitnessStrategyPillar: Identifiable {
@@ -4814,6 +5737,7 @@ private struct FitnessStrategyPhase: Identifiable {
     let name: String
     let objective: String
     let targetSummary: String
+    let targets: [FitnessStrategyTarget]
 }
 
 private struct FitnessStrategyOperatingRhythm {
@@ -4822,6 +5746,7 @@ private struct FitnessStrategyOperatingRhythm {
 }
 
 private enum FitnessStrategyTargetScope: String {
+    case goal
     case strategy
     case phase
     case week
@@ -4858,8 +5783,39 @@ private struct FitnessStrategyTarget: Identifiable {
     let direction: FitnessStrategyTargetDirection
     let targetValue: Double?
     let unit: String?
+    let displayValueOverride: String?
+
+    init(
+        id: String,
+        scope: FitnessStrategyTargetScope,
+        kind: FitnessStrategyTargetKind,
+        title: String,
+        summary: String,
+        metricKey: String?,
+        metricCategory: String,
+        direction: FitnessStrategyTargetDirection,
+        targetValue: Double?,
+        unit: String?,
+        displayValueOverride: String? = nil
+    ) {
+        self.id = id
+        self.scope = scope
+        self.kind = kind
+        self.title = title
+        self.summary = summary
+        self.metricKey = metricKey
+        self.metricCategory = metricCategory
+        self.direction = direction
+        self.targetValue = targetValue
+        self.unit = unit
+        self.displayValueOverride = displayValueOverride
+    }
 
     var displayValue: String? {
+        if let displayValueOverride, !displayValueOverride.isEmpty {
+            return displayValueOverride
+        }
+
         guard let targetValue else { return nil }
 
         let formatted: String
@@ -4870,6 +5826,10 @@ private struct FitnessStrategyTarget: Identifiable {
         }
 
         guard let unit, !unit.isEmpty else { return formatted }
+        if unit == "%" { return "\(formatted)%" }
+        if unit == "weeks" { return "\(formatted) wks" }
+        if unit == "modalities" { return "\(formatted) modes" }
+        if unit == "sessions/week" || unit == "session/week" { return "\(formatted)/wk" }
         return "\(formatted) \(unit)"
     }
 }
@@ -4886,10 +5846,26 @@ private enum FitnessStrategyBuilder {
         let anchor = dominantAnchor(from: blueprint, draft: draft)
         let frequency = draft.frequency?.summary ?? "a repeatable weekly rhythm"
         let floor = draft.floorSummary.lowercased()
+        let goalTargetContext = FitnessStrategyGoalTargetContext(
+            title: goal.displayText,
+            summary: "This is the user target HAYF is translating into a coaching strategy, not a separate HAYF target."
+        )
+        let snapshotItems = snapshotItems(
+            goal: goal,
+            draft: draft,
+            anchor: anchor,
+            usesPhases: usesPhases
+        )
+        let fitReasons = fitReasons(
+            goal: goal,
+            draft: draft,
+            blueprint: blueprint,
+            anchor: anchor
+        )
 
         let read: String
         if usesPhases {
-            read = "HAYF will coach this as a \(anchor)-supported build: keep the work repeatable first, then make it more goal-specific as your week proves it can hold. The strategy is to protect continuity while gradually shifting more of the training toward \(goal.displayText)."
+            read = "HAYF will coach this through the training path you chose: \(anchor). First the week has to hold, then the work becomes more goal-specific. The strategy is to protect continuity while gradually shifting more of the training toward \(goal.displayText)."
         } else {
             read = "HAYF will coach consistency as the goal itself: build a rhythm that survives ordinary life before it asks for more. The strategy is to keep \(frequency) repeatable, use \(floor) when the week gets tight, and let durable behavior become the first win."
         }
@@ -4898,8 +5874,8 @@ private enum FitnessStrategyBuilder {
             ? [
                 FitnessStrategyPillar(
                     id: "protect_anchor",
-                    title: "Protect the anchor",
-                    summary: "Keep \(anchor) visible in the week so the strategy builds from training that already fits you."
+                    title: "Protect the chosen path",
+                    summary: "Keep \(anchor) visible in the week so the strategy follows what you asked HAYF to coach."
                 ),
                 FitnessStrategyPillar(
                     id: "earn_progression",
@@ -4936,19 +5912,40 @@ private enum FitnessStrategyBuilder {
                     id: "base",
                     name: "Base",
                     objective: "Make the weekly structure reliable around your real schedule.",
-                    targetSummary: "Hold the core weekly exposures with recovery intact."
+                    targetSummary: "Hold the core weekly exposures with recovery intact.",
+                    targets: TargetEngine.phaseTargets(
+                        phaseID: "base",
+                        phaseName: "Base",
+                        goal: goal,
+                        draft: draft,
+                        snapshot: snapshot
+                    )
                 ),
                 FitnessStrategyPhase(
                     id: "build",
                     name: "Build",
                     objective: "Increase the goal-specific dose without losing the anchor work.",
-                    targetSummary: "Progress the main goal signal while keeping support work alive."
+                    targetSummary: "Progress the main goal signal while keeping support work alive.",
+                    targets: TargetEngine.phaseTargets(
+                        phaseID: "build",
+                        phaseName: "Build",
+                        goal: goal,
+                        draft: draft,
+                        snapshot: snapshot
+                    )
                 ),
                 FitnessStrategyPhase(
                     id: "review",
                     name: "Review",
                     objective: "Sharpen what is working and decide the next strategy move.",
-                    targetSummary: "Confirm whether the goal is on track, achieved, or needs review."
+                    targetSummary: "Confirm whether the goal is on track, achieved, or needs review.",
+                    targets: TargetEngine.phaseTargets(
+                        phaseID: "review",
+                        phaseName: "Review",
+                        goal: goal,
+                        draft: draft,
+                        snapshot: snapshot
+                    )
                 )
             ]
             : []
@@ -4973,6 +5970,9 @@ private enum FitnessStrategyBuilder {
 
         return FitnessStrategyOutput(
             read: read,
+            goalTargetContext: goalTargetContext,
+            snapshotItems: snapshotItems,
+            fitReasons: fitReasons,
             pillars: pillars,
             phases: phases,
             operatingRhythm: operatingRhythm,
@@ -4980,7 +5980,81 @@ private enum FitnessStrategyBuilder {
         )
     }
 
+    private static func snapshotItems(
+        goal: AthleteBlueprintGoal,
+        draft: ConsistencyOnboardingDraft,
+        anchor: String,
+        usesPhases: Bool
+    ) -> [FitnessStrategySnapshotItem] {
+        let priorities = preferredTrainingOptions(from: draft)
+            .prefix(3)
+            .enumerated()
+            .map { "\($0.offset + 1). \($0.element.title)" }
+            .joined(separator: "\n")
+
+        return [
+            FitnessStrategySnapshotItem(
+                id: "timeframe",
+                systemImage: "calendar",
+                value: "\(goal.horizonWeeks)",
+                label: "weeks"
+            ),
+            FitnessStrategySnapshotItem(
+                id: "frequency",
+                systemImage: "repeat",
+                value: "\(TargetEngine.targetWeeklySessions(from: draft.frequency))",
+                label: "sessions/week"
+            ),
+            FitnessStrategySnapshotItem(
+                id: "priorities",
+                systemImage: "list.number",
+                value: priorities.isEmpty ? anchor.replacingOccurrences(of: " and ", with: " + ").capitalized : priorities,
+                label: "training priorities"
+            )
+        ]
+    }
+
+    private static func fitReasons(
+        goal: AthleteBlueprintGoal,
+        draft: ConsistencyOnboardingDraft,
+        blueprint: AthleteBlueprintOutput,
+        anchor: String
+    ) -> [FitnessStrategyFitReason] {
+        let timeWindow = draft.sessionLength?.previewDuration ?? "your available session length"
+        let preferredOptions = preferredTrainingOptions(from: draft)
+        let trainingMix = preferredOptions.prefix(2).map(\.title).joined(separator: " + ")
+        let mixSummary = trainingMix.isEmpty
+            ? "The strategy starts from the training options you said are realistic."
+            : "\(trainingMix) gives HAYF the clearest direction for this strategy."
+
+        return [
+            FitnessStrategyFitReason(
+                id: "available_window",
+                systemImage: "clock",
+                title: "Realistic session windows",
+                summary: "\(timeWindow) gives HAYF a realistic training constraint."
+            ),
+            FitnessStrategyFitReason(
+                id: "training_access",
+                systemImage: preferredOptions.first?.systemImage ?? "checkmark.circle",
+                title: "Training that fits your setup",
+                summary: mixSummary
+            ),
+            FitnessStrategyFitReason(
+                id: "blueprint_base",
+                systemImage: "person.text.rectangle",
+                title: blueprint.archetype.label,
+                summary: "Your history adds context without overriding your chosen path."
+            )
+        ]
+    }
+
     private static func dominantAnchor(from blueprint: AthleteBlueprintOutput, draft: ConsistencyOnboardingDraft) -> String {
+        let preferredOptions = preferredTrainingOptions(from: draft)
+        if !preferredOptions.isEmpty {
+            return trainingAnchorLabel(for: preferredOptions)
+        }
+
         let lowercasedLabel = blueprint.archetype.label.lowercased()
         if lowercasedLabel.contains("strength") {
             return "strength"
@@ -4997,6 +6071,53 @@ private enum FitnessStrategyBuilder {
         return "repeatable training"
     }
 
+    private static func preferredTrainingOptions(from draft: ConsistencyOnboardingDraft) -> [TrainingOption] {
+        draft.trainingOptions.filter { option in
+            !isAvoided(option, draft: draft) && hasAccess(for: option, draft: draft)
+        }
+    }
+
+    private static func isAvoided(_ option: TrainingOption, draft: ConsistencyOnboardingDraft) -> Bool {
+        switch option {
+        case .running:
+            return draft.goalAvoidances.contains(.running)
+        case .strength:
+            return draft.goalAvoidances.contains(.heavyLifting) || draft.goalAvoidances.contains(.gymDependence)
+        default:
+            return false
+        }
+    }
+
+    private static func hasAccess(for option: TrainingOption, draft: ConsistencyOnboardingDraft) -> Bool {
+        let required = option.infrastructureOptions
+        guard !required.isEmpty else { return true }
+        return !draft.infrastructureAccess.isDisjoint(with: Set(required))
+    }
+
+    private static func trainingAnchorLabel(for options: [TrainingOption]) -> String {
+        let titles = options.prefix(2).map { $0.title.lowercased() }
+        switch titles.count {
+        case 0:
+            return "chosen training"
+        case 1:
+            return titles[0]
+        default:
+            return "\(titles[0]) and \(titles[1])"
+        }
+    }
+
+    private static func trainingAnchorDisplayTitle(for options: [TrainingOption]) -> String {
+        let titles = options.prefix(2).map(\.title)
+        switch titles.count {
+        case 0:
+            return "Chosen training"
+        case 1:
+            return titles[0]
+        default:
+            return titles.joined(separator: " + ")
+        }
+    }
+
     private enum TargetEngine {
         static func buildTargets(
             intent: OnboardingIntent,
@@ -5010,16 +6131,14 @@ private enum FitnessStrategyBuilder {
                 return consistencyTargets(goal: goal, draft: draft, blueprint: blueprint, snapshot: snapshot)
             }
 
-            var targets: [FitnessStrategyTarget] = []
-            if let bodyCompositionTarget = bodyCompositionTarget(goal: goal, draft: draft, snapshot: snapshot) {
-                targets.append(bodyCompositionTarget)
-            }
+            let goalSignal = bodyCompositionTarget(goal: goal, draft: draft, snapshot: snapshot)
+                ?? goalSignalTarget(intent: intent, goal: goal, draft: draft, snapshot: snapshot)
 
-            targets.append(goalSignalTarget(intent: intent, goal: goal, draft: draft, snapshot: snapshot))
-            targets.append(weeklyExposureTarget(goal: goal, draft: draft, usesPhases: usesPhases))
-            targets.append(recoveryOrFloorTarget(draft: draft))
-
-            return deduplicated(targets).prefixArray(4)
+            return [
+                goalSignal,
+                strategyRhythmTarget(goal: goal, draft: draft, snapshot: snapshot),
+                strategyAnchorTarget(goal: goal, draft: draft, blueprint: blueprint)
+            ]
         }
 
         private static func consistencyTargets(
@@ -5029,28 +6148,29 @@ private enum FitnessStrategyBuilder {
             snapshot: HealthFeatureSnapshot?
         ) -> [FitnessStrategyTarget] {
             let weeklySessions = targetWeeklySessions(from: draft.frequency)
-            let strongWeeks = targetStrongWeeks(from: weeklySessions, snapshot: snapshot)
-            let primarySummary = "Over the hidden 12-week consistency block, HAYF wants at least \(strongWeeks) weeks where you complete \(weeklySessions)+ sessions. That turns consistency into a visible behavior target instead of a vague intention."
+            let strongWeeks = targetStrongWeeks(from: weeklySessions, horizonWeeks: goal.horizonWeeks, snapshot: snapshot)
+            let primarySummary = "Over the \(goal.horizonWeeks)-week consistency block, HAYF wants at least \(strongWeeks) weeks where you complete \(weeklySessions)+ sessions. That turns consistency into a visible behavior target instead of a vague intention."
 
-            var targets = [
+            return [
                 FitnessStrategyTarget(
                     id: "strong_weeks_12w",
                     scope: .strategy,
-                    kind: .primary,
-                    title: "\(strongWeeks) strong weeks",
+                    kind: .supporting,
+                    title: "\(strongWeeks) of \(goal.horizonWeeks) strong weeks",
                     summary: primarySummary,
-                    metricKey: "weeks_with_min_sessions_12w",
+                    metricKey: "weeks_with_min_sessions_strategy",
                     metricCategory: "consistency",
                     direction: .increase,
                     targetValue: Double(strongWeeks),
-                    unit: "weeks"
+                    unit: "weeks",
+                    displayValueOverride: "\(strongWeeks) of \(goal.horizonWeeks)"
                 ),
                 FitnessStrategyTarget(
                     id: "weekly_min_sessions",
-                    scope: .week,
+                    scope: .strategy,
                     kind: .supporting,
                     title: "\(weeklySessions) sessions per week",
-                    summary: "A normal week is a win when it reaches \(weeklySessions) planned training exposures, with the exact mix shaped by your available days and preferred training.",
+                    summary: "The strategy stays honest when a normal week reaches \(weeklySessions) planned training exposures often enough to become the baseline.",
                     metricKey: "planned_sessions_7d",
                     metricCategory: "consistency",
                     direction: .maintain,
@@ -5070,12 +6190,6 @@ private enum FitnessStrategyBuilder {
                     unit: "days"
                 )
             ]
-
-            if let mixTarget = modalityMixTarget(goal: goal, draft: draft, snapshot: snapshot, weeklySessions: weeklySessions) {
-                targets.insert(mixTarget, at: 2)
-            }
-
-            return targets.prefixArray(4)
         }
 
         private static func bodyCompositionTarget(
@@ -5090,27 +6204,44 @@ private enum FitnessStrategyBuilder {
                 ?? snapshot?.body.bodyMass28DayAverageKilograms
                 ?? snapshot?.body.bodyMassKilograms
             let targetValue: Double?
+            let displayValue: String?
+            let summary: String
             if let baseline, let requestedChange {
                 targetValue = max(25, baseline + requestedChange)
+                displayValue = nil
+                summary = "By the end of the strategy, move the 28-day body-mass average toward \(String(format: "%.1f", max(25, baseline + requestedChange))) kg without relying on single weigh-ins."
+            } else if let baseline {
+                targetValue = baseline
+                displayValue = "±1 kg"
+                summary = "By the end of the strategy, keep the 28-day body-mass average within about 1 kg of \(String(format: "%.1f", baseline)) kg while the training targets move up."
             } else {
-                targetValue = nil
+                targetValue = 2
+                displayValue = "2/week"
+                summary = "By the end of the strategy, keep enough body-mass check-ins for HAYF to track the trend alongside training."
             }
-            let direction: FitnessStrategyTargetDirection = (requestedChange ?? -1) < 0 ? .decrease : .review
+            let direction: FitnessStrategyTargetDirection = requestedChange.map { $0 < 0 ? .decrease : .increase } ?? .maintain
 
             return FitnessStrategyTarget(
                 id: "body_mass_trend",
                 scope: .strategy,
-                kind: .primary,
-                title: requestedChange.map { abs($0) >= 1 ? "Body-mass change" : "Body trend" } ?? "Body trend",
-                summary: targetValue.map {
-                    "Use the repeated body-mass trend, not single weigh-ins, to judge whether training and recovery support a move toward \(String(format: "%.1f", $0)) kg."
-                } ?? "Use repeated body-composition evidence, not one-off readings, to judge whether the strategy is moving the right way.",
-                metricKey: "body_mass_28d_avg_kg",
+                kind: .supporting,
+                title: requestedChange.map { abs($0) >= 1 ? "Body-mass change" : "Body trend in range" } ?? "Body trend in range",
+                summary: summary,
+                metricKey: baseline == nil && requestedChange == nil ? "body_mass_samples_7d" : "body_mass_28d_avg_kg",
                 metricCategory: "body_composition",
                 direction: direction,
                 targetValue: targetValue,
-                unit: "kg"
+                unit: baseline == nil && requestedChange == nil ? "samples" : "kg",
+                displayValueOverride: displayValue
             )
+        }
+
+        private static func concreteGoalTargets(in goal: AthleteBlueprintGoal) -> [FitnessStrategyAIConcreteTarget] {
+            FitnessStrategyAITargetBrief.concreteTargets(in: goal.displayText)
+        }
+
+        private static func concreteGoalTarget(in goal: AthleteBlueprintGoal, modality: String) -> FitnessStrategyAIConcreteTarget? {
+            concreteGoalTargets(in: goal).first { $0.modality == modality }
         }
 
         private static func goalSignalTarget(
@@ -5119,35 +6250,42 @@ private enum FitnessStrategyBuilder {
             draft: ConsistencyOnboardingDraft,
             snapshot: HealthFeatureSnapshot?
         ) -> FitnessStrategyTarget {
-            if let cyclingTarget = cyclingPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot) {
-                return cyclingTarget
+            for option in preferredTrainingOptions(from: draft) {
+                switch option {
+                case .running:
+                    return runningPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot)
+                case .swimming:
+                    return swimmingPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot)
+                case .cycling:
+                    return cyclingPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot)
+                case .strength:
+                    return strengthExposureTarget(goal: goal, draft: draft)
+                default:
+                    continue
+                }
             }
 
-            if let runningTarget = runningPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot) {
-                return runningTarget
+            if goal.displayText.lowercased().contains("swim") {
+                return swimmingPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot)
             }
 
-            if goal.category == .strength || draft.trainingOptions.first == .strength {
-                let sessions = draft.frequency == .two ? 2 : 3
-                return FitnessStrategyTarget(
-                    id: "strength_exposure",
-                    scope: .week,
-                    kind: .primary,
-                    title: "\(sessions) strength exposures",
-                    summary: "Protect enough weekly strength work for \(goal.displayText) to become trainable without letting support cardio crowd it out.",
-                    metricKey: "strength_sessions_7d",
-                    metricCategory: "strength",
-                    direction: .maintain,
-                    targetValue: Double(sessions),
-                    unit: "sessions"
-                )
+            if goal.displayText.lowercased().contains("run") {
+                return runningPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot)
+            }
+
+            if goal.displayText.lowercased().contains("cycl") {
+                return cyclingPerformanceTarget(goal: goal, draft: draft, snapshot: snapshot)
+            }
+
+            if goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence) {
+                return strengthExposureTarget(goal: goal, draft: draft)
             }
 
             let aerobicMinutes = weeklyAerobicMinutes(from: draft)
             return FitnessStrategyTarget(
                 id: "aerobic_base_minutes",
-                scope: .week,
-                kind: .primary,
+                scope: .strategy,
+                kind: .supporting,
                 title: "\(aerobicMinutes) aerobic minutes",
                 summary: "Hold a measurable aerobic dose each week so the strategy has a real fitness signal, even if the goal is broad.",
                 metricKey: "aerobic_minutes_7d",
@@ -5158,12 +6296,76 @@ private enum FitnessStrategyBuilder {
             )
         }
 
+        private static func strengthExposureTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft
+        ) -> FitnessStrategyTarget {
+            let sessions = draft.frequency == .two ? 2 : 3
+            return FitnessStrategyTarget(
+                id: "strength_exposure",
+                scope: .strategy,
+                kind: .supporting,
+                title: "\(sessions) strength exposures",
+                summary: "Protect enough recurring strength work for \(goal.displayText) to become trainable without letting unrelated training crowd it out.",
+                metricKey: "strength_sessions_7d",
+                metricCategory: "strength",
+                direction: .maintain,
+                targetValue: Double(sessions),
+                unit: "sessions"
+            )
+        }
+
+        private static func performanceSignalTarget(
+            id: String,
+            modality: String,
+            title: String,
+            goal: AthleteBlueprintGoal
+        ) -> FitnessStrategyTarget {
+            if let concreteTarget = concreteGoalTarget(in: goal, modality: modality) {
+                return FitnessStrategyTarget(
+                    id: id,
+                    scope: .strategy,
+                    kind: .supporting,
+                    title: concreteTarget.title,
+                    summary: "By the end of the strategy, HAYF should be able to track this directly from imported \(modality) performance data.",
+                    metricKey: concreteTarget.metric,
+                    metricCategory: "\(modality)_performance",
+                    direction: concreteTarget.direction == "decrease" ? .decrease : .increase,
+                    targetValue: concreteTarget.targetValue,
+                    unit: concreteTarget.unit,
+                    displayValueOverride: concreteTarget.displayValue
+                )
+            }
+
+            return FitnessStrategyTarget(
+                id: id,
+                scope: .strategy,
+                kind: .supporting,
+                title: "\(modality.capitalized) result captured",
+                summary: "By the end of the strategy, HAYF should have one comparable imported \(modality) result.",
+                metricKey: "\(modality)_result_count_strategy",
+                metricCategory: "\(modality)_speed",
+                direction: .increase,
+                targetValue: 1,
+                unit: "result",
+                displayValueOverride: "1 result"
+            )
+        }
+
         private static func cyclingPerformanceTarget(
             goal: AthleteBlueprintGoal,
             draft: ConsistencyOnboardingDraft,
             snapshot: HealthFeatureSnapshot?
-        ) -> FitnessStrategyTarget? {
-            guard goal.category == .endurance || draft.trainingOptions.contains(.cycling) || goal.displayText.lowercased().contains("cycl") else { return nil }
+        ) -> FitnessStrategyTarget {
+            if isSpeedGoal(goal) {
+                return performanceSignalTarget(
+                    id: "cycling_goal_signal",
+                    modality: "cycling",
+                    title: "Cycling performance signal reviewed",
+                    goal: goal
+                )
+            }
+
             let longestRide = longestWorkout(containing: "cycling", snapshot: snapshot)
             let targetDistance = longestRide?.distanceKilometers.map { capstoneDistance(from: $0, completedAt: longestRide?.workoutDate) }
             let fallbackMinutes = weeklyAerobicMinutes(from: draft)
@@ -5171,11 +6373,11 @@ private enum FitnessStrategyBuilder {
             return FitnessStrategyTarget(
                 id: "cycling_goal_signal",
                 scope: .strategy,
-                kind: .primary,
+                kind: .supporting,
                 title: targetDistance.map { "Capstone ride: \(Int($0)) km" } ?? "\(fallbackMinutes) cycling minutes",
                 summary: targetDistance.map { distance in
                     let history = longestRide.map { " Your longest comparable ride is \(Int(($0.distanceKilometers ?? 0).rounded())) km from \(relativeAgeDescription(for: $0.workoutDate))." } ?? ""
-                    return "This is a single controlled capstone ride, not cumulative weekly distance.\(history) Weekly targets should stair-step toward a \(Int(distance)) km effort; route and elevation are not modeled yet."
+                    return "Use one controlled ride as proof that the strategy is working.\(history) It is one success signal inside the broader build, not the whole strategy."
                 } ?? "Use recurring cycling exposure as the first measurable signal before HAYF asks for harder bike work.",
                 metricKey: targetDistance == nil ? "cycling_minutes_7d" : "longest_cycling_distance_km",
                 metricCategory: "cycling",
@@ -5189,8 +6391,17 @@ private enum FitnessStrategyBuilder {
             goal: AthleteBlueprintGoal,
             draft: ConsistencyOnboardingDraft,
             snapshot: HealthFeatureSnapshot?
-        ) -> FitnessStrategyTarget? {
-            guard goal.category == .endurance || draft.trainingOptions.contains(.running) || goal.displayText.lowercased().contains("run") else { return nil }
+        ) -> FitnessStrategyTarget {
+            if isSpeedGoal(goal) {
+                let label = goalDistanceLabel(in: goal.displayText).map { "\($0) speed signal reviewed" } ?? "Running speed signal reviewed"
+                return performanceSignalTarget(
+                    id: "running_goal_signal",
+                    modality: "running",
+                    title: label,
+                    goal: goal
+                )
+            }
+
             let longestRun = longestWorkout(containing: "running", snapshot: snapshot)
             let targetDistance = longestRun?.distanceKilometers.map { capstoneDistance(from: $0, completedAt: longestRun?.workoutDate) }
             let fallbackMinutes = weeklyAerobicMinutes(from: draft)
@@ -5198,11 +6409,11 @@ private enum FitnessStrategyBuilder {
             return FitnessStrategyTarget(
                 id: "running_goal_signal",
                 scope: .strategy,
-                kind: .primary,
+                kind: .supporting,
                 title: targetDistance.map { "Capstone run: \(Int($0)) km" } ?? "\(fallbackMinutes) running minutes",
                 summary: targetDistance.map { distance in
                     let history = longestRun.map { " Your longest comparable run is \(Int(($0.distanceKilometers ?? 0).rounded())) km from \(relativeAgeDescription(for: $0.workoutDate))." } ?? ""
-                    return "This is a single controlled capstone run, not cumulative weekly distance.\(history) Weekly targets should stair-step toward a \(Int(distance)) km effort."
+                    return "Use one controlled run as proof that the strategy is working.\(history) It is one success signal inside the broader build, not the whole strategy."
                 } ?? "Use recurring run exposure as the first measurable signal before HAYF asks for harder running.",
                 metricKey: targetDistance == nil ? "running_minutes_7d" : "longest_running_distance_km",
                 metricCategory: "running",
@@ -5212,70 +6423,420 @@ private enum FitnessStrategyBuilder {
             )
         }
 
-        private static func weeklyExposureTarget(
+        private static func swimmingPerformanceTarget(
             goal: AthleteBlueprintGoal,
             draft: ConsistencyOnboardingDraft,
-            usesPhases: Bool
+            snapshot: HealthFeatureSnapshot?
         ) -> FitnessStrategyTarget {
-            let weeklySessions = targetWeeklySessions(from: draft.frequency)
+            if isSpeedGoal(goal) {
+                return performanceSignalTarget(
+                    id: "swimming_goal_signal",
+                    modality: "swimming",
+                    title: "Swimming performance signal reviewed",
+                    goal: goal
+                )
+            }
+
+            let longestSwim = longestWorkout(containing: "swimming", snapshot: snapshot)
+            let targetMinutes = longestSwim.map {
+                max(sessionMinutes(from: draft.sessionLength), Int(($0.durationMinutes * 1.1).rounded()))
+            } ?? weeklyAerobicMinutes(from: draft)
+
             return FitnessStrategyTarget(
-                id: "weekly_training_exposures",
-                scope: .week,
+                id: "swimming_goal_signal",
+                scope: .strategy,
                 kind: .supporting,
-                title: "\(weeklySessions) weekly exposures",
-                summary: "Keep \(weeklySessions) weekly training exposures showing up before the strategy asks for more specific work toward \(goal.displayText).",
-                metricKey: "planned_sessions_7d",
-                metricCategory: "consistency",
-                direction: .maintain,
-                targetValue: Double(weeklySessions),
-                unit: "sessions"
+                title: "\(targetMinutes) swimming min",
+                summary: "Use a controlled swim duration as one proof signal for \(goal.displayText.lowercased()), sized from your chosen training path and available session length.",
+                metricKey: "swimming_minutes_strategy",
+                metricCategory: "swimming",
+                direction: .increase,
+                targetValue: Double(targetMinutes),
+                unit: "min"
             )
         }
 
-        private static func modalityMixTarget(
+        private static func strategyRhythmTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?
+        ) -> FitnessStrategyTarget {
+            let weeklySessions = targetWeeklySessions(from: draft.frequency)
+            let strongWeeks = targetStrongWeeks(from: weeklySessions, horizonWeeks: goal.horizonWeeks, snapshot: snapshot)
+            return FitnessStrategyTarget(
+                id: "strategy_rhythm_held",
+                scope: .strategy,
+                kind: .supporting,
+                title: "\(strongWeeks) of \(goal.horizonWeeks) rhythm weeks",
+                summary: "By the end of the strategy, complete \(strongWeeks) of \(goal.horizonWeeks) weeks where the planned \(weeklySessions)-exposure rhythm holds. This keeps progress from depending on one heroic week.",
+                metricKey: "weeks_with_min_sessions_strategy",
+                metricCategory: "consistency",
+                direction: .increase,
+                targetValue: Double(strongWeeks),
+                unit: "weeks",
+                displayValueOverride: "\(strongWeeks) of \(goal.horizonWeeks)"
+            )
+        }
+
+        private static func strategyAnchorTarget(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            blueprint: AthleteBlueprintOutput
+        ) -> FitnessStrategyTarget {
+            let preferredOptions = preferredTrainingOptions(from: draft)
+            let anchorTitle = trainingAnchorDisplayTitle(for: preferredOptions)
+            let requiredModalities = max(1, preferredOptions.prefix(2).count)
+            let metricKey = preferredOptions.isEmpty ? "anchor_sessions_7d" : "chosen_training_modalities_present_7d"
+            let displayValue = preferredOptions.count > 1 ? "1 each/week" : "1/week"
+            let summary = preferredOptions.isEmpty
+                ? "By the end of the strategy, keep at least one supporting training exposure visible in normal weeks."
+                : "By the end of the strategy, keep at least one \(trainingAnchorLabel(for: preferredOptions)) exposure visible in normal weeks."
+
+            return FitnessStrategyTarget(
+                id: "strategy_anchor_preserved",
+                scope: .strategy,
+                kind: .supporting,
+                title: "\(anchorTitle) stays visible",
+                summary: summary,
+                metricKey: metricKey,
+                metricCategory: "training_balance",
+                direction: .maintain,
+                targetValue: Double(requiredModalities),
+                unit: preferredOptions.count > 1 ? "modalities" : "session",
+                displayValueOverride: displayValue
+            )
+        }
+
+        static func phaseTargets(
+            phaseID: String,
+            phaseName: String,
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?
+        ) -> [FitnessStrategyTarget] {
+            let weeklySessions = targetWeeklySessions(from: draft.frequency)
+            let aerobicMinutes = weeklyAerobicMinutes(from: draft)
+            let phaseLabel = phaseName.lowercased()
+            let preferredOptions = preferredTrainingOptions(from: draft)
+            let supportTitle = preferredOptions.isEmpty ? "Support exposure protected" : "Chosen path protected"
+            let supportSummary = preferredOptions.isEmpty
+                ? "Finish the phase with at least one supporting exposure still present in normal weeks."
+                : "Finish the phase with at least one \(trainingAnchorLabel(for: preferredOptions)) exposure present in normal weeks."
+            let supportMetricKey = preferredOptions.isEmpty ? "support_sessions_7d" : "chosen_training_modalities_present_7d"
+            let supportDisplayValue = preferredOptions.count > 1 ? "1 each/week" : "1/week"
+            let supportTargetValue = Double(max(1, preferredOptions.prefix(2).count))
+
+            switch phaseID {
+            case "base":
+                return [
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_repeatable_weeks",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: "3 repeatable weeks",
+                        summary: "The \(phaseLabel) phase proves the weekly structure can hold before HAYF asks for more.",
+                        metricKey: "phase_weeks_with_min_sessions",
+                        metricCategory: "consistency",
+                        direction: .increase,
+                        targetValue: 3,
+                        unit: "weeks"
+                    ),
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_weekly_exposures",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: "\(weeklySessions) exposures held",
+                        summary: "Keep the minimum training rhythm visible across the phase.",
+                        metricKey: "planned_sessions_7d",
+                        metricCategory: "consistency",
+                        direction: .maintain,
+                        targetValue: Double(weeklySessions),
+                        unit: "sessions"
+                    ),
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_floor_used",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: "0 skipped weeks",
+                        summary: "Finish the phase without losing a full planned training week.",
+                        metricKey: "skipped_weeks_phase",
+                        metricCategory: "adherence",
+                        direction: .decrease,
+                        targetValue: 0,
+                        unit: "weeks",
+                        displayValueOverride: "0 skips"
+                    )
+                ]
+            case "build":
+                return [
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_goal_signal_progress",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: phaseGoalSignalTitle(goal: goal, draft: draft, snapshot: snapshot, fallbackMinutes: aerobicMinutes),
+                        summary: "Progress the clearest measurable signal for \(goal.displayText.lowercased()) without making every session harder.",
+                        metricKey: phaseGoalSignalMetricKey(goal: goal, draft: draft),
+                        metricCategory: phaseGoalSignalCategory(goal: goal, draft: draft),
+                        direction: .increase,
+                        targetValue: phaseGoalSignalValue(goal: goal, draft: draft, snapshot: snapshot, fallbackMinutes: aerobicMinutes),
+                        unit: phaseGoalSignalUnit(goal: goal, draft: draft),
+                        displayValueOverride: phaseGoalSignalDisplayValue(goal: goal, draft: draft)
+                    ),
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_anchor_session",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: supportTitle,
+                        summary: supportSummary,
+                        metricKey: supportMetricKey,
+                        metricCategory: "training_balance",
+                        direction: .maintain,
+                        targetValue: supportTargetValue,
+                        unit: preferredOptions.count > 1 ? "modalities" : "session",
+                        displayValueOverride: supportDisplayValue
+                    ),
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_recovery_gap",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: "No long drop-offs",
+                        summary: "Keep the gap between useful exposures short enough that momentum does not reset.",
+                        metricKey: "max_gap_days_phase",
+                        metricCategory: "consistency",
+                        direction: .decrease,
+                        targetValue: 7,
+                        unit: "days"
+                    )
+                ]
+            default:
+                return [
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_goal_check",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: reviewGoalTargetTitle(goal: goal),
+                        summary: "Finish the phase with a measurable imported result tied to the goal.",
+                        metricKey: reviewGoalMetricKey(goal: goal),
+                        metricCategory: reviewGoalMetricCategory(goal: goal),
+                        direction: reviewGoalDirection(goal: goal),
+                        targetValue: reviewGoalValue(goal: goal),
+                        unit: reviewGoalUnit(goal: goal),
+                        displayValueOverride: reviewGoalDisplayValue(goal: goal)
+                    ),
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_rhythm_preserved",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: "Rhythm preserved",
+                        summary: "Finish the phase with the weekly training rhythm still intact.",
+                        metricKey: "phase_weeks_with_min_sessions",
+                        metricCategory: "consistency",
+                        direction: .increase,
+                        targetValue: 2,
+                        unit: "weeks"
+                    ),
+                    FitnessStrategyTarget(
+                        id: "\(phaseID)_next_move",
+                        scope: .phase,
+                        kind: .supporting,
+                        title: "No late drop-offs",
+                        summary: "Keep the final gap between useful exposures short enough that the strategy finishes with momentum.",
+                        metricKey: "max_gap_days_phase",
+                        metricCategory: "consistency",
+                        direction: .decrease,
+                        targetValue: 7,
+                        unit: "days"
+                    )
+                ]
+            }
+        }
+
+        private static func reviewGoalTargetTitle(goal: AthleteBlueprintGoal) -> String {
+            if let concreteTarget = concreteGoalTargets(in: goal).first {
+                return concreteTarget.title
+            }
+            return "Goal result captured"
+        }
+
+        private static func reviewGoalMetricKey(goal: AthleteBlueprintGoal) -> String {
+            concreteGoalTargets(in: goal).first?.metric ?? "goal_result_count_phase"
+        }
+
+        private static func reviewGoalMetricCategory(goal: AthleteBlueprintGoal) -> String {
+            if let modality = concreteGoalTargets(in: goal).first?.modality {
+                return "\(modality)_performance"
+            }
+            return goal.category.rawValue
+        }
+
+        private static func reviewGoalDirection(goal: AthleteBlueprintGoal) -> FitnessStrategyTargetDirection {
+            concreteGoalTargets(in: goal).first?.direction == "decrease" ? .decrease : .increase
+        }
+
+        private static func reviewGoalValue(goal: AthleteBlueprintGoal) -> Double {
+            concreteGoalTargets(in: goal).first?.targetValue ?? 1
+        }
+
+        private static func reviewGoalUnit(goal: AthleteBlueprintGoal) -> String {
+            concreteGoalTargets(in: goal).first?.unit ?? "result"
+        }
+
+        private static func reviewGoalDisplayValue(goal: AthleteBlueprintGoal) -> String {
+            concreteGoalTargets(in: goal).first?.displayValue ?? "1 result"
+        }
+
+        private static func phaseGoalSignalTitle(
             goal: AthleteBlueprintGoal,
             draft: ConsistencyOnboardingDraft,
             snapshot: HealthFeatureSnapshot?,
-            weeklySessions: Int
-        ) -> FitnessStrategyTarget? {
-            let options = draft.trainingOptions
-            guard options.count >= 2 else { return nil }
-
-            let primary = options[0]
-            let secondary = options[1]
-            let primaryCount = max(1, Int(ceil(Double(weeklySessions) * 0.6)))
-            let secondaryCount = max(1, weeklySessions - primaryCount)
-
-            return FitnessStrategyTarget(
-                id: "weekly_modality_mix",
-                scope: .week,
-                kind: .supporting,
-                title: "\(primary.title) + \(secondary.title)",
-                summary: "A strong week should bias toward \(primaryCount)x \(primary.title.lowercased()) and \(secondaryCount)x \(secondary.title.lowercased()), then adjust around your calendar instead of pretending every week is identical.",
-                metricKey: "weekly_modality_mix",
-                metricCategory: "consistency",
-                direction: .maintain,
-                targetValue: Double(weeklySessions),
-                unit: "sessions"
-            )
+            fallbackMinutes: Int
+        ) -> String {
+            let preferredOption = preferredTrainingOptions(from: draft).first
+            if preferredOption == .running || (preferredOption == nil && goal.displayText.lowercased().contains("run")) {
+                if isSpeedGoal(goal) {
+                    return concreteGoalTarget(in: goal, modality: "running")?.title ?? "Running result"
+                }
+                return "\(Int(phaseGoalSignalValue(goal: goal, draft: draft, snapshot: snapshot, fallbackMinutes: fallbackMinutes).rounded())) running min"
+            }
+            if preferredOption == .swimming || (preferredOption == nil && goal.displayText.lowercased().contains("swim")) {
+                if isSpeedGoal(goal) {
+                    return concreteGoalTarget(in: goal, modality: "swimming")?.title ?? "Swimming result"
+                }
+                return "\(Int(phaseGoalSignalValue(goal: goal, draft: draft, snapshot: snapshot, fallbackMinutes: fallbackMinutes).rounded())) swimming min"
+            }
+            if preferredOption == .cycling || (preferredOption == nil && goal.displayText.lowercased().contains("cycl")) {
+                if isSpeedGoal(goal) {
+                    return concreteGoalTarget(in: goal, modality: "cycling")?.title ?? "Cycling result"
+                }
+                return "\(Int(phaseGoalSignalValue(goal: goal, draft: draft, snapshot: snapshot, fallbackMinutes: fallbackMinutes).rounded())) cycling min"
+            }
+            if preferredOption == .strength || (goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)) {
+                return "Strength progressed"
+            }
+            if goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText) {
+                return "Body trend held"
+            }
+            return "\(fallbackMinutes) training min"
         }
 
-        private static func recoveryOrFloorTarget(draft: ConsistencyOnboardingDraft) -> FitnessStrategyTarget {
-            FitnessStrategyTarget(
-                id: "bad_day_floor_used",
-                scope: .week,
-                kind: .supporting,
-                title: "Use the floor",
-                summary: "When a full session is not realistic, \(draft.floorSummary.lowercased()) counts as the recovery move that keeps the strategy alive.",
-                metricKey: "floor_sessions_7d",
-                metricCategory: "adherence",
-                direction: .review,
-                targetValue: nil,
-                unit: nil
-            )
+        private static func phaseGoalSignalMetricKey(goal: AthleteBlueprintGoal, draft: ConsistencyOnboardingDraft) -> String? {
+            let preferredOption = preferredTrainingOptions(from: draft).first
+            if preferredOption == .running || (preferredOption == nil && goal.displayText.lowercased().contains("run")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "running")?.metric ?? "running_result_count_phase" }
+                return "running_minutes_phase"
+            }
+            if preferredOption == .swimming || (preferredOption == nil && goal.displayText.lowercased().contains("swim")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "swimming")?.metric ?? "swimming_result_count_phase" }
+                return "swimming_minutes_phase"
+            }
+            if preferredOption == .cycling || (preferredOption == nil && goal.displayText.lowercased().contains("cycl")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "cycling")?.metric ?? "cycling_result_count_phase" }
+                return "cycling_minutes_phase"
+            }
+            if preferredOption == .strength || (goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)) {
+                return "strength_result_count_phase"
+            }
+            if goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText) {
+                return "body_mass_28d_avg_kg"
+            }
+            return "training_minutes_phase"
         }
 
-        private static func targetWeeklySessions(from frequency: TrainingFrequency?) -> Int {
+        private static func phaseGoalSignalCategory(goal: AthleteBlueprintGoal, draft: ConsistencyOnboardingDraft) -> String {
+            let preferredOption = preferredTrainingOptions(from: draft).first
+            if preferredOption == .running || (preferredOption == nil && goal.displayText.lowercased().contains("run")) {
+                if isSpeedGoal(goal) { return "running_speed" }
+                return "running"
+            }
+            if preferredOption == .swimming || (preferredOption == nil && goal.displayText.lowercased().contains("swim")) {
+                if isSpeedGoal(goal) { return "swimming_speed" }
+                return "swimming"
+            }
+            if preferredOption == .cycling || (preferredOption == nil && goal.displayText.lowercased().contains("cycl")) {
+                if isSpeedGoal(goal) { return "cycling_speed" }
+                return "cycling"
+            }
+            if preferredOption == .strength || (goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)) {
+                return "strength"
+            }
+            if goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText) {
+                return "body_composition"
+            }
+            return goal.category.rawValue
+        }
+
+        private static func phaseGoalSignalValue(
+            goal: AthleteBlueprintGoal,
+            draft: ConsistencyOnboardingDraft,
+            snapshot: HealthFeatureSnapshot?,
+            fallbackMinutes: Int
+        ) -> Double {
+            let preferredOption = preferredTrainingOptions(from: draft).first
+            if preferredOption == .running || (preferredOption == nil && goal.displayText.lowercased().contains("run")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "running")?.targetValue ?? 1 }
+                return Double(max(fallbackMinutes, Int(Double(fallbackMinutes) * 1.2)))
+            }
+            if preferredOption == .swimming || (preferredOption == nil && goal.displayText.lowercased().contains("swim")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "swimming")?.targetValue ?? 1 }
+                return Double(max(sessionMinutes(from: draft.sessionLength), Int(Double(fallbackMinutes) * 1.1)))
+            }
+            if preferredOption == .cycling || (preferredOption == nil && goal.displayText.lowercased().contains("cycl")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "cycling")?.targetValue ?? 1 }
+                return Double(max(fallbackMinutes, Int(Double(fallbackMinutes) * 1.25)))
+            }
+            if preferredOption == .strength || (goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)) {
+                return 1
+            }
+            if goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText) {
+                return 1
+            }
+            return Double(fallbackMinutes)
+        }
+
+        private static func phaseGoalSignalUnit(goal: AthleteBlueprintGoal, draft: ConsistencyOnboardingDraft) -> String? {
+            let preferredOption = preferredTrainingOptions(from: draft).first
+            if preferredOption == .running || (preferredOption == nil && goal.displayText.lowercased().contains("run")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "running")?.unit ?? "result" }
+                return "min"
+            }
+            if preferredOption == .swimming || (preferredOption == nil && goal.displayText.lowercased().contains("swim")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "swimming")?.unit ?? "result" }
+                return "min"
+            }
+            if preferredOption == .cycling || (preferredOption == nil && goal.displayText.lowercased().contains("cycl")) {
+                if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "cycling")?.unit ?? "result" }
+                return "min"
+            }
+            if preferredOption == .strength || (goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)) {
+                return "result"
+            }
+            if goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText) {
+                return nil
+            }
+            return "min"
+        }
+
+        private static func phaseGoalSignalDisplayValue(goal: AthleteBlueprintGoal, draft: ConsistencyOnboardingDraft) -> String? {
+            let preferredOption = preferredTrainingOptions(from: draft).first
+            if isSpeedGoal(goal), preferredOption == .running {
+                return concreteGoalTarget(in: goal, modality: "running")?.displayValue ?? "1 result"
+            }
+            if isSpeedGoal(goal), preferredOption == .swimming {
+                return concreteGoalTarget(in: goal, modality: "swimming")?.displayValue ?? "1 result"
+            }
+            if isSpeedGoal(goal), preferredOption == .cycling {
+                return concreteGoalTarget(in: goal, modality: "cycling")?.displayValue ?? "1 result"
+            }
+            if preferredOption == .strength || (goal.category == .strength && !draft.goalAvoidances.contains(.heavyLifting) && !draft.goalAvoidances.contains(.gymDependence)) {
+                return "1 result"
+            }
+            if preferredOption == nil && (goal.category == .bodyComposition || containsBodyCompositionLanguage(goal.displayText)) {
+                return "±1 kg"
+            }
+            return nil
+        }
+
+        static func targetWeeklySessions(from frequency: TrainingFrequency?) -> Int {
             switch frequency {
             case .two: return 2
             case .three: return 3
@@ -5285,10 +6846,37 @@ private enum FitnessStrategyBuilder {
             }
         }
 
-        private static func targetStrongWeeks(from weeklySessions: Int, snapshot: HealthFeatureSnapshot?) -> Int {
-            let priorStreak = snapshot?.fitnessHistory.consistency.longestActiveWeekStreak ?? 0
-            let base = weeklySessions >= 5 ? 4 : 6
-            return min(8, max(base, priorStreak + 1))
+        private static func targetStrongWeeks(from weeklySessions: Int, horizonWeeks: Int, snapshot: HealthFeatureSnapshot?) -> Int {
+            let minimumRatio = weeklySessions >= 5 ? 0.6 : 0.7
+            let base = max(1, Int((Double(horizonWeeks) * minimumRatio).rounded()))
+            return min(horizonWeeks, base)
+        }
+
+        private static func isSpeedGoal(_ goal: AthleteBlueprintGoal) -> Bool {
+            let text = goal.displayText.lowercased()
+            return text.contains("pace")
+                || text.contains("speed")
+                || text.contains("faster")
+                || text.contains("race pace")
+                || text.contains("pr")
+                || text.contains("time")
+        }
+
+        private static func goalDistanceLabel(in text: String) -> String? {
+            let lowercased = text.lowercased()
+            if lowercased.contains("5k") { return "5K" }
+            if lowercased.contains("10k") { return "10K" }
+            if lowercased.contains("half marathon") { return "half marathon" }
+            if lowercased.contains("marathon") { return "marathon" }
+
+            let pattern = #"(\d+(?:[\.,]\d+)?)\s*(?:k|km|kilometer|kilometers)\b"#
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: lowercased, range: NSRange(lowercased.startIndex..., in: lowercased)),
+                  let range = Range(match.range(at: 1), in: lowercased) else {
+                return nil
+            }
+            let value = lowercased[range].replacingOccurrences(of: ",", with: ".")
+            return value.hasSuffix(".0") ? "\(Int(Double(value) ?? 0))K" : "\(value)K"
         }
 
         private static func weeklyAerobicMinutes(from draft: ConsistencyOnboardingDraft) -> Int {
@@ -5358,7 +6946,12 @@ private enum FitnessStrategyBuilder {
 
         private static func containsBodyCompositionLanguage(_ text: String) -> Bool {
             let lowercased = text.lowercased()
-            return ["kg", "weight", "body fat", "lean", "drop", "lose", "loss", "cut", "gain mass"].contains { lowercased.contains($0) }
+            if ["body fat", "body composition", "weight", "kg", "kilogram", "lean mass", "gain mass"].contains(where: { lowercased.contains($0) }) {
+                return true
+            }
+            let bodyContext = lowercased.contains("body") || lowercased.contains("fat") || lowercased.contains("mass") || lowercased.contains("weight")
+            let changeLanguage = lowercased.contains("drop") || lowercased.contains("lose") || lowercased.contains("loss") || lowercased.contains("cut")
+            return bodyContext && changeLanguage
         }
 
         private static func deduplicated(_ targets: [FitnessStrategyTarget]) -> [FitnessStrategyTarget] {
@@ -5560,13 +7153,13 @@ private enum AthleteBlueprintBuilder {
         case .concreteGoal:
             return AthleteBlueprintGoal(
                 displayText: normalizedGoalDisplayText(from: draft.goalSummary),
-                horizonWeeks: goalHorizonWeeks(from: draft.goalTimeline),
+                horizonWeeks: goalHorizonWeeks(from: draft.goalTimeline, goalDate: draft.goalDate),
                 category: category(for: draft.goalSummary)
             )
         case .findGoal:
             return AthleteBlueprintGoal(
                 displayText: normalizedGoalDisplayText(from: draft.goalSummary),
-                horizonWeeks: draft.chosenGoal?.timeline.weeks ?? goalHorizonWeeks(from: draft.goalTimeline),
+                horizonWeeks: draft.chosenGoal?.timeline.weeks ?? goalHorizonWeeks(from: draft.goalTimeline, goalDate: draft.goalDate),
                 category: category(for: draft.goalSummary)
             )
         }
@@ -6114,8 +7707,13 @@ private enum AthleteBlueprintBuilder {
         )
     }
 
-    private static func goalHorizonWeeks(from timeline: GoalTimeline?) -> Int {
-        timeline?.weeks ?? 12
+    private static func goalHorizonWeeks(from timeline: GoalTimeline?, goalDate: Date) -> Int {
+        guard timeline == .specificDate else { return timeline?.weeks ?? 12 }
+
+        let start = Calendar.current.startOfDay(for: Date())
+        let end = Calendar.current.startOfDay(for: goalDate)
+        let days = max(1, Calendar.current.dateComponents([.day], from: start, to: end).day ?? 84)
+        return max(1, Int(ceil(Double(days) / 7.0)))
     }
 
     private static func normalizedGoalDisplayText(from value: String) -> String {
@@ -6469,8 +8067,132 @@ private struct AthleteBlueprintSummaryRow: View {
     }
 }
 
+private struct FitnessStrategySnapshotGrid: View {
+    let items: [FitnessStrategySnapshotItem]
+    private let tileHeight: CGFloat = 104
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            ForEach(items) { item in
+                VStack(spacing: item.id == "priorities" ? 6 : 7) {
+                    Image(systemName: item.systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(HAYFColor.orange)
+                        .frame(height: 18)
+
+                    VStack(spacing: 2) {
+                        Text(item.value)
+                            .font(.system(size: item.id == "priorities" ? 12 : 13, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(item.id == "priorities" ? 3 : 1)
+                            .minimumScaleFactor(item.id == "priorities" ? 0.78 : 0.75)
+
+                        Text(item.label)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.75)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 10)
+                .frame(maxWidth: item.id == "priorities" ? .infinity : 82)
+                .frame(height: tileHeight)
+                .background(HAYFColor.orange.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+    }
+}
+
+private struct FitnessStrategyReadCard: View {
+    let read: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("COACH VERDICT")
+                .font(.system(size: 10, weight: .medium))
+                .kerning(1.2)
+                .foregroundStyle(HAYFColor.secondary)
+
+            Text(read)
+                .font(.system(size: 18, weight: .regular))
+                .lineSpacing(5)
+                .foregroundStyle(HAYFColor.primary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct FitnessStrategyGoalContextCard: View {
+    let context: FitnessStrategyGoalTargetContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("GOAL CONTEXT")
+                .font(.system(size: 10, weight: .medium))
+                .kerning(1.2)
+                .foregroundStyle(HAYFColor.secondary)
+
+            Text(context.title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            Text(context.summary)
+                .font(.system(size: 14, weight: .regular))
+                .lineSpacing(3)
+                .foregroundStyle(HAYFColor.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct FitnessStrategyFitReasonRow: View {
+    let reason: FitnessStrategyFitReason
+
+    var body: some View {
+        FitnessStrategyIconRow(
+            systemImage: reason.systemImage,
+            title: reason.title,
+            summary: reason.summary
+        )
+    }
+}
+
 private struct FitnessStrategyPillarRow: View {
     let pillar: FitnessStrategyPillar
+
+    var body: some View {
+        FitnessStrategyIconRow(
+            systemImage: "arrow.up.right",
+            title: pillar.title,
+            summary: pillar.summary
+        )
+    }
+}
+
+private struct FitnessStrategyIconRow: View {
+    let systemImage: String
+    let title: String
+    let summary: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -6478,20 +8200,21 @@ private struct FitnessStrategyPillarRow: View {
                 .fill(HAYFColor.orange.opacity(0.18))
                 .frame(width: 28, height: 28)
                 .overlay {
-                    Image(systemName: "arrow.up.right")
+                    Image(systemName: systemImage)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(HAYFColor.orange)
                 }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(pillar.title)
+                Text(title)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
 
-                Text(pillar.summary)
+                Text(summary)
                     .font(.system(size: 14, weight: .regular))
                     .lineSpacing(3)
                     .foregroundStyle(HAYFColor.secondary)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -6511,7 +8234,7 @@ private struct FitnessStrategyPhaseRow: View {
     let phase: FitnessStrategyPhase
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(phase.name.uppercased())
                 .font(.system(size: 10, weight: .medium))
                 .kerning(1.2)
@@ -6522,11 +8245,12 @@ private struct FitnessStrategyPhaseRow: View {
                 .foregroundStyle(HAYFColor.primary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text(phase.targetSummary)
-                .font(.system(size: 14, weight: .regular))
-                .lineSpacing(3)
-                .foregroundStyle(HAYFColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 6) {
+                ForEach(phase.targets) { target in
+                    FitnessStrategyPhaseTargetRow(target: target)
+                }
+            }
+            .padding(.top, 2)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -6536,6 +8260,54 @@ private struct FitnessStrategyPhaseRow: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(HAYFColor.border, lineWidth: 1)
         }
+    }
+}
+
+private struct FitnessStrategyPhaseTargetRow: View {
+    let target: FitnessStrategyTarget
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "smallcircle.filled.circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 16, height: 18)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(target.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 6)
+
+                    if let value = target.displayValue {
+                        Text(value)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(HAYFColor.orange.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+                }
+
+                Text(target.summary)
+                    .font(.system(size: 13, weight: .regular))
+                    .lineSpacing(2)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(HAYFColor.neutral)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 }
 
@@ -6578,6 +8350,7 @@ private struct FitnessStrategyOperatingRhythmCard: View {
 
 private struct FitnessStrategyTargetRow: View {
     let target: FitnessStrategyTarget
+    let label: String
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -6586,11 +8359,12 @@ private struct FitnessStrategyTargetRow: View {
                 .foregroundStyle(HAYFColor.orange)
                 .frame(width: 28, height: 28)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(target.title)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(HAYFColor.primary)
+                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Spacer(minLength: 6)
@@ -6599,6 +8373,8 @@ private struct FitnessStrategyTargetRow: View {
                         Text(value)
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(HAYFColor.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(HAYFColor.orange.opacity(0.12))
@@ -6610,22 +8386,47 @@ private struct FitnessStrategyTargetRow: View {
                     .font(.system(size: 14, weight: .regular))
                     .lineSpacing(3)
                     .foregroundStyle(HAYFColor.secondary)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
-
-                Text("\(target.kind.displayName) · \(target.metricCategoryDisplay)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(HAYFColor.muted)
-                    .padding(.top, 3)
             }
-
-            Spacer(minLength: 0)
         }
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
         .background(HAYFColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(HAYFColor.border, lineWidth: 1)
+        }
+    }
+}
+
+private struct FitnessStrategyPlanBridgeCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WEEKLY TARGETS COME NEXT")
+                .font(.system(size: 10, weight: .medium))
+                .kerning(1.2)
+                .foregroundStyle(HAYFColor.secondary)
+
+            Text("After you accept, HAYF turns this strategy into your first two visible weeks.")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Current week committed · next week draft · weekly targets attached to each week")
+                .font(.system(size: 13, weight: .regular))
+                .lineSpacing(2)
+                .foregroundStyle(HAYFColor.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
         }
     }
 }

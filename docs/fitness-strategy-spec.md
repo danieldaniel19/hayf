@@ -53,7 +53,9 @@ The same strategy artifact should be persisted for later review elsewhere in the
 5. Targets should feel central, not like analytics afterthoughts.
 6. Time-bound goals show phases.
 7. Consistency goals do not receive fake phases; they show an operating rhythm instead.
-8. Every major section should later be able to open a compact detail affordance such as:
+8. The user goal target is context; HAYF strategy targets are the derived success signals for the coaching approach.
+9. Phased strategies show phase targets inside each phase. Weekly targets are introduced later in Plan, not on the reveal screen.
+10. Every major section should later be able to open a compact detail affordance such as:
    - why this strategy
    - why these phases
    - why these targets
@@ -83,9 +85,9 @@ Deliver the opening verdict. This is the emotional center of the screen and the 
 - 2 to 4 sentences
 - 45 to 90 words
 
-#### Example
+#### Example Shape
 
-> Your best route is not more ambition. It is a strength-led, consistency-protected build that keeps aerobic work regular enough to support the goal without sacrificing the training identity you already sustain best. HAYF will bias toward repeatable progress first, then earn harder work once the week is holding.
+> Your best route is to make the chosen training path repeatable before asking it to become more demanding. HAYF will use your history as context, but the strategy should stay pointed at the goal and constraints you selected. Progression is earned when the week is holding.
 
 ### 2. `strategy_pillars`
 
@@ -104,9 +106,9 @@ Show the few rules HAYF will use to steer the strategy.
 ```json
 [
   {
-    "id": "protect_strength_anchor",
-    "title": "Keep strength as the anchor",
-    "summary": "Your most durable training pattern should stay protected while the goal-specific work builds around it."
+    "id": "protect_chosen_path",
+    "title": "Protect the chosen path",
+    "summary": "The training path selected in onboarding should stay visible while goal-specific work builds around it."
   }
 ]
 ```
@@ -115,12 +117,8 @@ Show the few rules HAYF will use to steer the strategy.
 
 - usually 3 to 4 pillars
 - each pillar should be a consequence of the athlete read, not a generic fitness truism
-- examples:
-  - protect repeatable training exposures
-  - keep strength as the anchor
-  - build aerobic work gradually
-  - preserve recovery slack
-  - reduce friction before adding complexity
+- keep the language general enough that historical modalities do not leak into the strategy
+- protect the user-selected training path, then use history only when it supports that path
 
 ### 3A. `phase_outline`
 
@@ -144,7 +142,18 @@ Show the arc that supports the strategy without revealing a full long-term calen
     "id": "base",
     "name": "Base",
     "objective": "Make the weekly rhythm repeatable before adding more demanding work.",
-    "targetSummary": "Hold 3 weekly exposures with recovery intact."
+    "targetSummary": "Hold 3 weekly exposures with recovery intact.",
+    "phaseTargets": [
+      {
+        "id": "base_repeatable_weeks",
+        "scope": "phase",
+        "title": "3 repeatable weeks",
+        "summary": "Prove the weekly structure can hold before HAYF asks for more.",
+        "metricKey": "phase_weeks_with_min_sessions",
+        "targetValue": 3,
+        "unit": "weeks"
+      }
+    ]
   }
 ]
 ```
@@ -186,12 +195,12 @@ Explain the repeatable structure HAYF is trying to protect.
 
 #### Job
 
-Show the measurable signals that keep the strategy honest.
+Show the measurable end-of-strategy signals that keep HAYF honest.
 
 #### Must answer
 
 - what HAYF will watch
-- what success looks like
+- what success looks like by the end of the strategy timeframe
 - how the user will know they are on track
 
 #### Structure
@@ -212,9 +221,11 @@ Show the measurable signals that keep the strategy honest.
 
 #### Guidance
 
-- show a curated set on the reveal screen:
-  - one primary target
-  - two to four supporting targets
+- show exactly three peer strategy targets on the reveal screen
+- strategy targets are derived from the goal target and Athlete Blueprint
+- capstone events may be one strategy target, but never the whole strategy narrative
+- for phased branches, show exactly three phase targets inside each phase
+- weekly targets are not shown on this reveal; they arrive with the weekly Plan
 - targets should exist whenever they can be made meaningful
 - only omit when a target would be fake, misleading, or not measurable yet
 
@@ -239,7 +250,18 @@ The first user-facing Strategy artifact should be able to serialize to:
 
 ```json
 {
+  "goalTargetContext": {
+    "title": "string",
+    "summary": "string"
+  },
   "strategyRead": "string",
+  "fitReasons": [
+    {
+      "id": "string",
+      "title": "string",
+      "summary": "string"
+    }
+  ],
   "strategyPillars": [
     {
       "id": "string",
@@ -252,7 +274,24 @@ The first user-facing Strategy artifact should be able to serialize to:
       "id": "string",
       "name": "string",
       "objective": "string",
-      "targetSummary": "string"
+      "targetSummary": "string",
+      "phaseTargets": [
+        {
+          "id": "string",
+          "family": "consistency | modality_presence | capacity_metric | performance_metric | body_trend | capstone",
+          "modality": "string | null",
+          "title": "string",
+          "summary": "string",
+          "proposedDisplayValue": "string | null",
+          "targetValue": "number | null",
+          "unit": "string | null",
+          "rationale": "string",
+          "capstone": {
+            "isCapstone": "boolean",
+            "whyAppropriate": "string | null"
+          }
+        }
+      ]
     }
   ],
   "operatingRhythm": {
@@ -262,12 +301,18 @@ The first user-facing Strategy artifact should be able to serialize to:
   "strategyTargets": [
     {
       "id": "string",
-      "scope": "strategy | phase | week",
+      "family": "consistency | modality_presence | capacity_metric | performance_metric | body_trend | capstone",
+      "modality": "string | null",
       "title": "string",
       "summary": "string",
-      "metricKey": "string | null",
+      "proposedDisplayValue": "string | null",
       "targetValue": "number | null",
-      "unit": "string | null"
+      "unit": "string | null",
+      "rationale": "string",
+      "capstone": {
+        "isCapstone": "boolean",
+        "whyAppropriate": "string | null"
+      }
     }
   ],
   "strategyDetail": {
@@ -281,28 +326,55 @@ The first user-facing Strategy artifact should be able to serialize to:
 
 Contract rules:
 
+- target generation is a separate AI pass: `generate_fitness_strategy_targets` receives `targetBrief` and ID-only `targetSlots`, never prebuilt deterministic capstone titles or metric contracts.
+- strategy copy is a second AI pass: `generate_fitness_strategy` receives only the validated target artifact in `sectionSeeds` and must not redesign targets.
 - `phaseOutline` is required when the active goal requires phases.
 - `phaseOutline` is empty for consistency goals.
+- every phase in `phaseOutline` must include exactly three `phaseTargets`.
 - `operatingRhythm` is required for consistency goals.
 - `operatingRhythm` may be `null` for phased goals.
-- `strategyTargets` should be non-empty whenever meaningful targets can be generated.
+- `strategyTargets` should contain exactly three peer strategy targets whenever meaningful targets can be generated.
+- `goalTargetContext` is shown as quiet context and is not counted as a strategy target.
+- week and session targets are omitted from this reveal.
+- onboarding intent, chosen training options, access, and avoidances define the strategy's modality path.
+- history can size or explain matching targets, but it cannot introduce a modality, dependency, capstone, or anchor the user did not choose.
+- target rows must show a human-readable numeric target value such as a range, cadence, percentage, time delta, distance, count, or frequency; raw metric keys and anonymous numeric chips are not user-facing copy.
+- non-target labels such as review, signal, decision, check-in, stable, before skip, and next move are not valid targets.
+- target titles are compact UI labels, not explanations. They should name one computable outcome in a short phrase, with the numeric value in the pill.
+- target summaries may exist in the artifact for auditability, but the reveal renders targets as one-line measurable rows rather than title/subtitle cards.
+- generic result-count targets are not valid unless the product explicitly schedules and logs that result as a workout or in-app measurement.
+- AI proposes target concepts, titles, summaries, thresholds, and optional capstones from the target brief.
+- deterministic code validates target proposals against goal semantics, selected modalities, access, avoidances, horizon, and supported target families before mapping them to app metric keys and persisted target contracts.
+- capstones are allowed only when they naturally prove the user's goal; history alone cannot create one.
 
 ## Screen Composition
 
-Recommended screen order:
+Phased branches are split across two onboarding screens to keep the reveal readable.
+
+Recommended strategy screen order:
 
 1. intro
-2. `strategy_read`
-3. `strategy_pillars`
-4. `phase_outline` or `operating_rhythm`
-5. `strategy_targets`
+2. strategy snapshot
+3. coach verdict
+4. goal context
+5. why this fits you
+6. what HAYF will protect
+7. strategy targets
+8. operating rhythm for consistency goals
+
+Recommended phase screen order:
+
+1. phase intro
+2. phase outline with compact phase targets
+3. bridge to Plan explaining that weekly targets come next
 
 Recommended CTA:
 
-- primary: `Accept strategy`
+- strategy screen, phased branch: `Review phases`
+- phase screen and consistency strategy screen: `Accept strategy`
 - secondary: `Review Athlete Blueprint`
 
-The CTA should lead directly into the first two-week Plan experience. Do not insert another conceptual screen between Strategy and Plan.
+The final CTA should lead directly into the first two-week Plan experience.
 
 ## Later In-App Reuse
 
