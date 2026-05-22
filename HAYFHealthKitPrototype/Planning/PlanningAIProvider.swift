@@ -174,6 +174,18 @@ struct PlanningAIProvider {
         return response.output
     }
 
+    func createRepairProposalForPendingEdits(windowStart: Date? = nil) async throws -> PlanningEditOutcome {
+        let response: PlanningEditOutcomeFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .createRepairProposalForPendingEdits,
+                deviceTimezone: TimeZone.current.identifier,
+                windowStart: windowStart.map(Self.dateOnlyFormatter.string(from:))
+            )
+        )
+
+        return response.output
+    }
+
     func recordWeeklyPlanConstraint(
         weeklyPlanID: UUID,
         scheduledDate: Date,
@@ -530,6 +542,7 @@ enum PlanningAITask: String, Codable {
     case replaceWorkout = "replace_workout"
     case addWorkout = "add_workout"
     case createRepairProposalForRecentEdit = "create_repair_proposal_for_recent_edit"
+    case createRepairProposalForPendingEdits = "create_repair_proposal_for_pending_edits"
     case applyReplanProposal = "apply_replan_proposal"
     case checkInToWorkout = "check_in_to_workout"
     case scheduledRefreshDueWindows = "scheduled_refresh_due_windows"

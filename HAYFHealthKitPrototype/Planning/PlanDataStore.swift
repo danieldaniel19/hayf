@@ -692,6 +692,7 @@ struct PlanReplanProposal: Decodable, Identifiable {
     let triggerEventID: UUID?
     let reason: String
     let proposedMutations: JSONValue
+    let metadata: JSONValue?
     let status: String
     let createdAt: String
     let updatedAt: String
@@ -705,6 +706,7 @@ struct PlanReplanProposal: Decodable, Identifiable {
         case triggerEventID = "trigger_event_id"
         case reason
         case proposedMutations = "proposed_mutations_json"
+        case metadata = "metadata_json"
         case status
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -717,6 +719,10 @@ struct PlanReplanProposal: Decodable, Identifiable {
 
         return 0
     }
+}
+
+struct PlanPendingReview: Equatable {
+    let editCount: Int
 }
 
 enum PlanWorkoutStatus: String, Decodable {

@@ -15,6 +15,7 @@ type PlanningTask =
   | "replace_workout"
   | "add_workout"
   | "create_repair_proposal_for_recent_edit"
+  | "create_repair_proposal_for_pending_edits"
   | "apply_replan_proposal"
   | "check_in_to_workout"
   | "scheduled_refresh_due_windows";
@@ -76,6 +77,9 @@ type ActualWorkoutInput = {
   distance_kilometers?: number | null;
   energy_kilocalories?: number | null;
   load_value?: number | null;
+  average_heart_rate_bpm?: number | null;
+  max_heart_rate_bpm?: number | null;
+  heart_rate_samples?: Array<{ offset_seconds?: number; bpm?: number }> | null;
 };
 
 type PlanEditInput =
@@ -244,6 +248,15 @@ type EditRepairPlan = {
 type PlanEditRepairDraft = {
   reason: string;
   summary: string;
+};
+
+type PendingPlanReviewDraft = {
+  reviewNeeded: boolean;
+  reason: string | null;
+  summary: string | null;
+  confidence: "low" | "medium" | "high";
+  notes: string | null;
+  mutations: Array<Record<string, unknown>>;
 };
 
 const corsHeaders = {
@@ -449,6 +462,68 @@ const editRepairSchema: Record<string, unknown> = {
   },
 };
 
+const pendingPlanReviewSchema: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reviewNeeded", "reason", "summary", "confidence", "notes", "mutations"],
+  properties: {
+    reviewNeeded: { type: "boolean" },
+    reason: { type: ["string", "null"] },
+    summary: { type: ["string", "null"] },
+    confidence: { type: "string", enum: ["low", "medium", "high"] },
+    notes: { type: ["string", "null"] },
+    mutations: {
+      type: "array",
+      maxItems: 4,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["type", "workout_id", "fields"],
+        properties: {
+          type: { type: "string", enum: ["create_workout", "update_workout", "delete_workout"] },
+          workout_id: { type: ["string", "null"] },
+          fields: {
+            type: ["object", "null"],
+            additionalProperties: false,
+            required: [
+              "scheduled_date",
+              "sequence_order",
+              "activity_type",
+              "title",
+              "duration_minutes",
+              "intensity_label",
+              "purpose",
+              "prescription_json",
+              "fueling_summary",
+            ],
+            properties: {
+              scheduled_date: { type: ["string", "null"] },
+              sequence_order: { type: ["integer", "null"] },
+              activity_type: { type: ["string", "null"] },
+              title: { type: ["string", "null"] },
+              duration_minutes: { type: ["integer", "null"] },
+              intensity_label: { type: ["string", "null"] },
+              purpose: { type: ["string", "null"] },
+              prescription_json: {
+                type: ["object", "null"],
+                additionalProperties: false,
+                required: ["warmup", "main", "cooldown", "successCriteria"],
+                properties: {
+                  warmup: { type: ["string", "null"] },
+                  main: { type: ["string", "null"] },
+                  cooldown: { type: ["string", "null"] },
+                  successCriteria: { type: ["string", "null"] },
+                },
+              },
+              fueling_summary: { type: ["string", "null"] },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 const replacementSchema: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
@@ -490,8 +565,8 @@ const replacementSchema: Record<string, unknown> = {
             },
           },
           fuelingSummary: { type: "string" },
-          rationale: { type: "string" },
-          weeklyImpact: { type: "string" },
+          rationale: { type: "string", maxLength: 96 },
+          weeklyImpact: { type: "string", maxLength: 96 },
         },
       },
     },
@@ -535,8 +610,8 @@ const workoutCandidateSchema: Record<string, unknown> = {
           },
         },
         fuelingSummary: { type: "string" },
-        rationale: { type: "string" },
-        weeklyImpact: { type: "string" },
+        rationale: { type: "string", maxLength: 96 },
+        weeklyImpact: { type: "string", maxLength: 96 },
       },
     },
   },
@@ -653,6 +728,8 @@ async function handleTask(args: {
       return addWorkout(admin, userID!, requestBody, model);
     case "create_repair_proposal_for_recent_edit":
       return createRepairProposalForRecentEdit(admin, userID!, requestBody, model);
+    case "create_repair_proposal_for_pending_edits":
+      return createRepairProposalForPendingEdits(admin, userID!, requestBody, model);
     case "apply_replan_proposal":
       return applyReplanProposal(admin, userID!, requestBody);
     case "check_in_to_workout":
@@ -861,6 +938,9 @@ async function syncHealthKitAndReconcile(
             distance_kilometers: actual.distance_kilometers ?? null,
             energy_kilocalories: actual.energy_kilocalories ?? null,
             load_value: actual.load_value ?? null,
+            average_heart_rate_bpm: actual.average_heart_rate_bpm ?? null,
+            max_heart_rate_bpm: actual.max_heart_rate_bpm ?? null,
+            heart_rate_samples_json: actual.heart_rate_samples ?? [],
           },
           { onConflict: "user_id,healthkit_uuid" },
         )
@@ -1277,7 +1357,7 @@ async function recordPlanEdit(
 
   const repairPolicy = requestedRepairPolicy(requestBody);
   const repair = repairPolicy === "deferred"
-    ? await buildPlanEditReviewHint(admin, userID, scope, workout, edit, requestBody.deviceTimezone || scope.timezone || "UTC")
+    ? null
     : await buildPlanEditRepair(admin, userID, scope, workout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
     ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
@@ -1371,6 +1451,8 @@ async function recordWeeklyPlanConstraint(
     eventType: "weekly_plan_constraint_recorded",
     payload: { scheduledDate, kind, hasNote: Boolean(note) },
   });
+
+  await expirePendingReplanProposals(admin, userID, scope.strategy.id);
 
   return {
     userID,
@@ -2460,7 +2542,7 @@ async function replaceWorkout(
   };
   const repairPolicy = requestedRepairPolicy(requestBody);
   const repair = repairPolicy === "deferred"
-    ? await buildPlanEditReviewHint(admin, userID, scope, workout, edit, requestBody.deviceTimezone || scope.timezone || "UTC")
+    ? null
     : await buildPlanEditRepair(admin, userID, scope, workout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
     ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
@@ -2566,7 +2648,7 @@ async function addWorkout(
   };
   const repairPolicy = requestedRepairPolicy(requestBody);
   const repair = repairPolicy === "deferred"
-    ? await buildPlanEditReviewHint(admin, userID, scope, addedWorkout, edit, requestBody.deviceTimezone || scope.timezone || "UTC")
+    ? null
     : await buildPlanEditRepair(admin, userID, scope, addedWorkout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
     ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
@@ -2716,6 +2798,212 @@ async function createRepairProposalForRecentEdit(
   };
 }
 
+async function createRepairProposalForPendingEdits(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const scope = await loadActivePlanningScope(admin, userID);
+  const timezone = requestBody.deviceTimezone || scope.timezone || "UTC";
+  const start = parseDateOnly(requestBody.windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
+  const window = twoWeekWindow(start);
+  const weeklyPlans = (await visibleWeeklyPlans(admin, userID, scope.strategy.id, window))
+    .filter((plan: Record<string, any>) => plan.status === "committed" || plan.status === "draft");
+  const weeklyPlanIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+
+  if (weeklyPlanIDs.length === 0) {
+    return { userID, model: "deterministic", reviewed: false, pendingEditCount: 0, proposalID: null, proposal: null };
+  }
+
+  const pendingProposal = await maybeSingle(
+    admin
+      .from("replan_proposals")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", scope.strategy.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1),
+  );
+  if (pendingProposal && Array.isArray(pendingProposal.proposed_mutations_json) && pendingProposal.proposed_mutations_json.length > 0) {
+    return {
+      userID,
+      model: "deterministic",
+      reviewed: false,
+      pendingEditCount: 0,
+      proposalID: pendingProposal.id,
+      proposal: proposalResponse(pendingProposal),
+    };
+  }
+
+  const checkpoint = await latestPlanReviewCheckpoint(admin, userID, scope.strategy.id);
+  let eventQuery = admin
+    .from("plan_events")
+    .select()
+    .eq("user_id", userID)
+    .eq("fitness_strategy_id", scope.strategy.id)
+    .in("weekly_plan_id", weeklyPlanIDs)
+    .in("event_type", pendingReviewEditEventTypes())
+    .order("created_at", { ascending: true })
+    .limit(50);
+  if (checkpoint?.created_at) {
+    eventQuery = eventQuery.gt("created_at", checkpoint.created_at);
+  }
+  const pendingEvents = await list(eventQuery);
+
+  if (pendingEvents.length === 0) {
+    return { userID, model: "deterministic", reviewed: false, pendingEditCount: 0, proposalID: null, proposal: null };
+  }
+
+  const [workouts, goalTargets] = await Promise.all([
+    list(
+      admin
+        .from("planned_workouts")
+        .select()
+        .eq("user_id", userID)
+        .in("weekly_plan_id", weeklyPlanIDs)
+        .gte("scheduled_date", window.start)
+        .lte("scheduled_date", window.end)
+        .in("status", ["planned", "current", "checked_in", "adjusted", "done"])
+        .order("scheduled_date", { ascending: true })
+        .order("sequence_order", { ascending: true }),
+    ),
+    list(
+      admin
+        .from("planning_targets")
+        .select("id,target_scope,weekly_plan_id,target_kind,title,description,metric_key,metric_category,evaluation_rule_json,status")
+        .eq("user_id", userID)
+        .eq("fitness_strategy_id", scope.strategy.id)
+        .in("status", ["on_track", "lagging", "needs_review"]),
+    ),
+  ]);
+
+  const today = todayInTimezone(timezone);
+  const reviewContext = {
+      strategy: {
+        id: scope.strategy.id,
+        title: scope.strategy.title,
+        summary: scope.strategy.summary,
+        rationale: scope.strategy.rationale,
+        context: scope.strategy.context_json ?? {},
+      },
+      goal: scope.goal,
+      window,
+      today: isoDate(today),
+      weeklyPlans: weeklyPlans.map(compactWeeklyPlanForReview),
+      workouts: workouts.map(compactWorkoutForReview),
+      targets: goalTargets,
+      pendingEvents: pendingEvents.map(compactPlanEventForReview),
+      rules: [
+        "The user's edits are facts. Do not revert moved, deleted, replaced, added, or availability changes.",
+        "Only propose small surrounding adjustments needed to keep the committed/draft window aligned with the strategy.",
+        "Do not create, update, move, or delete workouts before today. If the best theoretical repair is in the past, choose a today/future repair or return no mutations.",
+        "Return no mutations when the edited plan is acceptable.",
+        "Use at most four mutations.",
+      ],
+  };
+  let draft = await runPendingPlanReview(reviewContext, model);
+
+  const reviewedEventIDs = pendingEvents.map((event: Record<string, any>) => event.id);
+  const protectedWorkoutIDs = protectedWorkoutIDsFromEvents(pendingEvents);
+  let mutations: Array<Record<string, unknown>>;
+  try {
+    mutations = validatePendingPlanReviewMutations({
+      draft,
+      weeklyPlans,
+      workouts,
+      protectedWorkoutIDs,
+      window,
+      timezone,
+    });
+  } catch (error) {
+    draft = await runPendingPlanReview(
+      {
+        ...reviewContext,
+        validationError: errorMessage(error),
+        correctionRules: [
+          "Return a corrected proposal that satisfies the validation error.",
+          "Never schedule or mutate workouts before today.",
+          "If no valid today/future repair exists, set reviewNeeded false and return no mutations.",
+        ],
+      },
+      model,
+    );
+    mutations = validatePendingPlanReviewMutations({
+      draft,
+      weeklyPlans,
+      workouts,
+      protectedWorkoutIDs,
+      window,
+      timezone,
+    });
+  }
+
+  if (draft.reviewNeeded && draft.mutations.length > 0 && mutations.length === 0) {
+    throw new Error("Plan review proposed an adjustment, but it did not produce an actionable mutation. Try review again.");
+  }
+
+  if (!draft.reviewNeeded || mutations.length === 0) {
+    const event = await createPlanEvent(admin, {
+      userID,
+      fitnessStrategyID: scope.strategy.id,
+      eventType: "plan_review_completed",
+      payload: {
+        window,
+        reviewedEventIDs,
+        editCount: pendingEvents.length,
+        reason: draft.reason,
+        summary: draft.summary,
+        confidence: draft.confidence,
+        notes: draft.notes,
+        mutationCount: 0,
+      },
+    });
+    return {
+      userID,
+      model,
+      reviewed: true,
+      pendingEditCount: pendingEvents.length,
+      eventID: event.id,
+      proposalID: null,
+      proposal: null,
+      reason: draft.reason,
+      summary: draft.summary,
+      mutationCount: 0,
+    };
+  }
+
+  const proposal = await createReplanProposal(admin, {
+    userID,
+    fitnessStrategyID: scope.strategy.id,
+    triggerEventID: pendingEvents[pendingEvents.length - 1]?.id ?? null,
+    reason: draft.reason?.trim() || "HAYF found a few adjustments to keep this plan aligned.",
+    mutations,
+    metadata: {
+      type: "pending_plan_edit_review",
+      window,
+      reviewedEventIDs,
+      editCount: pendingEvents.length,
+      summary: draft.summary,
+      confidence: draft.confidence,
+      notes: draft.notes,
+    },
+  });
+
+  return {
+    userID,
+    model,
+    reviewed: true,
+    pendingEditCount: pendingEvents.length,
+    proposalID: proposal.id,
+    reason: proposal.reason,
+    summary: draft.summary,
+    mutationCount: mutations.length,
+    proposal: proposalResponse(proposal),
+  };
+}
+
 async function reconstructPlanEditFromEvent(
   admin: SupabaseAdminClient,
   userID: string,
@@ -2791,6 +3079,347 @@ async function reconstructPlanEditFromEvent(
   }
 
   throw new Error("Only recent workout edit events can create a repair proposal");
+}
+
+function pendingReviewEditEventTypes() {
+  return ["workout_moved", "workout_deleted", "workout_added", "weekly_plan_constraint_recorded"];
+}
+
+async function latestPlanReviewCheckpoint(admin: SupabaseAdminClient, userID: string, strategyID: string) {
+  return maybeSingle(
+    admin
+      .from("plan_events")
+      .select("id,event_type,created_at")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .in("event_type", ["proposal_created", "proposal_accepted", "proposal_rejected", "plan_review_completed"])
+      .order("created_at", { ascending: false })
+      .limit(1),
+  );
+}
+
+function compactWeeklyPlanForReview(plan: Record<string, any>) {
+  return {
+    id: plan.id,
+    weekStartDate: plan.week_start_date,
+    weekEndDate: plan.week_end_date,
+    status: plan.status,
+    objective: plan.objective,
+    rhythm: plan.rhythm_json ?? {},
+    constraints: plan.constraints_json ?? {},
+  };
+}
+
+function compactWorkoutForReview(workout: Record<string, any>) {
+  return {
+    ...compactWorkoutForRepair(workout),
+    weeklyPlanID: workout.weekly_plan_id ?? null,
+    sequenceOrder: workout.sequence_order ?? null,
+    source: workout.source ?? null,
+    fuelingSummary: workout.fueling_summary ?? null,
+  };
+}
+
+function compactPlanEventForReview(event: Record<string, any>) {
+  return {
+    id: event.id,
+    type: event.event_type,
+    weeklyPlanID: event.weekly_plan_id ?? null,
+    plannedWorkoutID: event.planned_workout_id ?? null,
+    createdAt: event.created_at,
+    payload: event.payload_json ?? {},
+  };
+}
+
+function protectedWorkoutIDsFromEvents(events: Record<string, any>[]) {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (event.planned_workout_id) ids.add(String(event.planned_workout_id));
+    const payload = event.payload_json ?? {};
+    for (const key of ["originalWorkoutID", "original_workout_id", "replacementWorkoutID", "replacement_workout_id", "addedWorkoutID", "added_workout_id"]) {
+      if (payload[key]) ids.add(String(payload[key]));
+    }
+    const deletedWorkout = payload.deletedWorkout ?? payload.deleted_workout;
+    if (deletedWorkout?.id) ids.add(String(deletedWorkout.id));
+  }
+  return ids;
+}
+
+async function runPendingPlanReview(context: Record<string, unknown>, model: string): Promise<PendingPlanReviewDraft> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are HAYF's plan review coach. Review user-edited committed and draft weeks against the active fitness strategy. The user's edits are accepted facts. Propose only small surrounding workout adjustments when needed. Return strict JSON only.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "review_pending_plan_edits",
+            context,
+            mutation_contract:
+              "Allowed mutations: create_workout with workout_id null and complete fields; update_workout with workout_id and fields, using null for unchanged fields; delete_workout with workout_id and fields null. Do not mutate workouts touched by the user's pending edits. Do not schedule, update, move, or delete workouts before context.today. Return reviewNeeded false and no mutations when no valid today/future adjustment is needed.",
+          }),
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "pending_plan_review",
+          strict: true,
+          schema: pendingPlanReviewSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  const outputText = extractOutputText(payload);
+  if (!outputText) throw new Error("OpenAI returned no pending plan review output");
+  return JSON.parse(outputText) as PendingPlanReviewDraft;
+}
+
+function validatePendingPlanReviewMutations(args: {
+  draft: PendingPlanReviewDraft;
+  weeklyPlans: Record<string, any>[];
+  workouts: Record<string, any>[];
+  protectedWorkoutIDs: Set<string>;
+  window: { start: string; end: string };
+  timezone: string;
+}) {
+  const { draft, weeklyPlans, workouts, protectedWorkoutIDs, window, timezone } = args;
+  if (!draft.reviewNeeded) return [];
+  if (!Array.isArray(draft.mutations)) {
+    throw new Error("Plan review returned invalid mutations.");
+  }
+
+  const normalized: Array<Record<string, unknown>> = [];
+  for (const mutation of draft.mutations.slice(0, 4)) {
+    if (!mutation || typeof mutation !== "object") {
+      throw new Error("Plan review returned an invalid mutation.");
+    }
+    const type = String(mutation.type ?? "");
+    if (type === "create_workout") {
+      normalized.push(validateCreateWorkoutMutation(mutation, weeklyPlans, workouts, window, timezone));
+    } else if (type === "update_workout") {
+      const update = validateUpdateWorkoutMutation(mutation, weeklyPlans, workouts, protectedWorkoutIDs, window, timezone);
+      if (update) normalized.push(update);
+    } else if (type === "delete_workout") {
+      normalized.push(validateDeleteWorkoutMutation(mutation, workouts, protectedWorkoutIDs, timezone));
+    } else {
+      throw new Error(`Plan review returned unsupported mutation type: ${type}`);
+    }
+  }
+  return normalized;
+}
+
+function validateCreateWorkoutMutation(
+  mutation: Record<string, unknown>,
+  weeklyPlans: Record<string, any>[],
+  workouts: Record<string, any>[],
+  window: { start: string; end: string },
+  timezone: string,
+) {
+  const fields = plainObject(mutation.fields, "create_workout.fields");
+  const scheduledDate = requiredString(fields.scheduled_date, "create_workout scheduled_date");
+  const weeklyPlan = weeklyPlanForMutationDate(weeklyPlans, scheduledDate, window, timezone);
+  throwIfUnavailableDate(weeklyPlan, scheduledDate);
+
+  const title = requiredString(fields.title, "create_workout title");
+  const activityType = normalizeActivity(requiredString(fields.activity_type, "create_workout activity_type"));
+  const intensityLabel = requiredString(fields.intensity_label, "create_workout intensity_label");
+  const purpose = requiredString(fields.purpose, "create_workout purpose");
+  const fuelingSummary = requiredString(fields.fueling_summary, "create_workout fueling_summary");
+  const prescription = plainObject(fields.prescription_json, "create_workout prescription_json");
+  const sequenceOrder = integerOrDefault(fields.sequence_order, nextSequenceOrderForDate(workouts, scheduledDate));
+
+  return {
+    type: "create_workout",
+    fields: {
+      active_block_id: null,
+      weekly_rhythm_id: null,
+      weekly_plan_id: weeklyPlan.id,
+      scheduled_date: scheduledDate,
+      sequence_order: sequenceOrder,
+      activity_type: activityType,
+      title,
+      duration_minutes: boundedDuration(fields.duration_minutes),
+      intensity_label: intensityLabel,
+      purpose,
+      status: "planned",
+      source: "replanned",
+      prescription_json: prescription,
+      fueling_summary: fuelingSummary,
+    },
+  };
+}
+
+function validateUpdateWorkoutMutation(
+  mutation: Record<string, unknown>,
+  weeklyPlans: Record<string, any>[],
+  workouts: Record<string, any>[],
+  protectedWorkoutIDs: Set<string>,
+  window: { start: string; end: string },
+  timezone: string,
+) {
+  const workoutID = requiredString(mutation.workout_id, "update_workout workout_id");
+  if (protectedWorkoutIDs.has(workoutID)) {
+    throw new Error("Plan review tried to mutate a workout from the user's pending edits.");
+  }
+  const workout = workouts.find((item) => item.id === workoutID);
+  if (!workout) throw new Error("Plan review tried to update a workout outside the review window.");
+  if (!canMutateWorkout(workout, todayInTimezone(timezone))) {
+    throw new Error("Plan review tried to update a workout that can no longer be changed.");
+  }
+
+  const inputFields = plainObject(mutation.fields, "update_workout.fields");
+  const fields: Record<string, unknown> = {};
+  if (inputFields.scheduled_date !== undefined && inputFields.scheduled_date !== null) {
+    const scheduledDate = requiredString(inputFields.scheduled_date, "update_workout scheduled_date");
+    const weeklyPlan = weeklyPlanForMutationDate(weeklyPlans, scheduledDate, window, timezone);
+    throwIfUnavailableDate(weeklyPlan, scheduledDate);
+    fields.scheduled_date = scheduledDate;
+    fields.weekly_plan_id = weeklyPlan.id;
+    fields.sequence_order = integerOrDefault(inputFields.sequence_order, nextSequenceOrderForDate(workouts, scheduledDate));
+  } else if (inputFields.sequence_order !== undefined && inputFields.sequence_order !== null) {
+    fields.sequence_order = integerOrDefault(inputFields.sequence_order, workout.sequence_order ?? 1);
+  }
+  if (inputFields.title !== undefined && inputFields.title !== null) fields.title = requiredString(inputFields.title, "update_workout title");
+  if (inputFields.activity_type !== undefined && inputFields.activity_type !== null) fields.activity_type = normalizeActivity(requiredString(inputFields.activity_type, "update_workout activity_type"));
+  if (inputFields.duration_minutes !== undefined && inputFields.duration_minutes !== null) fields.duration_minutes = boundedDuration(inputFields.duration_minutes);
+  if (inputFields.intensity_label !== undefined && inputFields.intensity_label !== null) fields.intensity_label = requiredString(inputFields.intensity_label, "update_workout intensity_label");
+  if (inputFields.purpose !== undefined && inputFields.purpose !== null) fields.purpose = requiredString(inputFields.purpose, "update_workout purpose");
+  if (inputFields.prescription_json !== undefined && inputFields.prescription_json !== null) fields.prescription_json = plainObject(inputFields.prescription_json, "update_workout prescription_json");
+  if (inputFields.fueling_summary !== undefined && inputFields.fueling_summary !== null) fields.fueling_summary = requiredString(inputFields.fueling_summary, "update_workout fueling_summary");
+
+  fields.source = "replanned";
+  if (isNoOpWorkoutUpdate(workout, fields)) return null;
+  return {
+    type: "update_workout",
+    workout_id: workoutID,
+    workout_title: workout.title ?? null,
+    from_scheduled_date: workout.scheduled_date ?? null,
+    fields,
+  };
+}
+
+function validateDeleteWorkoutMutation(
+  mutation: Record<string, unknown>,
+  workouts: Record<string, any>[],
+  protectedWorkoutIDs: Set<string>,
+  timezone: string,
+) {
+  const workoutID = requiredString(mutation.workout_id, "delete_workout workout_id");
+  if (protectedWorkoutIDs.has(workoutID)) {
+    throw new Error("Plan review tried to delete a workout from the user's pending edits.");
+  }
+  const workout = workouts.find((item) => item.id === workoutID);
+  if (!workout) throw new Error("Plan review tried to delete a workout outside the review window.");
+  if (String(workout.source ?? "").startsWith("user_")) {
+    throw new Error("Plan review tried to delete a user-created or user-modified workout.");
+  }
+  if (!canMutateWorkout(workout, todayInTimezone(timezone))) {
+    throw new Error("Plan review tried to delete a workout that can no longer be changed.");
+  }
+  return {
+    type: "delete_workout",
+    workout_id: workoutID,
+    workout_title: workout.title ?? null,
+    from_scheduled_date: workout.scheduled_date ?? null,
+  };
+}
+
+function weeklyPlanForMutationDate(
+  weeklyPlans: Record<string, any>[],
+  scheduledDate: string,
+  window: { start: string; end: string },
+  timezone: string,
+) {
+  throwIfPastPlanningDate(scheduledDate, timezone);
+  if (scheduledDate < window.start || scheduledDate > window.end) {
+    throw new Error("Plan review tried to schedule outside the visible review window.");
+  }
+  const weeklyPlan = weeklyPlans.find((plan) => scheduledDate >= plan.week_start_date && scheduledDate <= plan.week_end_date);
+  if (!weeklyPlan) throw new Error("Plan review tried to schedule outside a committed or draft week.");
+  return weeklyPlan;
+}
+
+function throwIfUnavailableDate(weeklyPlan: Record<string, any>, scheduledDate: string) {
+  const day = weeklyPlan.constraints_json?.days?.[scheduledDate];
+  if (day?.kind === "unavailable") {
+    throw new Error("Plan review tried to schedule a workout on an unavailable day.");
+  }
+}
+
+function plainObject(value: unknown, label: string): Record<string, any> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Plan review returned invalid ${label}.`);
+  }
+  return value as Record<string, any>;
+}
+
+function requiredString(value: unknown, label: string) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) throw new Error(`Plan review returned missing ${label}.`);
+  return text;
+}
+
+function boundedDuration(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("Plan review returned invalid duration_minutes.");
+  }
+  return Math.max(10, Math.min(240, Math.round(value)));
+}
+
+function integerOrDefault(value: unknown, fallback: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.round(value));
+}
+
+function isNoOpWorkoutUpdate(workout: Record<string, any>, fields: Record<string, unknown>) {
+  const entries = Object.entries(fields).filter(([key]) => key !== "source");
+  if (entries.length === 0) return true;
+  return entries.every(([key, value]) => {
+    if (key === "duration_minutes" || key === "sequence_order") return Number(workout[key]) === Number(value);
+    if (key === "prescription_json") return JSON.stringify(workout[key] ?? {}) === JSON.stringify(value ?? {});
+    return String(workout[key] ?? "") === String(value ?? "");
+  });
+}
+
+function proposalResponse(proposal: Record<string, any>) {
+  return {
+    id: proposal.id,
+    active_block_id: proposal.active_block_id,
+    user_goal_id: proposal.user_goal_id,
+    fitness_strategy_id: proposal.fitness_strategy_id,
+    weekly_plan_id: proposal.weekly_plan_id,
+    trigger_event_id: proposal.trigger_event_id,
+    reason: proposal.reason,
+    proposed_mutations_json: proposal.proposed_mutations_json,
+    status: proposal.status,
+    created_at: proposal.created_at,
+    updated_at: proposal.updated_at,
+    metadata_json: proposal.metadata_json ?? null,
+  };
+}
+
+function isMissingMetadataJSONColumn(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  return message.includes("metadata_json") && (
+    message.includes("does not exist") ||
+    message.includes("schema cache") ||
+    message.includes("column")
+  );
 }
 
 async function checkInToWorkout(
@@ -2970,7 +3599,7 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
             task: "recommend_workout_replacements",
             context,
             rules:
-              "Return 2-3 second-best options for the same date/slot. The first candidate should usually preserve the original training purpose with less friction. Other candidates can swap modality or reduce load. Include the weekly impact in plain language. Do not move other workouts directly.",
+              "Return 2-3 second-best options for the same date/slot. Keep titles short, no em dashes; use commas or parentheses, e.g. 'short quality run, 5x2 min tempo'. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.",
           }),
         },
       ],
@@ -3020,7 +3649,7 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
             task: "recommend_workout_additions",
             context,
             rules:
-              "Return 2-3 useful options for the selected date. Prefer the option that best fits the week without forcing broader changes. Include the weekly impact in plain language. Do not move or delete other workouts directly.",
+              "Return 2-3 useful options for the selected date. Keep titles short, no em dashes; use commas or parentheses, e.g. 'short quality run, 5x2 min tempo'. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.",
           }),
         },
       ],
@@ -3070,7 +3699,7 @@ async function runWorkoutDescriptionInterpretation(context: Record<string, unkno
             task: "interpret_workout_description",
             context,
             rules:
-              "Return one candidate. If the description is sparse but clearly a workout, make a conservative candidate and explain what assumption you made in the rationale. If it replaces a planned workout, describe weekly impact relative to the original slot. If it adds to a day, describe likely load/recovery impact.",
+              "Return one compact candidate in the same format as suggestion cards. Preserve concrete distance, elevation, duration, intensity, and modality. Keep the title short, no em dashes; use commas or parentheses. Rationale and weeklyImpact must each be one short sentence under 14 words.",
           }),
         },
       ],
@@ -3129,20 +3758,53 @@ function sanitizeWorkoutCandidate(
   id: string,
 ): WorkoutCandidate {
   const activityType = normalizeActivity(candidate?.activityType || fallback.activityType || "training");
-  const intensityLabel = candidate?.intensityLabel?.trim() || fallback.intensityLabel || "Moderate";
-  const title = candidate?.title?.trim() || fallback.title || titleCase(activityType);
+  const intensityLabel = compactWorkoutText(candidate?.intensityLabel || fallback.intensityLabel || "Moderate", 28);
+  const title = compactWorkoutTitle(candidate?.title || fallback.title || titleCase(activityType), activityType);
+  const purpose = compactWorkoutText(candidate?.purpose || fallback.purpose || "Useful workout", 48);
   return {
     id,
     title,
     activityType,
     durationMinutes: Math.max(10, candidate?.durationMinutes || fallback.durationMinutes || 30),
     intensityLabel,
-    purpose: candidate?.purpose?.trim() || fallback.purpose || "Useful workout for this plan slot",
+    purpose,
     prescription: candidate?.prescription ?? fallback.prescription ?? fallbackPrescription(title, activityType, intensityLabel),
     fuelingSummary: candidate?.fuelingSummary?.trim() || fallback.fuelingSummary || fuelingSummary(activityType, intensityLabel),
-    rationale: candidate?.rationale?.trim() || fallback.rationale || "This gives the day a useful training stimulus without guessing beyond the plan.",
-    weeklyImpact: candidate?.weeklyImpact?.trim() || fallback.weeklyImpact || "HAYF will check the surrounding week after you confirm.",
+    rationale: compactWorkoutText(candidate?.rationale || fallback.rationale || "Fits the plan without adding much friction.", 96),
+    weeklyImpact: compactWorkoutText(candidate?.weeklyImpact || fallback.weeklyImpact || "Keeps the surrounding week steady.", 96),
   };
+}
+
+function compactWorkoutTitle(value: string, fallbackActivity: string) {
+  const cleaned = value
+    .replace(/[—–-]+/g, ", ")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const title = cleaned || titleCase(fallbackActivity);
+  return compactWorkoutText(sentenceCase(title), 54);
+}
+
+function compactWorkoutText(value: string, maxLength: number) {
+  const cleaned = value
+    .replace(/[—–]/g, ",")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length <= maxLength) return cleaned;
+  const words = cleaned.split(" ");
+  let output = "";
+  for (const word of words) {
+    const next = output ? `${output} ${word}` : word;
+    if (next.length > maxLength - 1) break;
+    output = next;
+  }
+  return output ? `${output.replace(/[,.]$/, "")}.` : cleaned.slice(0, maxLength - 1).trim();
+}
+
+function sentenceCase(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 
 function fallbackReplacementCandidates(workout: Record<string, any>, surroundingWorkouts: Record<string, any>[]): ReplacementCandidate[] {
@@ -3326,11 +3988,11 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
     prescription: workoutPrescription(title, activityType, intensityLabel, text),
     fuelingSummary: fuelingSummary(activityType, intensityLabel),
     rationale: sparse
-      ? `I read "${text}" as a conservative ${title.toLowerCase()} because the description is sparse.`
-      : "I translated your description into a structured workout HAYF can audit against the plan.",
+      ? "Conservative read of your note."
+      : "Structured from your description.",
     weeklyImpact: workout
-      ? "This becomes the replacement for the slot; HAYF will check whether the surrounding week needs repair."
-      : `This adds load on ${scheduledDate}; HAYF will check whether nearby sessions need spacing or dose changes.`,
+      ? "Replaces this slot; review can adjust around it."
+      : `Adds load on ${scheduledDate}; review can adjust around it.`,
   };
 }
 
@@ -5173,10 +5835,9 @@ async function findWorkoutMatch(
 
   let best: { workout: Record<string, any>; confidence: number } | null = null;
   for (const workout of candidates) {
-    const modality = modalityScore(actual.activity_type, workout.activity_type, workout.title);
-    const duration = durationScore(actual.duration_minutes, workout.duration_minutes);
-    const confidence = Number(((modality * 0.7) + (duration * 0.3)).toFixed(2));
-    if (confidence >= 0.68 && (!best || confidence > best.confidence)) {
+    const match = workoutMatchScore(actual, workout);
+    if (match && (!best || match.confidence > best.confidence)) {
+      const confidence = match.confidence;
       best = { workout, confidence };
     }
   }
@@ -5676,24 +6337,41 @@ async function createReplanProposal(
 ) {
   await expirePendingReplanProposals(admin, args.userID, args.fitnessStrategyID ?? args.activeBlockID ?? null);
 
-  const proposal = await single(
-    admin
-      .from("replan_proposals")
-      .insert({
-        user_id: args.userID,
-        active_block_id: args.activeBlockID ?? null,
-        user_goal_id: args.userGoalID ?? null,
-        fitness_strategy_id: args.fitnessStrategyID ?? null,
-        weekly_plan_id: args.weeklyPlanID ?? null,
-        trigger_event_id: args.triggerEventID ?? null,
-        reason: args.reason,
-        proposed_mutations_json: args.mutations,
-        status: "pending",
-      })
-      .select()
-      .single(),
-    "Could not create replan proposal",
-  );
+  const insertPayload = {
+    user_id: args.userID,
+    active_block_id: args.activeBlockID ?? null,
+    user_goal_id: args.userGoalID ?? null,
+    fitness_strategy_id: args.fitnessStrategyID ?? null,
+    weekly_plan_id: args.weeklyPlanID ?? null,
+    trigger_event_id: args.triggerEventID ?? null,
+    reason: args.reason,
+    proposed_mutations_json: args.mutations,
+    metadata_json: args.metadata ?? {},
+    status: "pending",
+  };
+
+  let proposal: Record<string, any>;
+  try {
+    proposal = await single(
+      admin
+        .from("replan_proposals")
+        .insert(insertPayload)
+        .select()
+        .single(),
+      "Could not create replan proposal",
+    );
+  } catch (error) {
+    if (!isMissingMetadataJSONColumn(error)) throw error;
+    const { metadata_json: _metadataJSON, ...legacyPayload } = insertPayload;
+    proposal = await single(
+      admin
+        .from("replan_proposals")
+        .insert(legacyPayload)
+        .select()
+        .single(),
+      "Could not create replan proposal",
+    );
+  }
 
   await createPlanEvent(admin, {
     userID: args.userID,
@@ -5932,6 +6610,85 @@ function durationScore(actual: number, planned: number) {
   if (delta <= 20) return 0.75;
   if (delta <= Math.max(30, planned * 0.5)) return 0.45;
   return 0;
+}
+
+function workoutMatchScore(actual: ActualWorkoutInput, workout: Record<string, any>) {
+  const plannedText = `${workout.activity_type ?? ""} ${workout.title ?? ""} ${workout.purpose ?? ""} ${workout.intensity_label ?? ""}`;
+  const modality = modalityScore(actual.activity_type, workout.activity_type, workout.title);
+  if (modality < 0.7) return null;
+
+  const duration = durationCompatibility(actual.duration_minutes, Number(workout.duration_minutes ?? 0), plannedText);
+  if (!duration.accepted) return null;
+
+  const intensity = intensityCompatibility(actual, plannedText);
+  if (!intensity.accepted) return null;
+
+  const confidence = Number(((modality * 0.45) + (duration.score * 0.35) + (intensity.score * 0.2)).toFixed(2));
+  if (confidence < 0.72) return null;
+  return { confidence };
+}
+
+function durationCompatibility(actualMinutes: number, plannedMinutes: number, plannedText: string) {
+  if (!Number.isFinite(actualMinutes) || !Number.isFinite(plannedMinutes) || plannedMinutes <= 0) {
+    return { accepted: false, score: 0 };
+  }
+
+  const activity = normalizeActivity(plannedText);
+  const ratio = actualMinutes / plannedMinutes;
+  const lowerBound = isStrengthLike(activity, plannedText)
+    ? Math.max(10, plannedMinutes * 0.45)
+    : Math.max(10, plannedMinutes * 0.55);
+  const upperBound = isStrengthLike(activity, plannedText)
+    ? plannedMinutes * 2.25
+    : plannedMinutes * 1.5;
+  if (actualMinutes < lowerBound || actualMinutes > upperBound) {
+    return { accepted: false, score: 0 };
+  }
+
+  return { accepted: true, score: durationScore(actualMinutes, plannedMinutes) };
+}
+
+function intensityCompatibility(actual: ActualWorkoutInput, plannedText: string) {
+  const planned = plannedIntensityBucket(plannedText);
+  const actualBucket = actualHeartRateIntensityBucket(actual);
+  if (!planned || !actualBucket) return { accepted: true, score: 0.8 };
+
+  if (planned === "low" && actualBucket === "high") return { accepted: false, score: 0 };
+  if (planned === "high" && actualBucket === "low") return { accepted: false, score: 0 };
+  if (planned === actualBucket) return { accepted: true, score: 1 };
+  return { accepted: true, score: 0.72 };
+}
+
+function plannedIntensityBucket(value: string): "low" | "moderate" | "high" | null {
+  const text = value.toLowerCase();
+  if (/\b(zone 4|z4|zone 5|z5|threshold|tempo|hard|vo2|interval|quality|race)\b/.test(text)) return "high";
+  if (/\b(zone 1|z1|zone 2|z2|easy|low|recovery|aerobic base|endurance)\b/.test(text)) return "low";
+  if (/\b(zone 3|z3|moderate|steady)\b/.test(text)) return "moderate";
+  return null;
+}
+
+function actualHeartRateIntensityBucket(actual: ActualWorkoutInput): "low" | "moderate" | "high" | null {
+  const average = finiteNumber(actual.average_heart_rate_bpm);
+  const max = finiteNumber(actual.max_heart_rate_bpm);
+  const sampleValues = (actual.heart_rate_samples ?? [])
+    .map((sample) => finiteNumber(sample?.bpm))
+    .filter((value): value is number => typeof value === "number");
+  const highSampleShare = sampleValues.length
+    ? sampleValues.filter((value) => value >= 160).length / sampleValues.length
+    : 0;
+
+  if ((average && average >= 155) || (max && max >= 175) || highSampleShare >= 0.25) return "high";
+  if ((average && average <= 135) && (!max || max <= 155) && highSampleShare < 0.1) return "low";
+  if (average || max || sampleValues.length) return "moderate";
+  return null;
+}
+
+function finiteNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isStrengthLike(activity: string, text: string) {
+  return activity === "strength" || /strength|lift|gym|barbell|dumbbell|kettlebell|machine/.test(text.toLowerCase());
 }
 
 function trainingProfile(workout: Record<string, any>): TrainingProfile {

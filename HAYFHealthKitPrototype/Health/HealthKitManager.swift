@@ -55,6 +55,9 @@ struct HealthActualWorkoutSummary: Codable {
     let distanceKilometers: Double?
     let energyKilocalories: Double?
     let loadValue: Double?
+    let averageHeartRateBPM: Double?
+    let maxHeartRateBPM: Double?
+    let heartRateSamples: [HealthWorkoutHeartRateSample]
 
     enum CodingKeys: String, CodingKey {
         case healthkitUUID = "healthkit_uuid"
@@ -64,6 +67,9 @@ struct HealthActualWorkoutSummary: Codable {
         case distanceKilometers = "distance_kilometers"
         case energyKilocalories = "energy_kilocalories"
         case loadValue = "load_value"
+        case averageHeartRateBPM = "average_heart_rate_bpm"
+        case maxHeartRateBPM = "max_heart_rate_bpm"
+        case heartRateSamples = "heart_rate_samples"
     }
 
     init(
@@ -73,7 +79,10 @@ struct HealthActualWorkoutSummary: Codable {
         durationMinutes: Int,
         distanceKilometers: Double?,
         energyKilocalories: Double?,
-        loadValue: Double? = nil
+        loadValue: Double? = nil,
+        averageHeartRateBPM: Double? = nil,
+        maxHeartRateBPM: Double? = nil,
+        heartRateSamples: [HealthWorkoutHeartRateSample] = []
     ) {
         self.healthkitUUID = healthkitUUID
         self.startDate = startDate
@@ -82,6 +91,9 @@ struct HealthActualWorkoutSummary: Codable {
         self.distanceKilometers = distanceKilometers
         self.energyKilocalories = energyKilocalories
         self.loadValue = loadValue
+        self.averageHeartRateBPM = averageHeartRateBPM
+        self.maxHeartRateBPM = maxHeartRateBPM
+        self.heartRateSamples = heartRateSamples
     }
 
     init(from decoder: Decoder) throws {
@@ -92,6 +104,9 @@ struct HealthActualWorkoutSummary: Codable {
         distanceKilometers = try container.decodeIfPresent(Double.self, forKey: .distanceKilometers)
         energyKilocalories = try container.decodeIfPresent(Double.self, forKey: .energyKilocalories)
         loadValue = try container.decodeIfPresent(Double.self, forKey: .loadValue)
+        averageHeartRateBPM = try container.decodeIfPresent(Double.self, forKey: .averageHeartRateBPM)
+        maxHeartRateBPM = try container.decodeIfPresent(Double.self, forKey: .maxHeartRateBPM)
+        heartRateSamples = try container.decodeIfPresent([HealthWorkoutHeartRateSample].self, forKey: .heartRateSamples) ?? []
 
         let startDateValue = try container.decode(String.self, forKey: .startDate)
         guard let parsedDate = Self.isoFormatter.date(from: startDateValue) else {
@@ -113,9 +128,24 @@ struct HealthActualWorkoutSummary: Codable {
         try container.encodeIfPresent(distanceKilometers, forKey: .distanceKilometers)
         try container.encodeIfPresent(energyKilocalories, forKey: .energyKilocalories)
         try container.encodeIfPresent(loadValue, forKey: .loadValue)
+        try container.encodeIfPresent(averageHeartRateBPM, forKey: .averageHeartRateBPM)
+        try container.encodeIfPresent(maxHeartRateBPM, forKey: .maxHeartRateBPM)
+        if !heartRateSamples.isEmpty {
+            try container.encode(heartRateSamples, forKey: .heartRateSamples)
+        }
     }
 
     private static let isoFormatter = ISO8601DateFormatter()
+}
+
+struct HealthWorkoutHeartRateSample: Codable {
+    let offsetSeconds: Int
+    let bpm: Double
+
+    enum CodingKeys: String, CodingKey {
+        case offsetSeconds = "offset_seconds"
+        case bpm
+    }
 }
 
 struct WorkoutWindowSummary: Codable, Identifiable {
@@ -597,7 +627,11 @@ final class HealthKitManager {
             sortDescriptors: [sortDescriptor]
         )
 
-        return workouts.map(actualWorkoutSummary)
+        var summaries: [HealthActualWorkoutSummary] = []
+        for workout in workouts {
+            summaries.append(await actualWorkoutSummary(workout))
+        }
+        return summaries
     }
 
     private func fetchWorkoutsSince(yearsBack: Int) async throws -> [HKWorkout] {
@@ -1179,15 +1213,71 @@ final class HealthKitManager {
         )
     }
 
-    private func actualWorkoutSummary(_ workout: HKWorkout) -> HealthActualWorkoutSummary {
-        HealthActualWorkoutSummary(
+    private func actualWorkoutSummary(_ workout: HKWorkout) async -> HealthActualWorkoutSummary {
+        let heartRate = await workoutHeartRateSummary(for: workout)
+        return HealthActualWorkoutSummary(
             healthkitUUID: workout.uuid.uuidString.lowercased(),
             startDate: workout.startDate,
             activityType: workout.workoutActivityType.displayName,
             durationMinutes: max(1, Int((workout.duration / 60).rounded())),
             distanceKilometers: distanceKilometers(for: workout),
-            energyKilocalories: energyKilocalories(for: workout)
+            energyKilocalories: energyKilocalories(for: workout),
+            averageHeartRateBPM: heartRate.averageBPM,
+            maxHeartRateBPM: heartRate.maxBPM,
+            heartRateSamples: heartRate.samples
         )
+    }
+
+    private func workoutHeartRateSummary(for workout: HKWorkout) async -> (averageBPM: Double?, maxBPM: Double?, samples: [HealthWorkoutHeartRateSample]) {
+        guard let heartRateType = HKQuantityType.quantityType(forIdentifier: .heartRate) else {
+            return (nil, nil, [])
+        }
+
+        let predicate = HKQuery.predicateForSamples(
+            withStart: workout.startDate,
+            end: workout.endDate,
+            options: [.strictStartDate, .strictEndDate]
+        )
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        let heartRateSamples: [HKQuantitySample]
+        do {
+            heartRateSamples = try await fetchSamples(
+                sampleType: heartRateType,
+                predicate: predicate,
+                sortDescriptors: [sortDescriptor]
+            )
+        } catch {
+            return (nil, nil, [])
+        }
+
+        let unit = HKUnit.count().unitDivided(by: .minute())
+        let values = heartRateSamples.map { $0.quantity.doubleValue(for: unit) }.filter { $0 > 0 }
+        guard !values.isEmpty else {
+            return (nil, nil, [])
+        }
+
+        let average = values.reduce(0, +) / Double(values.count)
+        let maxBPM = values.max()
+        let samples = downsampledHeartRateSamples(heartRateSamples, unit: unit, workoutStart: workout.startDate)
+        return (average.rounded(toPlaces: 1), maxBPM?.rounded(toPlaces: 1), samples)
+    }
+
+    private func downsampledHeartRateSamples(
+        _ samples: [HKQuantitySample],
+        unit: HKUnit,
+        workoutStart: Date
+    ) -> [HealthWorkoutHeartRateSample] {
+        guard !samples.isEmpty else { return [] }
+
+        let maxSamples = 32
+        let stride = max(1, Int(ceil(Double(samples.count) / Double(maxSamples))))
+        return samples.enumerated().compactMap { index, sample in
+            guard index % stride == 0 else { return nil }
+            return HealthWorkoutHeartRateSample(
+                offsetSeconds: max(0, Int(sample.startDate.timeIntervalSince(workoutStart).rounded())),
+                bpm: sample.quantity.doubleValue(for: unit).rounded(toPlaces: 1)
+            )
+        }
     }
 
     private func distanceKilometers(for workout: HKWorkout) -> Double? {
@@ -1779,6 +1869,11 @@ enum HealthKitError: LocalizedError {
 private extension Double {
     var nonZero: Double? {
         self > 0 ? self : nil
+    }
+
+    func rounded(toPlaces places: Int) -> Double {
+        let divisor = pow(10.0, Double(places))
+        return (self * divisor).rounded() / divisor
     }
 }
 

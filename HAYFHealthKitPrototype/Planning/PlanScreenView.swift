@@ -8,10 +8,14 @@ struct PlanScreenView: View {
     @State private var workoutPlanningContext: WorkoutPlanningContext?
     @State private var workoutCandidates: [PlanningWorkoutCandidate] = []
     @State private var isLoadingWorkoutCandidates = false
+    @State private var didFinishLoadingWorkoutCandidates = false
     @State private var workoutPlanningErrorMessage: String?
     @State private var pendingWorkoutReview: WorkoutChangeReview?
     @State private var selectedReplanProposal: PlanReplanProposal?
     @State private var isApplyingReplanProposal = false
+    @State private var isReviewingPlanChanges = false
+    @State private var pendingPlanReview: PlanPendingReview?
+    @State private var planReviewConfirmationMessage: String?
     @State private var movingWorkout: PlanWorkout?
     @State private var activeEditAnalysis: PlanEditAnalysis?
     @State private var workoutCandidateLoadID: UUID?
@@ -20,6 +24,7 @@ struct PlanScreenView: View {
     @State private var didAttemptWeeklyTargetBackfill = false
 
     private let planningAIProvider = PlanningAIProvider()
+    private let healthSyncService = HealthSyncService()
 
     let presentActiveBlockOnFirstLoad: Bool
     let onDidPresentActiveBlockOnFirstLoad: () -> Void
@@ -47,11 +52,18 @@ struct PlanScreenView: View {
                             workouts: store.workouts,
                             goalTargets: store.goalTargets,
                             goalEvaluations: store.goalEvaluations,
+                            pendingReview: pendingPlanReview,
+                            pendingProposal: store.pendingReplanProposals.first,
                             errorMessage: store.errorMessage,
+                            reviewConfirmationMessage: planReviewConfirmationMessage,
                             movingWorkout: movingWorkout,
                             isAnalyzingEdit: activeEditAnalysis != nil,
+                            isReviewingPlanChanges: isReviewingPlanChanges,
                             showTargetDetail: { target in
                                 selectedDetail = .target(target)
+                            },
+                            reviewPlanChanges: {
+                                Task { await reviewPlanChanges() }
                             },
                             moveWorkout: { workout, date, sequenceOrder in
                                 Task { await moveWorkout(workout, to: date, sequenceOrder: sequenceOrder) }
@@ -120,6 +132,7 @@ struct PlanScreenView: View {
                 context: context,
                 candidates: workoutCandidates,
                 isLoading: isLoadingWorkoutCandidates,
+                didFinishLoading: didFinishLoadingWorkoutCandidates,
                 errorMessage: workoutPlanningErrorMessage,
                 retry: {
                     loadWorkoutCandidates(for: context)
@@ -191,6 +204,7 @@ struct PlanScreenView: View {
         allowWeeklyTargetBackfill: Bool,
         forceWeeklyTargetBackfill: Bool = false
     ) async {
+        await syncImportedWorkoutsIntoPlan()
         await store.loadVisiblePlan()
         didLoad = true
 
@@ -210,6 +224,14 @@ struct PlanScreenView: View {
             print("Weekly target backfill failed: \(error.localizedDescription)")
             #endif
         }
+    }
+
+    private func syncImportedWorkoutsIntoPlan() async {
+        guard let payload = try? await healthSyncService.buildSyncPayload(daysBack: 14) else {
+            return
+        }
+
+        _ = try? await planningAIProvider.syncHealthKitAndReconcile(payload: payload)
     }
 
     private func shouldBackfillWeeklyTargets(force: Bool) -> Bool {
@@ -238,6 +260,7 @@ struct PlanScreenView: View {
     private func moveWorkout(_ workout: PlanWorkout, to date: String, sequenceOrder: Int?) async {
         guard let scheduledDate = PlanDate.date(from: date) else { return }
 
+        planReviewConfirmationMessage = nil
         activeEditAnalysis = .move
         do {
             let outcome = try await planningAIProvider.recordPlanEdit(
@@ -245,12 +268,14 @@ struct PlanScreenView: View {
                     plannedWorkoutID: workout.id,
                     scheduledDate: scheduledDate,
                     sequenceOrder: sequenceOrder
-                )
+                ),
+                repairPolicy: .deferred
             )
             await store.loadVisiblePlan()
             movingWorkout = nil
             activeEditAnalysis = nil
-            presentReplanProposal(from: outcome)
+            _ = outcome
+            markPlanReviewPending()
         } catch {
             activeEditAnalysis = nil
             store.errorMessage = error.localizedDescription
@@ -268,17 +293,20 @@ struct PlanScreenView: View {
     }
 
     private func deleteWorkout(_ workout: PlanWorkout) async {
+        planReviewConfirmationMessage = nil
         activeEditAnalysis = .delete
         do {
             let outcome = try await planningAIProvider.recordPlanEdit(
-                .deleteWorkout(plannedWorkoutID: workout.id)
+                .deleteWorkout(plannedWorkoutID: workout.id),
+                repairPolicy: .deferred
             )
             await store.loadVisiblePlan()
             activeEditAnalysis = nil
             if movingWorkout?.id == workout.id {
                 movingWorkout = nil
             }
-            presentReplanProposal(from: outcome)
+            _ = outcome
+            markPlanReviewPending()
         } catch {
             activeEditAnalysis = nil
             store.errorMessage = error.localizedDescription
@@ -286,10 +314,11 @@ struct PlanScreenView: View {
     }
 
     private func showWorkoutPlanning(_ context: WorkoutPlanningContext) {
-        workoutPlanningContext = context
         workoutCandidates = []
         workoutPlanningErrorMessage = nil
         isLoadingWorkoutCandidates = true
+        didFinishLoadingWorkoutCandidates = false
+        workoutPlanningContext = context
         loadWorkoutCandidates(for: context)
     }
 
@@ -299,6 +328,7 @@ struct PlanScreenView: View {
         workoutCandidates = []
         workoutPlanningErrorMessage = nil
         isLoadingWorkoutCandidates = true
+        didFinishLoadingWorkoutCandidates = false
 
         Task {
             do {
@@ -326,10 +356,12 @@ struct PlanScreenView: View {
                 guard workoutCandidateLoadID == loadID, workoutPlanningContext?.id == context.id else { return }
                 workoutCandidates = loadedCandidates
                 isLoadingWorkoutCandidates = false
+                didFinishLoadingWorkoutCandidates = true
             } catch {
                 guard workoutCandidateLoadID == loadID, workoutPlanningContext?.id == context.id else { return }
                 workoutPlanningErrorMessage = error.localizedDescription
                 isLoadingWorkoutCandidates = false
+                didFinishLoadingWorkoutCandidates = true
             }
         }
     }
@@ -371,21 +403,25 @@ struct PlanScreenView: View {
         workoutPlanningContext = nil
         workoutCandidates = []
         workoutPlanningErrorMessage = nil
+        didFinishLoadingWorkoutCandidates = false
 
         switch context.mode {
         case let .replace(workout):
+            planReviewConfirmationMessage = nil
             activeEditAnalysis = .replace
             do {
                 let outcome = try await planningAIProvider.replaceWorkout(
                     plannedWorkoutID: workout.id,
-                    candidate: candidate
+                    candidate: candidate,
+                    repairPolicy: .deferred
                 )
                 await store.loadVisiblePlan()
                 activeEditAnalysis = nil
                 if movingWorkout?.id == workout.id {
                     movingWorkout = nil
                 }
-                presentReplanProposal(from: outcome)
+                _ = outcome
+                markPlanReviewPending()
             } catch {
                 activeEditAnalysis = nil
                 workoutPlanningErrorMessage = error.localizedDescription
@@ -397,21 +433,52 @@ struct PlanScreenView: View {
                 workoutPlanningContext = context
                 return
             }
+            planReviewConfirmationMessage = nil
             activeEditAnalysis = .add
             do {
                 let outcome = try await planningAIProvider.addWorkout(
                     scheduledDate: scheduledDate,
                     sequenceOrder: sequenceOrder,
-                    candidate: candidate
+                    candidate: candidate,
+                    repairPolicy: .deferred
                 )
                 await store.loadVisiblePlan()
                 activeEditAnalysis = nil
-                presentReplanProposal(from: outcome)
+                _ = outcome
+                markPlanReviewPending()
             } catch {
                 activeEditAnalysis = nil
                 workoutPlanningErrorMessage = error.localizedDescription
                 workoutPlanningContext = context
             }
+        }
+    }
+
+    private func reviewPlanChanges() async {
+        if let proposal = store.pendingReplanProposals.first {
+            selectedReplanProposal = proposal
+            return
+        }
+
+        guard pendingPlanReview != nil else { return }
+
+        isReviewingPlanChanges = true
+        planReviewConfirmationMessage = nil
+        defer { isReviewingPlanChanges = false }
+
+        do {
+            let outcome = try await planningAIProvider.createRepairProposalForPendingEdits()
+            await store.loadVisiblePlan()
+            if let proposal = outcome.proposal, proposal.mutationCount > 0 {
+                selectedReplanProposal = proposal
+            } else if let proposal = store.pendingReplanProposals.first {
+                selectedReplanProposal = proposal
+            } else {
+                pendingPlanReview = nil
+                planReviewConfirmationMessage = "HAYF reviewed your changes. No adjustment needed."
+            }
+        } catch {
+            store.errorMessage = error.localizedDescription
         }
     }
 
@@ -435,6 +502,8 @@ struct PlanScreenView: View {
         do {
             _ = try await planningAIProvider.applyReplanProposal(proposalID: proposal.id, decision: decision)
             selectedReplanProposal = nil
+            pendingPlanReview = nil
+            planReviewConfirmationMessage = nil
             await store.loadVisiblePlan()
         } catch {
             store.errorMessage = error.localizedDescription
@@ -465,6 +534,7 @@ struct PlanScreenView: View {
         }
 
         isSavingConstraint = true
+        planReviewConfirmationMessage = nil
         defer { isSavingConstraint = false }
 
         do {
@@ -476,9 +546,15 @@ struct PlanScreenView: View {
             )
             selectedConstraintDay = nil
             await store.loadVisiblePlan()
+            markPlanReviewPending()
         } catch {
             store.errorMessage = error.localizedDescription
         }
+    }
+
+    private func markPlanReviewPending() {
+        let nextCount = (pendingPlanReview?.editCount ?? 0) + 1
+        pendingPlanReview = PlanPendingReview(editCount: nextCount)
     }
 }
 
@@ -504,13 +580,13 @@ private enum PlanEditAnalysis: Identifiable {
     var message: String {
         switch self {
         case .move:
-            return "HAYF is checking the new slot"
+            return "Saving the new slot"
         case .delete:
-            return "HAYF is checking the week"
+            return "Saving the change"
         case .replace:
-            return "HAYF is checking the swap"
+            return "Saving the swap"
         case .add:
-            return "HAYF is checking the added workout"
+            return "Saving the added workout"
         }
     }
 }
@@ -629,7 +705,7 @@ private struct PlanEditAnalysisOverlay: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.22)
+            Color.black.opacity(0.08)
                 .ignoresSafeArea()
 
             VStack(spacing: 14) {
@@ -662,10 +738,15 @@ private struct PlanContentView: View {
     let workouts: [PlanWorkout]
     let goalTargets: [PlanGoalTarget]
     let goalEvaluations: [PlanGoalEvaluation]
+    let pendingReview: PlanPendingReview?
+    let pendingProposal: PlanReplanProposal?
     let errorMessage: String?
+    let reviewConfirmationMessage: String?
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
+    let isReviewingPlanChanges: Bool
     let showTargetDetail: (PlanGoalTarget) -> Void
+    let reviewPlanChanges: () -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
     let cancelMoveWorkout: () -> Void
@@ -683,9 +764,14 @@ private struct PlanContentView: View {
                     workouts: workouts,
                     targets: goalTargets,
                     evaluations: goalEvaluations,
+                    pendingReview: pendingReview,
+                    pendingProposal: pendingProposal,
+                    reviewConfirmationMessage: reviewConfirmationMessage,
                     movingWorkout: movingWorkout,
                     isAnalyzingEdit: isAnalyzingEdit,
+                    isReviewingPlanChanges: isReviewingPlanChanges,
                     showTargetDetail: showTargetDetail,
+                    reviewPlanChanges: reviewPlanChanges,
                     moveWorkout: moveWorkout,
                     beginMoveWorkout: beginMoveWorkout,
                     cancelMoveWorkout: cancelMoveWorkout,
@@ -1112,9 +1198,14 @@ private struct PlanWorkoutsPanel: View {
     let workouts: [PlanWorkout]
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
+    let pendingReview: PlanPendingReview?
+    let pendingProposal: PlanReplanProposal?
+    let reviewConfirmationMessage: String?
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
+    let isReviewingPlanChanges: Bool
     let showTargetDetail: (PlanGoalTarget) -> Void
+    let reviewPlanChanges: () -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
     let cancelMoveWorkout: () -> Void
@@ -1126,6 +1217,19 @@ private struct PlanWorkoutsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 0) {
+                if pendingProposal != nil || pendingReview != nil {
+                    PlanReviewChangesCTA(
+                        pendingReview: pendingReview,
+                        pendingProposal: pendingProposal,
+                        isReviewing: isReviewingPlanChanges,
+                        review: reviewPlanChanges
+                    )
+                    .padding(.bottom, 14)
+                } else if let reviewConfirmationMessage {
+                    PlanReviewConfirmationRow(message: reviewConfirmationMessage)
+                        .padding(.bottom, 14)
+                }
+
                 if let movingWorkout {
                     PlanMoveCue(workout: movingWorkout, cancel: cancelMoveWorkout)
                         .padding(.bottom, 14)
@@ -1202,6 +1306,112 @@ private struct PlanWorkoutsPanel: View {
                 weekStatus: weekRhythm?.status,
                 constraint: weekRhythm?.constraint(for: date)
             )
+        }
+    }
+}
+
+private struct PlanReviewChangesCTA: View {
+    let pendingReview: PlanPendingReview?
+    let pendingProposal: PlanReplanProposal?
+    let isReviewing: Bool
+    let review: () -> Void
+
+    var body: some View {
+        Button(action: review) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(HAYFColor.orange.opacity(0.12))
+
+                    if isReviewing {
+                        ProgressView()
+                            .scaleEffect(0.72)
+                            .tint(HAYFColor.orange)
+                    } else {
+                        Image(systemName: "wand.and.stars")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(HAYFColor.orange)
+                    }
+                }
+                .frame(width: 32, height: 32)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(HAYFColor.muted)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.neutral)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(HAYFColor.orange.opacity(0.28), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isReviewing)
+        .accessibilityLabel(title)
+    }
+
+    private var title: String {
+        if pendingProposal != nil {
+            return "Review proposed adjustment"
+        }
+
+        return "Review changes"
+    }
+
+    private var subtitle: String {
+        if let pendingProposal {
+            return pendingProposal.reason
+        }
+
+        let count = pendingReview?.editCount ?? 0
+        if count == 1 {
+            return "Ask HAYF to check this edit against the strategy."
+        }
+
+        return "Ask HAYF to check \(count) edits against the strategy."
+    }
+}
+
+private struct PlanReviewConfirmationRow: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 32, height: 32)
+
+            Text(message)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(HAYFColor.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.neutral)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
         }
     }
 }
@@ -2139,6 +2349,7 @@ private struct WorkoutPlanningSheet: View {
     let context: WorkoutPlanningContext
     let candidates: [PlanningWorkoutCandidate]
     let isLoading: Bool
+    let didFinishLoading: Bool
     let errorMessage: String?
     let retry: () -> Void
     let interpretManualWorkout: (String) async throws -> PlanningWorkoutCandidate
@@ -2168,7 +2379,7 @@ private struct WorkoutPlanningSheet: View {
                     reviewCandidate: reviewCandidate
                 )
 
-                if isLoading {
+                if isLoading || (!didFinishLoading && candidates.isEmpty && errorMessage == nil) {
                     WorkoutPlanningLoadingView(messages: context.loadingMessages)
                 } else if let errorMessage {
                     VStack(alignment: .leading, spacing: 12) {
@@ -2383,15 +2594,15 @@ private struct WorkoutCandidateCard: View {
                         .clipShape(Circle())
                 }
 
-                Text(candidate.rationale)
+                Text(compact(candidate.rationale))
                     .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2)
 
-                Text(candidate.weeklyImpact)
+                Text(compact(candidate.weeklyImpact))
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(HAYFColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2406,7 +2617,20 @@ private struct WorkoutCandidateCard: View {
     }
 
     private var metadata: String {
-        "\(candidate.durationMinutes) min / \(candidate.intensityLabel) / \(candidate.purpose)"
+        "\(candidate.durationMinutes) min / \(candidate.intensityLabel) / \(compact(candidate.purpose, limit: 28))"
+    }
+
+    private func compact(_ value: String, limit: Int = 96) -> String {
+        let cleaned = value
+            .replacingOccurrences(of: "—", with: ",")
+            .replacingOccurrences(of: "–", with: ",")
+            .replacingOccurrences(of: #"\\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard cleaned.count > limit else { return cleaned }
+        let prefix = cleaned.prefix(limit)
+        let split = prefix.lastIndex(of: " ") ?? prefix.endIndex
+        return String(prefix[..<split]).trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)) + "."
     }
 }
 
