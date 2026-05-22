@@ -36,7 +36,8 @@ struct AuthenticatedHomeView: View {
             ProfileScreenView(
                 accountProfile: accountProfile,
                 userEmail: userEmail,
-                openSettings: restartAccountCreation,
+                editProfile: restartAccountCreation,
+                reviewGoal: restartOnboarding,
                 signOut: signOut
             )
             .tabItem {

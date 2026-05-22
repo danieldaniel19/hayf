@@ -387,7 +387,8 @@ struct PlanActiveFitnessBlock: Identifiable {
             dataFreshness: nil,
             timezone: strategy.context.timezone ?? TimeZone.current.identifier,
             acceptedAt: strategy.context.acceptedAt,
-            planOwnerStartDate: strategy.context.planOwnerStartDate
+            planOwnerStartDate: strategy.context.planOwnerStartDate,
+            acceptedStrategy: strategy.context.acceptedStrategy
             )
         )
     }
@@ -407,6 +408,7 @@ struct PlanBlockContext: Decodable {
     let timezone: String?
     let acceptedAt: String?
     let planOwnerStartDate: String?
+    let acceptedStrategy: JSONValue?
 }
 
 struct PlanFitnessBlockPhase: Decodable, Identifiable {
@@ -524,10 +526,12 @@ struct PlanWorkout: Decodable, Identifiable {
 }
 
 struct PlanGoalTarget: Decodable, Identifiable {
-    static let selectColumns = "id, fitness_strategy_id, weekly_plan_id, target_scope, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at"
+    static let selectColumns = "id, user_goal_id, fitness_strategy_id, fitness_strategy_phase_id, weekly_plan_id, target_scope, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at"
 
     let id: UUID
+    let activeGoalID: UUID?
     let activeBlockID: UUID?
+    let activePhaseID: UUID?
     let weeklyPlanID: UUID?
     let targetScope: PlanTargetScope?
     let parentGoalTargetID: UUID?
@@ -548,7 +552,9 @@ struct PlanGoalTarget: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case activeGoalID = "user_goal_id"
         case activeBlockID = "fitness_strategy_id"
+        case activePhaseID = "fitness_strategy_phase_id"
         case weeklyPlanID = "weekly_plan_id"
         case targetScope = "target_scope"
         case parentGoalTargetID = "parent_goal_target_id"

@@ -3,7 +3,8 @@ import SwiftUI
 struct ProfileScreenView: View {
     let accountProfile: StoredAccountProfile
     let userEmail: String?
-    let openSettings: () -> Void
+    let editProfile: () -> Void
+    let reviewGoal: () -> Void
     let signOut: () -> Void
 
     @StateObject private var store = ProfileDataStore()
@@ -29,25 +30,22 @@ struct ProfileScreenView: View {
                         profile: accountProfile,
                         profilePhotoURL: profilePhotoURL,
                         userEmail: userEmail,
-                        openSettings: openSettings
+                        editProfile: editProfile
                     )
 
-                    CurrentGoalCard(
+                    CurrentStrategyCard(
                         block: store.activeBlock,
-                        primaryTarget: primaryTarget,
-                        evaluation: primaryEvaluation,
+                        strategy: acceptedStrategy,
+                        targets: strategyTargets,
+                        phases: store.phases,
                         isLoading: store.isLoading && !didLoad,
-                        openDetail: {
-                            selectedDetail = .currentGoal
-                        }
+                        openDetail: { selectedDetail = .currentStrategy }
                     )
 
-                    FitnessProfileCard(
-                        insights: store.historyInsights,
+                    AthleteBlueprintCard(
+                        blueprint: store.athleteBlueprint,
                         isLoading: store.isLoading && !didLoad,
-                        openDetail: {
-                            selectedDetail = .fitnessProfile
-                        }
+                        openDetail: { selectedDetail = .athleteBlueprint }
                     )
 
                     if let errorMessage = store.errorMessage {
@@ -84,22 +82,27 @@ struct ProfileScreenView: View {
             ProfileDetailSheetView(
                 detail: detail,
                 block: store.activeBlock,
+                strategy: acceptedStrategy,
+                phases: store.phases,
                 targets: store.goalTargets,
                 evaluations: store.goalEvaluations,
-                insights: store.historyInsights
+                blueprint: store.athleteBlueprint,
+                reviewGoal: reviewGoal
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents(detail.detents)
             .presentationDragIndicator(.visible)
         }
     }
 
-    private var primaryTarget: PlanGoalTarget? {
-        store.goalTargets.first { $0.targetKind == .primary }
+    private var acceptedStrategy: ProfileAcceptedStrategy? {
+        guard let json = store.activeBlock?.context.acceptedStrategy, !json.profileIsEmpty else {
+            return nil
+        }
+        return ProfileAcceptedStrategy(json: json)
     }
 
-    private var primaryEvaluation: PlanGoalEvaluation? {
-        guard let primaryTarget else { return nil }
-        return ProfileDisplay.latestEvaluation(for: primaryTarget, in: store.goalEvaluations)
+    private var strategyTargets: [PlanGoalTarget] {
+        store.goalTargets.filter { $0.targetScope == .strategy }
     }
 
     private func load() async {
@@ -117,15 +120,22 @@ struct ProfileScreenView: View {
 }
 
 private enum ProfileDetailSheet: Identifiable {
-    case currentGoal
-    case fitnessProfile
+    case currentStrategy
+    case athleteBlueprint
 
     var id: String {
         switch self {
-        case .currentGoal:
-            return "current-goal"
-        case .fitnessProfile:
-            return "fitness-profile"
+        case .currentStrategy:
+            return "current-strategy"
+        case .athleteBlueprint:
+            return "athlete-blueprint"
+        }
+    }
+
+    var detents: Set<PresentationDetent> {
+        switch self {
+        case .currentStrategy, .athleteBlueprint:
+            return [.large]
         }
     }
 }
@@ -167,14 +177,11 @@ private struct ProfileIdentityCard: View {
     let profile: StoredAccountProfile
     let profilePhotoURL: URL?
     let userEmail: String?
-    let openSettings: () -> Void
+    let editProfile: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
-            ProfileAvatarView(
-                name: profile.name,
-                photoURL: profilePhotoURL
-            )
+            ProfileAvatarView(name: profile.name, photoURL: profilePhotoURL)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(profile.name)
@@ -192,9 +199,9 @@ private struct ProfileIdentityCard: View {
 
             Spacer(minLength: 10)
 
-            Button(action: openSettings) {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 19, weight: .regular))
+            Button(action: editProfile) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 18, weight: .regular))
                     .foregroundStyle(HAYFColor.primary)
                     .frame(width: 44, height: 44)
                     .background(HAYFColor.surface)
@@ -205,7 +212,7 @@ private struct ProfileIdentityCard: View {
                     }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Open profile settings")
+            .accessibilityLabel("Edit profile")
         }
         .padding(18)
         .background(HAYFColor.surface)
@@ -257,156 +264,145 @@ private struct ProfileAvatarView: View {
     }
 }
 
-private struct CurrentGoalCard: View {
+private struct CurrentStrategyCard: View {
     let block: PlanActiveFitnessBlock?
-    let primaryTarget: PlanGoalTarget?
-    let evaluation: PlanGoalEvaluation?
+    let strategy: ProfileAcceptedStrategy?
+    let targets: [PlanGoalTarget]
+    let phases: [PlanFitnessBlockPhase]
     let isLoading: Bool
     let openDetail: () -> Void
 
     var body: some View {
-        Button(action: openDetail) {
+        ProfileEntryCard(action: openDetail, isDisabled: block == nil && !isLoading) {
             VStack(alignment: .leading, spacing: 15) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(title)
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-
-                        Text(subtitle)
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundStyle(HAYFColor.muted)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(HAYFColor.muted)
-                }
+                ProfileCardHeader(title: "Current strategy", subtitle: "How HAYF is coaching this goal.")
 
                 if isLoading {
-                    ProfileLoadingRow(text: "Loading current goal")
+                    ProfileLoadingRow(text: "Loading current strategy")
                 } else if let block {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(ProfileDisplay.goalText(for: block))
+                    VStack(alignment: .leading, spacing: 11) {
+                        Text(block.title)
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(HAYFColor.primary)
                             .fixedSize(horizontal: false, vertical: true)
 
+                        Text("Goal: \(ProfileDisplay.goalText(for: block))")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Text(strategy?.read.profileNilIfEmpty ?? block.context.planningRationale ?? "HAYF will show the strategy details after planning finishes.")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+
                         HStack(spacing: 8) {
-                            ProfilePill(text: statusText, tint: ProfileDisplay.statusColor(for: evaluation?.status ?? primaryTarget?.status))
+                            ProfilePill(text: "\(targets.count) targets", tint: HAYFColor.secondary)
+                            ProfilePill(text: phases.isEmpty ? "Rhythm" : "\(phases.count) phases", tint: HAYFColor.secondary)
                             ProfilePill(text: ProfileDisplay.reviewText(for: block), tint: HAYFColor.secondary)
                         }
                     }
                 } else {
-                    ProfileEmptyText(text: "No active goal is available yet.")
+                    ProfileEmptyText(text: "No active strategy is available yet.")
                 }
             }
-            .padding(18)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
-            }
         }
-        .buttonStyle(.plain)
-        .disabled(block == nil && !isLoading)
-    }
-
-    private var title: String {
-        guard let block else { return "Current goal" }
-        return block.kind == "consistency" ? "Current focus" : "Current goal"
-    }
-
-    private var subtitle: String {
-        guard let block else { return "What HAYF is working from." }
-        return block.kind == "consistency" ? "Your post-onboarding rhythm." : "Created during onboarding · Active now"
-    }
-
-    private var statusText: String {
-        if let status = evaluation?.status ?? primaryTarget?.status {
-            return status.displayName
-        }
-
-        return "Active"
     }
 }
 
-private struct FitnessProfileCard: View {
-    let insights: [FitnessHistoryInsight]
+private struct AthleteBlueprintCard: View {
+    let blueprint: ProfileAthleteBlueprint?
     let isLoading: Bool
     let openDetail: () -> Void
 
-    private var visibleInsights: [FitnessHistoryInsight] {
-        Array(insights.prefix(4))
-    }
-
     var body: some View {
-        Button(action: openDetail) {
+        ProfileEntryCard(action: openDetail, isDisabled: blueprint == nil && !isLoading) {
             VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Fitness profile")
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-
-                        Text("What HAYF knows from your training history.")
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundStyle(HAYFColor.muted)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(HAYFColor.muted)
-                }
+                ProfileCardHeader(title: "Athlete Blueprint", subtitle: "Who HAYF believes it is coaching.")
 
                 if isLoading {
-                    ProfileLoadingRow(text: "Loading fitness profile")
-                } else if visibleInsights.isEmpty {
-                    ProfileEmptyText(text: "HAYF will build this after the next Health sync.")
-                } else {
+                    ProfileLoadingRow(text: "Loading athlete blueprint")
+                } else if let blueprint {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(visibleInsights) { insight in
-                            HStack(alignment: .top, spacing: 10) {
-                                Image(systemName: ProfileDisplay.insightIcon(for: insight))
-                                    .font(.system(size: 15, weight: .regular))
-                                    .foregroundStyle(HAYFColor.orange)
-                                    .frame(width: 22)
+                        Text(blueprint.coachRead.summary)
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                                Text(insight.summary)
-                                    .font(.system(size: 15, weight: .regular))
-                                    .foregroundStyle(HAYFColor.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                        ForEach(blueprint.previewSections.prefix(3)) { section in
+                            ProfileIconSummaryRow(
+                                icon: ProfileDisplay.blueprintIcon(for: section),
+                                text: section.title,
+                                detail: section.summary
+                            )
                         }
-
-                        ProfilePill(text: ProfileDisplay.freshnessText(from: insights), tint: HAYFColor.secondary)
-                            .padding(.top, 2)
                     }
+                } else {
+                    ProfileEmptyText(text: "HAYF will build this after onboarding is complete.")
                 }
             }
-            .padding(18)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
-            }
+        }
+    }
+}
+
+private struct ProfileEntryCard<Content: View>: View {
+    let action: () -> Void
+    let isDisabled: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        Button(action: action) {
+            content
+                .padding(18)
+                .background(HAYFColor.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
+    }
+}
+
+private struct ProfileCardHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text(subtitle)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(HAYFColor.muted)
+        }
     }
 }
 
 private struct ProfileDetailSheetView: View {
     let detail: ProfileDetailSheet
     let block: PlanActiveFitnessBlock?
+    let strategy: ProfileAcceptedStrategy?
+    let phases: [PlanFitnessBlockPhase]
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
-    let insights: [FitnessHistoryInsight]
+    let blueprint: ProfileAthleteBlueprint?
+    let reviewGoal: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -416,16 +412,22 @@ private struct ProfileDetailSheetView: View {
                 .ignoresSafeArea()
 
             switch detail {
-            case .currentGoal:
-                CurrentGoalDetailSheet(
+            case .currentStrategy:
+                CurrentStrategyDetailSheet(
                     block: block,
+                    strategy: strategy,
+                    phases: phases,
                     targets: targets,
                     evaluations: evaluations,
-                    dismiss: { dismiss() }
+                    dismiss: { dismiss() },
+                    reviewGoal: {
+                        dismiss()
+                        reviewGoal()
+                    }
                 )
-            case .fitnessProfile:
-                FitnessProfileDetailSheet(
-                    insights: insights,
+            case .athleteBlueprint:
+                AthleteBlueprintDetailSheet(
+                    blueprint: blueprint,
                     dismiss: { dismiss() }
                 )
             }
@@ -433,64 +435,94 @@ private struct ProfileDetailSheetView: View {
     }
 }
 
-private struct CurrentGoalDetailSheet: View {
+private struct CurrentStrategyDetailSheet: View {
     let block: PlanActiveFitnessBlock?
+    let strategy: ProfileAcceptedStrategy?
+    let phases: [PlanFitnessBlockPhase]
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
     let dismiss: () -> Void
+    let reviewGoal: () -> Void
+
+    private var strategyTargets: [PlanGoalTarget] {
+        targets.filter { $0.targetScope == .strategy }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             ProfileSheetHeader(
-                overline: block?.kind == "consistency" ? "CURRENT FOCUS" : "CURRENT GOAL",
-                title: block.map(ProfileDisplay.goalText(for:)) ?? "Current goal",
+                overline: "CURRENT STRATEGY",
+                title: block?.title ?? "Current strategy",
                 dismiss: dismiss
             )
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
+                    if let block {
+                        ProfileDetailSection(
+                            title: block.kind == "consistency" ? "Current focus" : "Current goal",
+                            text: ProfileDisplay.goalText(for: block)
+                        )
+                    }
+
                     ProfileDetailSection(
-                        title: "Role",
-                        text: ProfileDisplay.goalRoleText(for: block)
+                        title: "Strategy read",
+                        text: strategy?.read.profileNilIfEmpty ?? block?.context.planningRationale ?? "HAYF has not saved a strategy read yet."
                     )
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Targets HAYF watches")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
+                    if let context = strategy?.goalContextText {
+                        ProfileDetailSection(title: "Goal context", text: context)
+                    }
 
-                        if targets.isEmpty {
-                            ProfileEmptyText(text: "Targets will appear after the next sync.")
+                    if let pillars = strategy?.pillars, !pillars.isEmpty {
+                        ProfileTextListSection(title: "What HAYF will protect", items: pillars.map { "\($0.title): \($0.summary)" })
+                    }
+
+                    ProfileTargetGroup(
+                        title: "Strategy targets",
+                        emptyText: "Strategy targets will appear after planning finishes.",
+                        targets: strategyTargets,
+                        evaluations: evaluations
+                    )
+
+                    if phases.isEmpty {
+                        if let rhythm = strategy?.operatingRhythm {
+                            ProfileTextListSection(title: "Operating rhythm", lead: rhythm.summary, items: rhythm.anchors)
                         } else {
-                            ForEach(targets.prefix(5)) { target in
-                                ProfileTargetLine(
-                                    target: target,
-                                    evaluation: ProfileDisplay.latestEvaluation(for: target, in: evaluations)
+                            ProfileDetailSection(
+                                title: "Operating rhythm",
+                                text: "This strategy is rhythm-led, so HAYF will review repeatability instead of showing fake long-term phases."
+                            )
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Phases and phase targets")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(HAYFColor.primary)
+
+                            ForEach(phases) { phase in
+                                ProfilePhaseCard(
+                                    phase: phase,
+                                    targets: targets.filter { $0.activePhaseID == phase.id },
+                                    evaluations: evaluations
                                 )
                             }
                         }
                     }
-
-                    ProfileDetailSection(
-                        title: "Changing this",
-                        text: "Use Review / Change goal when the underlying goal is no longer right. HAYF should update the current block and targets instead of creating a parallel goal."
-                    )
                 }
                 .padding(.bottom, 12)
             }
 
-            Button(action: {}) {
-                Text("Review / Change goal")
+            Button(action: reviewGoal) {
+                Text("Review goal")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 54)
-                    .background(HAYFColor.primary.opacity(0.55))
+                    .background(HAYFColor.primary)
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(true)
-            .accessibilityLabel("Review or change goal coming soon")
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)
@@ -498,26 +530,26 @@ private struct CurrentGoalDetailSheet: View {
     }
 }
 
-private struct FitnessProfileDetailSheet: View {
-    let insights: [FitnessHistoryInsight]
+private struct AthleteBlueprintDetailSheet: View {
+    let blueprint: ProfileAthleteBlueprint?
     let dismiss: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             ProfileSheetHeader(
-                overline: "FITNESS PROFILE",
+                overline: "ATHLETE BLUEPRINT",
                 title: "What HAYF knows",
                 dismiss: dismiss
             )
 
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 12) {
-                    if insights.isEmpty {
-                        ProfileEmptyText(text: "HAYF will build this after the next Health sync.")
-                    } else {
-                        ForEach(insights) { insight in
-                            ProfileInsightDetailCard(insight: insight)
+                    if let blueprint {
+                        ForEach(blueprint.detailSections) { section in
+                            ProfileBlueprintDetailCard(section: section)
                         }
+                    } else {
+                        ProfileEmptyText(text: "HAYF will build this after onboarding is complete.")
                     }
                 }
                 .padding(.bottom, 12)
@@ -587,6 +619,115 @@ private struct ProfileDetailSection: View {
     }
 }
 
+private struct ProfileTextListSection: View {
+    let title: String
+    var lead: String? = nil
+    let items: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            if let lead, !lead.isEmpty {
+                Text(lead)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items, id: \.self) { item in
+                    HStack(alignment: .top, spacing: 9) {
+                        Circle()
+                            .fill(HAYFColor.orange)
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 7)
+
+                        Text(item)
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ProfileTargetGroup: View {
+    let title: String
+    let emptyText: String
+    let targets: [PlanGoalTarget]
+    let evaluations: [PlanGoalEvaluation]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            if targets.isEmpty {
+                ProfileEmptyText(text: emptyText)
+            } else {
+                ForEach(targets) { target in
+                    ProfileTargetLine(
+                        target: target,
+                        evaluation: ProfileDisplay.latestEvaluation(for: target, in: evaluations)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct ProfilePhaseCard: View {
+    let phase: PlanFitnessBlockPhase
+    let targets: [PlanGoalTarget]
+    let evaluations: [PlanGoalEvaluation]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(phase.name.capitalized)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text(phase.objective)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !phase.focus.isEmpty {
+                Text(phase.focus.joined(separator: " "))
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if targets.isEmpty {
+                ProfileEmptyText(text: "Phase targets will appear after planning finishes.")
+            } else {
+                ForEach(targets) { target in
+                    ProfileTargetLine(
+                        target: target,
+                        evaluation: ProfileDisplay.latestEvaluation(for: target, in: evaluations)
+                    )
+                }
+            }
+        }
+        .padding(14)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
 private struct ProfileTargetLine: View {
     let target: PlanGoalTarget
     let evaluation: PlanGoalEvaluation?
@@ -602,6 +743,7 @@ private struct ProfileTargetLine: View {
                 Text(target.title)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Text(ProfileDisplay.targetValueLine(for: target, evaluation: evaluation))
                     .font(.system(size: 14, weight: .regular))
@@ -613,6 +755,8 @@ private struct ProfileTargetLine: View {
             Text((evaluation?.status ?? target.status).displayName)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(ProfileDisplay.statusColor(for: evaluation?.status ?? target.status))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
         .padding(12)
         .background(HAYFColor.surface)
@@ -624,32 +768,59 @@ private struct ProfileTargetLine: View {
     }
 }
 
-private struct ProfileInsightDetailCard: View {
-    let insight: FitnessHistoryInsight
+private struct ProfileBlueprintDetailCard: View {
+    let section: ProfileBlueprintSection
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: ProfileDisplay.insightIcon(for: insight))
+                Image(systemName: ProfileDisplay.blueprintIcon(for: section))
                     .font(.system(size: 16, weight: .regular))
                     .foregroundStyle(HAYFColor.orange)
                     .frame(width: 24)
 
-                Text(insight.title)
+                Text(section.title)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 8)
 
-                Text(insight.confidence.capitalized)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(HAYFColor.muted)
+                if let confidence = section.confidence {
+                    Text(confidence)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(HAYFColor.muted)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
             }
 
-            Text(insight.summary)
+            Text(section.body?.profileNilIfEmpty ?? section.summary)
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(HAYFColor.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let observationWindow = section.observationWindow {
+                ProfilePill(text: observationWindow, tint: HAYFColor.secondary)
+            }
+
+            if !section.evidence.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(section.evidence.prefix(3), id: \.self) { evidence in
+                        Text(evidence)
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(HAYFColor.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            if let caveat = section.caveat {
+                Text(caveat)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(14)
         .background(HAYFColor.surface)
@@ -657,6 +828,34 @@ private struct ProfileInsightDetailCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct ProfileIconSummaryRow: View {
+    let icon: String
+    let text: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(text)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(detail)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -670,6 +869,7 @@ private struct ProfilePill: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(tint)
             .lineLimit(1)
+            .minimumScaleFactor(0.72)
             .padding(.horizontal, 9)
             .frame(height: 30)
             .background(HAYFColor.neutral)
@@ -729,6 +929,51 @@ private struct ProfileInlineError: View {
     }
 }
 
+private struct ProfileAcceptedStrategy {
+    let read: String
+    let goalTitle: String?
+    let goalSummary: String?
+    let pillars: [ProfileStrategyTextItem]
+    let operatingRhythm: ProfileOperatingRhythm?
+
+    init(json: JSONValue) {
+        let goalContext = json.profileValue("goalTargetContext")
+        read = json.profileString("read")
+        goalTitle = goalContext.profileString("title").profileNilIfEmpty
+        goalSummary = goalContext.profileString("summary").profileNilIfEmpty
+        pillars = json.profileArray("pillars").map { item in
+            ProfileStrategyTextItem(
+                title: item.profileString("title"),
+                summary: item.profileString("summary")
+            )
+        }
+        let rhythm = json.profileValue("operatingRhythm")
+        operatingRhythm = rhythm.profileIsEmpty ? nil : ProfileOperatingRhythm(json: rhythm)
+    }
+
+    var goalContextText: String? {
+        [goalTitle, goalSummary]
+            .compactMap { $0?.profileNilIfEmpty }
+            .joined(separator: "\n")
+            .profileNilIfEmpty
+    }
+}
+
+private struct ProfileStrategyTextItem {
+    let title: String
+    let summary: String
+}
+
+private struct ProfileOperatingRhythm {
+    let summary: String
+    let anchors: [String]
+
+    init(json: JSONValue) {
+        summary = json.profileString("summary")
+        anchors = json.profileArray("anchors").compactMap(\.profileStringValue)
+    }
+}
+
 private enum ProfileDisplay {
     static func initials(for name: String) -> String {
         let parts = name.split(separator: " ")
@@ -767,38 +1012,45 @@ private enum ProfileDisplay {
         case "consistency":
             return "This focus keeps training repeatable without forcing a performance target."
         case "specific_goal", "goal_discovery_chosen":
-            return "This is the durable goal HAYF turns into training targets, weekly rhythm, and workout recommendations."
+            return "This is the durable goal HAYF turns into the strategy, phases, targets, weekly rhythm, and workout recommendations."
         default:
             return "This is the current fitness context HAYF uses to shape planning and recommendations."
         }
     }
 
-    static func latestEvaluation(
-        for target: PlanGoalTarget,
-        in evaluations: [PlanGoalEvaluation]
-    ) -> PlanGoalEvaluation? {
+    static func latestEvaluation(for target: PlanGoalTarget, in evaluations: [PlanGoalEvaluation]) -> PlanGoalEvaluation? {
         evaluations.first { $0.goalTargetID == target.id }
     }
 
     static func targetValueLine(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
+        if case let .object(rule) = target.evaluationRule,
+           case let .string(displayValue)? = rule["displayValue"],
+           !displayValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return displayValue
+        }
+
         let unit = target.unit ?? evaluation?.unit ?? ""
         let current = evaluation?.currentValue
         let targetValue = evaluation?.targetValue ?? target.targetValue
 
         if let current, let targetValue {
             if target.direction == "decrease" {
-                return "\(formatted(current)) → \(formatted(targetValue))\(unitSuffix(unit))"
+                return "\(formatted(current)) -> \(formatted(targetValue))\(unitSuffix(unit))"
             }
 
             return "\(formatted(current)) / \(formatted(targetValue))\(unitSuffix(unit))"
         }
 
         if let baseline = target.baselineValue, let targetValue {
-            return "\(formatted(baseline)) → \(formatted(targetValue))\(unitSuffix(unit))"
+            return "\(formatted(baseline)) -> \(formatted(targetValue))\(unitSuffix(unit))"
         }
 
         if let targetValue {
             return "Target \(formatted(targetValue))\(unitSuffix(unit))"
+        }
+
+        if let description = target.description?.profileNilIfEmpty {
+            return description
         }
 
         return "Needs more data"
@@ -835,35 +1087,21 @@ private enum ProfileDisplay {
         }
     }
 
-    static func insightIcon(for insight: FitnessHistoryInsight) -> String {
-        switch insight.category {
-        case "identity":
+    static func blueprintIcon(for section: ProfileBlueprintSection) -> String {
+        switch section.id {
+        case "coach_read":
+            return "sparkles"
+        case "athlete_archetype":
             return "person.text.rectangle"
-        case "consistency":
-            return "calendar"
-        case "seasonality":
-            return "sun.max"
-        case "performance":
-            return "speedometer"
-        case "balance":
-            return "dumbbell"
-        case "body":
-            return "heart"
+        case "current_training_state":
+            return "waveform.path.ecg"
+        case "physical_baseline":
+            return "scalemass"
+        case "goal_fit":
+            return "target"
         default:
-            return "sparkle"
+            return "list.bullet.rectangle"
         }
-    }
-
-    static func freshnessText(from insights: [FitnessHistoryInsight]) -> String {
-        guard let latest = insights.map(\.updatedAt).max() else {
-            return "Waiting for sync"
-        }
-
-        if latest.count >= 10 {
-            return "Updated \(String(latest.prefix(10)))"
-        }
-
-        return "Updated recently"
     }
 
     private static func formatted(_ value: Double) -> String {
@@ -902,7 +1140,8 @@ private enum ProfileDisplay {
             profilePhotoURL: nil
         ),
         userEmail: "daniel@example.com",
-        openSettings: {},
+        editProfile: {},
+        reviewGoal: {},
         signOut: {}
     )
 }

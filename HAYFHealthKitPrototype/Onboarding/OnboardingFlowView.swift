@@ -5454,11 +5454,14 @@ private struct WheelChoicePicker<Option: Identifiable & Hashable & WheelDisplaya
             ForEach(options) { option in
                 Text(option.wheelTitle)
                     .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
                     .tag(option)
             }
         }
         .labelsHidden()
         .pickerStyle(.wheel)
+        .colorScheme(.light)
+        .tint(HAYFColor.primary)
         .frame(maxWidth: .infinity)
         .frame(height: 150)
         .clipped()
@@ -5506,11 +5509,14 @@ private struct NumberWheelPicker: View {
                 ForEach(values, id: \.self) { value in
                     Text("\(value) \(unit)")
                         .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
                         .tag(value)
                 }
             }
             .labelsHidden()
             .pickerStyle(.wheel)
+            .colorScheme(.light)
+            .tint(HAYFColor.primary)
             .frame(maxWidth: .infinity)
             .frame(height: 118)
             .clipped()

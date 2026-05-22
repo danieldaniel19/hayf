@@ -30,6 +30,10 @@ struct AppRootView: View {
                                 }
                                 updatedProfilePendingFinish = nil
                                 isRestartingAccountCreation = false
+                            },
+                            onCancel: {
+                                updatedProfilePendingFinish = nil
+                                isRestartingAccountCreation = false
                             }
                         )
                     } else if shouldShowOnboarding(for: accountProfile) {
@@ -40,6 +44,7 @@ struct AppRootView: View {
                                 shouldSkipOnboardingThisSession = true
                             },
                             onComplete: {
+                                shouldSkipOnboardingThisSession = true
                                 shouldPresentActiveBlockOnPlanLanding = true
                             }
                         )
@@ -112,8 +117,8 @@ struct AppRootView: View {
         }
     }
 
-    private func shouldShowOnboarding(for profile: StoredAccountProfile) -> Bool {
-        !shouldSkipOnboardingThisSession && onboardingProfileStore.profile?.id != profile.id
+    private func shouldShowOnboarding(for _: StoredAccountProfile) -> Bool {
+        !shouldSkipOnboardingThisSession && onboardingProfileStore.profile == nil
     }
 
     private func signOut() {

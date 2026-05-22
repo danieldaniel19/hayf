@@ -17,6 +17,7 @@ struct AccountCreationView: View {
     let existingProfile: StoredAccountProfile?
     let onCreate: (AccountProfile) async throws -> Void
     let onFinish: () -> Void
+    let onCancel: (() -> Void)?
 
     @State private var step: AccountCreationStep = .setup
     @State private var name: String
@@ -36,13 +37,15 @@ struct AccountCreationView: View {
         prefilledAvatarURL: URL? = nil,
         existingProfile: StoredAccountProfile? = nil,
         onCreate: @escaping (AccountProfile) async throws -> Void,
-        onFinish: @escaping () -> Void
+        onFinish: @escaping () -> Void,
+        onCancel: (() -> Void)? = nil
     ) {
         self.prefilledName = existingProfile?.name ?? prefilledName
         self.prefilledAvatarURL = existingProfile?.profilePhotoURL.flatMap(URL.init(string:)) ?? prefilledAvatarURL
         self.existingProfile = existingProfile
         self.onCreate = onCreate
         self.onFinish = onFinish
+        self.onCancel = onCancel
         _name = State(initialValue: existingProfile?.name ?? prefilledName ?? "")
         _birthdate = State(initialValue: existingProfile.flatMap { Self.storedBirthdateFormatter.date(from: $0.birthdate) })
         _physiologyReference = State(initialValue: existingProfile?.physiologyReference.flatMap(PhysiologyReference.init(rawValue:)))
@@ -81,23 +84,43 @@ struct AccountCreationView: View {
 
             Spacer()
 
-            if step.showsBackButton {
-                Button {
-                    step = step.previous
-                } label: {
-                    Image(systemName: "arrow.left")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(HAYFColor.primary)
-                        .frame(width: 42, height: 42)
-                        .background(HAYFColor.neutral)
-                        .clipShape(Circle())
-                        .overlay {
-                            Circle()
-                                .stroke(HAYFColor.border, lineWidth: 1)
-                        }
+            HStack(spacing: 10) {
+                if step.showsBackButton {
+                    Button {
+                        step = step.previous
+                    } label: {
+                        Image(systemName: "arrow.left")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(HAYFColor.primary)
+                            .frame(width: 42, height: 42)
+                            .background(HAYFColor.neutral)
+                            .clipShape(Circle())
+                            .overlay {
+                                Circle()
+                                    .stroke(HAYFColor.border, lineWidth: 1)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
+
+                if let onCancel {
+                    Button(action: onCancel) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(HAYFColor.primary)
+                            .frame(width: 42, height: 42)
+                            .background(HAYFColor.neutral)
+                            .clipShape(Circle())
+                            .overlay {
+                                Circle()
+                                    .stroke(HAYFColor.border, lineWidth: 1)
+                            }
+                        }
+                    .buttonStyle(.plain)
+                    .disabled(isSaving)
+                    .accessibilityLabel("Close account editing")
+                }
             }
         }
     }
@@ -464,14 +487,14 @@ struct AccountCreationView: View {
                         .foregroundStyle(HAYFColor.orange)
                 }
 
-            Text("Account\ncreated.")
+            Text(existingProfile == nil ? "Account\ncreated." : "Profile\nupdated.")
                 .font(.system(size: 34, weight: .bold, design: .default))
                 .lineSpacing(1)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(HAYFColor.primary)
                 .padding(.top, 34)
 
-            Text("Next, HAYF will learn what kind of training fits your life.")
+            Text(existingProfile == nil ? "Next, HAYF will learn what kind of training fits your life." : "Your profile basics are up to date.")
                 .font(.system(size: 16, weight: .regular))
                 .lineSpacing(4)
                 .multilineTextAlignment(.center)
