@@ -6,6 +6,7 @@ type PlanningTask =
   | "accept_strategy_and_create_initial_plan"
   | "sync_healthkit_and_reconcile"
   | "refresh_plan_window"
+  | "generate_weekly_plan_targets"
   | "record_plan_edit"
   | "record_weekly_plan_constraint"
   | "recommend_workout_replacements"
@@ -144,6 +145,39 @@ type GeneratedWorkout = {
   purpose: string;
   prescription: Record<string, unknown>;
   fuelingSummary: string;
+};
+
+type WeeklyTargetFamily =
+  | "planned_session_completion"
+  | "modality_session_count"
+  | "modality_minutes"
+  | "modality_distance"
+  | "active_days"
+  | "support_modality_presence"
+  | "max_gap_guardrail"
+  | "minimum_viable_week"
+  | "body_weight_logging"
+  | "running_pace"
+  | "cycling_pace";
+
+type WeeklyTargetProposal = {
+  slotID: string;
+  family: WeeklyTargetFamily;
+  modality: string | null;
+  title: string;
+  summary: string;
+  proposedDisplayValue: string | null;
+  targetValue: number | null;
+  unit: string | null;
+  comparator: "at_least" | "at_most" | "between";
+  rationale: string;
+};
+
+type WeeklyTargetGenerationOutput = {
+  weeks: Array<{
+    weeklyPlanID: string;
+    targets: WeeklyTargetProposal[];
+  }>;
 };
 
 type WorkoutCandidateInput = {
@@ -329,6 +363,73 @@ const planSchema: Record<string, unknown> = {
                   },
                 },
                 fuelingSummary: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+const weeklyTargetSchema: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["weeks"],
+  properties: {
+    weeks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["weeklyPlanID", "targets"],
+        properties: {
+          weeklyPlanID: { type: "string" },
+          targets: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "slotID",
+                "family",
+                "modality",
+                "title",
+                "summary",
+                "proposedDisplayValue",
+                "targetValue",
+                "unit",
+                "comparator",
+                "rationale",
+              ],
+              properties: {
+                slotID: { type: "string" },
+                family: {
+                  type: "string",
+                  enum: [
+                    "planned_session_completion",
+                    "modality_session_count",
+                    "modality_minutes",
+                    "modality_distance",
+                    "active_days",
+                    "support_modality_presence",
+                    "max_gap_guardrail",
+                    "minimum_viable_week",
+                    "body_weight_logging",
+                    "running_pace",
+                    "cycling_pace",
+                  ],
+                },
+                modality: { type: ["string", "null"] },
+                title: { type: "string", maxLength: 48 },
+                summary: { type: "string", maxLength: 140 },
+                proposedDisplayValue: { type: ["string", "null"], maxLength: 18 },
+                targetValue: { type: ["number", "null"] },
+                unit: { type: ["string", "null"], maxLength: 18 },
+                comparator: { type: "string", enum: ["at_least", "at_most", "between"] },
+                rationale: { type: "string", maxLength: 220 },
               },
             },
           },
@@ -534,6 +635,8 @@ async function handleTask(args: {
       return syncHealthKitAndReconcile(admin, userID!, requestBody, model);
     case "refresh_plan_window":
       return refreshPlanWindow(admin, userID!, requestBody, model, "user");
+    case "generate_weekly_plan_targets":
+      return generateWeeklyPlanTargetsForVisiblePlan(admin, userID!, requestBody, model);
     case "record_plan_edit":
       return recordPlanEdit(admin, userID!, requestBody, model);
     case "record_weekly_plan_constraint":
@@ -674,6 +777,15 @@ async function acceptStrategyAndCreateInitialPlan(
     source: "generated",
     committedWeekStart: isoDate(committedWeekStart),
     ownerStartDate,
+  });
+  await generateAndPersistWeeklyTargets(admin, {
+    userID,
+    goal,
+    strategy,
+    weeklyPlans,
+    healthSnapshot: requestBody.healthSnapshot ?? null,
+    acceptedStrategy,
+    model,
   });
   await markCurrentWorkoutForStrategy(admin, userID, strategy.id, acceptedLocalDate);
 
@@ -852,6 +964,13 @@ async function syncHealthKitAndReconcile(
   if (requestBody.healthSnapshot) {
     await evaluatePlanningTargets(admin, userID, scope.strategy.id, requestBody.healthSnapshot);
   }
+  const visiblePlans = await visibleWeeklyPlans(
+    admin,
+    userID,
+    scope.strategy.id,
+    twoWeekWindow(firstCommittedWeekStart(new Date(), timezone)),
+  );
+  await evaluateWeeklyTargetsForPlans(admin, userID, visiblePlans.map((plan: Record<string, any>) => plan.id));
 
   return { userID, eventID: event.id, synced, matched, detected, missed: missedWorkouts.length, refreshOutput };
 }
@@ -864,6 +983,56 @@ async function refreshPlanWindow(
   trigger: "user" | "scheduled",
 ) {
   return refreshPlanWindowForUser(admin, userID, requestBody.windowStart, model, trigger);
+}
+
+async function generateWeeklyPlanTargetsForVisiblePlan(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const scope = await loadActivePlanningScope(admin, userID);
+  const timezone = requestBody.deviceTimezone || scope.timezone || "UTC";
+  const start = parseDateOnly(requestBody.windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
+  const window = twoWeekWindow(start);
+  const weeklyPlans = await visibleWeeklyPlans(admin, userID, scope.strategy.id, window);
+  const latestSnapshot = await maybeSingle(
+    admin
+      .from("health_feature_snapshots")
+      .select()
+      .eq("user_id", userID)
+      .order("generated_at", { ascending: false })
+      .limit(1),
+  );
+  const rows = await generateAndPersistWeeklyTargets(admin, {
+    userID,
+    goal: scope.goal,
+    strategy: scope.strategy,
+    weeklyPlans,
+    healthSnapshot: latestSnapshot?.snapshot_json ?? null,
+    acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+    model,
+  });
+  const event = await createPlanEvent(admin, {
+    userID,
+    userGoalID: scope.goal.id,
+    fitnessStrategyID: scope.strategy.id,
+    eventType: "weekly_targets_generated",
+    payload: {
+      trigger: "explicit",
+      window,
+      weeklyPlanIDs: weeklyPlans.map((plan: Record<string, any>) => plan.id),
+      targetCount: rows.length,
+    },
+  });
+
+  return {
+    userID,
+    model,
+    fitnessStrategyID: scope.strategy.id,
+    eventID: event.id,
+    targetCount: rows.length,
+  };
 }
 
 async function refreshPlanWindowForUser(
@@ -879,6 +1048,27 @@ async function refreshPlanWindowForUser(
   const start = parseDateOnly(windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
   const window = twoWeekWindow(start);
   if (!force && trigger === "user" && await hasUsablePlanWindow(admin, userID, scope.strategy.id, window)) {
+    const existingWeeklyPlans = await visibleWeeklyPlans(admin, userID, scope.strategy.id, window);
+    if (!await hasWeeklyTargetsForPlans(admin, userID, existingWeeklyPlans.map((plan: Record<string, any>) => plan.id))) {
+      const latestSnapshot = await maybeSingle(
+        admin
+          .from("health_feature_snapshots")
+          .select()
+          .eq("user_id", userID)
+          .order("generated_at", { ascending: false })
+          .limit(1),
+      );
+      await generateAndPersistWeeklyTargets(admin, {
+        userID,
+        goal: scope.goal,
+        strategy: scope.strategy,
+        weeklyPlans: existingWeeklyPlans,
+        healthSnapshot: latestSnapshot?.snapshot_json ?? null,
+        acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+        model,
+      });
+    }
+
     const event = await createPlanEvent(admin, {
       userID,
       fitnessStrategyID: scope.strategy.id,
@@ -991,13 +1181,22 @@ async function refreshPlanWindowForUser(
       .in("status", ["committed", "draft"]),
   );
 
-  await insertWeeklyPlansAndWorkouts(admin, {
+  const refreshedWeeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
     userID,
     strategyID: scope.strategy.id,
     rhythms: generated.rhythms,
     source: "replanned",
     committedWeekStart: isoDate(start),
     ownerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
+  });
+  await generateAndPersistWeeklyTargets(admin, {
+    userID,
+    goal: scope.goal,
+    strategy: scope.strategy,
+    weeklyPlans: refreshedWeeklyPlans,
+    healthSnapshot: latestSnapshot?.snapshot_json ?? null,
+    acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+    model,
   });
   await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), timezone));
   const event = await createPlanEvent(admin, {
@@ -3607,6 +3806,599 @@ function applyWeeklyConstraintsToGeneratedWorkouts(workouts: GeneratedWorkout[],
   });
 }
 
+async function generateAndPersistWeeklyTargets(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    goal: Record<string, any>;
+    strategy: Record<string, any>;
+    weeklyPlans: Record<string, any>[];
+    healthSnapshot: Record<string, any> | null;
+    acceptedStrategy: Record<string, unknown> | null;
+    model: string;
+  },
+) {
+  const visiblePlans = args.weeklyPlans.filter((plan) => ["committed", "draft"].includes(plan.status));
+  if (visiblePlans.length === 0) return [];
+
+  const planIDs = visiblePlans.map((plan) => plan.id);
+  const workouts = await list(
+    admin
+      .from("planned_workouts")
+      .select()
+      .eq("user_id", args.userID)
+      .in("weekly_plan_id", planIDs)
+      .not("status", "in", "(deleted,superseded)")
+      .order("scheduled_date", { ascending: true })
+      .order("sequence_order", { ascending: true }),
+  );
+  const strategyTargets = await list(
+    admin
+      .from("planning_targets")
+      .select("id,target_scope,target_kind,title,description,metric_key,metric_category,direction,target_value,unit,evaluation_rule_json,status")
+      .eq("user_id", args.userID)
+      .eq("fitness_strategy_id", args.strategy.id)
+      .in("target_scope", ["strategy", "goal"]),
+  );
+
+  const context = weeklyTargetGenerationContext({
+    goal: args.goal,
+    strategy: args.strategy,
+    acceptedStrategy: args.acceptedStrategy,
+    weeklyPlans: visiblePlans,
+    workouts,
+    strategyTargets,
+    healthSnapshot: args.healthSnapshot,
+  });
+
+  let generated: WeeklyTargetGenerationOutput | null = null;
+  try {
+    generated = await runWeeklyTargetGeneration(context, args.model);
+    await insertTrace(admin, {
+      userID: args.userID,
+      task: "generate_weekly_plan_targets",
+      model: args.model,
+      compactRequest: { task: "generate_weekly_plan_targets", context },
+      structuredResponse: generated,
+      status: "success",
+      latencyMS: 0,
+    });
+  } catch (error) {
+    await insertTrace(admin, {
+      userID: args.userID,
+      task: "generate_weekly_plan_targets",
+      model: args.model,
+      compactRequest: { task: "generate_weekly_plan_targets", context },
+      structuredResponse: null,
+      status: "failure",
+      latencyMS: 0,
+      errorMessage: errorMessage(error),
+    });
+  }
+
+  const rows = validatedWeeklyTargetRows({
+    userID: args.userID,
+    weeklyPlans: visiblePlans,
+    workouts,
+    generated: generated ?? fallbackWeeklyTargetOutput(visiblePlans, workouts),
+  });
+
+  await throwOnError(
+    admin
+      .from("planning_targets")
+      .delete()
+      .eq("user_id", args.userID)
+      .in("weekly_plan_id", planIDs)
+      .eq("target_scope", "week"),
+  );
+
+  if (rows.length > 0) {
+    await throwOnError(admin.from("planning_targets").insert(rows));
+    await evaluateWeeklyTargetsForPlans(admin, args.userID, planIDs);
+  }
+
+  return rows;
+}
+
+function weeklyTargetGenerationContext(args: {
+  goal: Record<string, any>;
+  strategy: Record<string, any>;
+  acceptedStrategy: Record<string, unknown> | null;
+  weeklyPlans: Record<string, any>[];
+  workouts: Record<string, any>[];
+  strategyTargets: Record<string, any>[];
+  healthSnapshot: Record<string, any> | null;
+}) {
+  return {
+    goal: {
+      id: args.goal.id,
+      title: args.goal.title,
+      goalKind: args.goal.goal_kind,
+      targetDate: args.goal.target_date,
+      timeframeWeeks: args.goal.timeframe_weeks,
+      normalizedGoal: args.goal.normalized_goal_json ?? null,
+    },
+    strategy: {
+      id: args.strategy.id,
+      title: args.strategy.title,
+      summary: args.strategy.summary,
+      targetDate: args.strategy.target_date,
+      acceptedStrategy: compactWeeklyAcceptedStrategy(args.acceptedStrategy),
+    },
+    strategyTargets: args.strategyTargets.map((target) => ({
+      title: target.title,
+      summary: target.description,
+      metricCategory: target.metric_category,
+      targetValue: target.target_value,
+      unit: target.unit,
+    })),
+    weeks: args.weeklyPlans.map((plan) => {
+      const planWorkouts = args.workouts.filter((workout) => workout.weekly_plan_id === plan.id);
+      return {
+        weeklyPlanID: plan.id,
+        status: plan.status,
+        weekStartDate: plan.week_start_date,
+        weekEndDate: plan.week_end_date,
+        objective: plan.objective,
+        slots: [1, 2, 3].map((index) => `${plan.id}:target:${index}`),
+        workouts: planWorkouts.map((workout) => ({
+          id: workout.id,
+          scheduledDate: workout.scheduled_date,
+          activityType: workout.activity_type,
+          normalizedActivity: normalizeActivity(`${workout.activity_type} ${workout.title} ${workout.purpose}`),
+          title: workout.title,
+          durationMinutes: workout.duration_minutes,
+          intensityLabel: workout.intensity_label,
+          purpose: workout.purpose,
+        })),
+      };
+    }),
+    availableTargetFamilies: [
+      "planned_session_completion",
+      "modality_session_count",
+      "modality_minutes",
+      "modality_distance",
+      "active_days",
+      "support_modality_presence",
+      "max_gap_guardrail",
+      "minimum_viable_week",
+      "body_weight_logging",
+      "running_pace",
+      "cycling_pace",
+    ],
+    targetReferenceRules: [
+      "Targets must be measurable and computable from planned workouts, completed workouts, matched HealthKit workouts, in-app exercise logs, or explicit body/performance entries.",
+      "Good weekly targets include completing planned sessions, completing a modality count, weekly minutes/distance, active days, support modality presence, no gap longer than N days, load guardrails, body-weight logging, or pace/power values when data supports them.",
+      "Bad weekly targets include feeling good, reviewing recovery, selecting a next goal, adjusting a plan, confidence improved, or any subjective reflection.",
+    ],
+    healthSnapshotSummary: args.healthSnapshot
+      ? {
+        generatedAt: snapshotGeneratedAt(args.healthSnapshot),
+        hasBodyMass: typeof args.healthSnapshot.body?.bodyMassKilograms === "number" || typeof args.healthSnapshot.body?.bodyMass28DayAverageKilograms === "number",
+        runningDistance7d: args.healthSnapshot.activity?.runningDistance7DaysKilometers ?? args.healthSnapshot.activity?.walkingRunningDistance7DaysKilometers ?? null,
+        cyclingDistance7d: args.healthSnapshot.activity?.cyclingDistance7DaysKilometers ?? null,
+      }
+      : null,
+  };
+}
+
+function compactWeeklyAcceptedStrategy(strategy: Record<string, unknown> | null) {
+  if (!strategy) return null;
+  return {
+    read: stringAt(strategy, "read") || null,
+    goalTargetContext: objectAt(strategy, "goalTargetContext")
+      ? {
+        title: stringAt(objectAt(strategy, "goalTargetContext"), "title") || null,
+        summary: stringAt(objectAt(strategy, "goalTargetContext"), "summary") || null,
+      }
+      : null,
+    targets: arrayAt(strategy, "targets").map(compactAcceptedTarget),
+    phases: arrayAt(strategy, "phases").map((phase) => ({
+      id: stringAt(phase, "id") || null,
+      name: stringAt(phase, "name") || null,
+      objective: stringAt(phase, "objective") || null,
+      targetSummary: stringAt(phase, "targetSummary") || null,
+      targets: arrayAt(phase, "targets").map(compactAcceptedTarget),
+    })),
+  };
+}
+
+function compactAcceptedTarget(target: Record<string, unknown>) {
+  return {
+    title: stringAt(target, "title") || null,
+    summary: stringAt(target, "summary") || null,
+    scope: stringAt(target, "scope") || null,
+    metricCategory: stringAt(target, "metricCategory") || null,
+    targetValue: numberAt(target, "targetValue"),
+    unit: stringAt(target, "unit") || null,
+    displayValue: stringAt(target, "displayValue") || null,
+  };
+}
+
+async function runWeeklyTargetGeneration(context: Record<string, unknown>, model: string): Promise<WeeklyTargetGenerationOutput> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: "system",
+          content:
+            "You are HAYF's weekly target engine. Return strict JSON only. Create measurable weekly targets that a mobile fitness app can compute from planned workouts, completed workouts, matched HealthKit workouts, body entries, or performance entries. Trust coaching judgement, but never create subjective, reflective, or operational targets.",
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "generate_weekly_plan_targets",
+            context,
+            rules:
+              "For each supplied week, return 1-3 targets. Preserve weeklyPlanID exactly and use only the provided slot IDs. Targets must be achievable by doing that week's workouts. Prefer specific measurable outcomes over generic copy. Do not invent unavailable modalities. Do not use snake_case or metric keys in user-facing title/summary/display values.",
+          }),
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "weekly_plan_targets",
+          strict: true,
+          schema: weeklyTargetSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  }
+
+  const outputText = extractOutputText(payload);
+  if (!outputText) {
+    throw new Error("OpenAI returned no structured weekly target output");
+  }
+
+  return JSON.parse(outputText) as WeeklyTargetGenerationOutput;
+}
+
+function fallbackWeeklyTargetOutput(weeklyPlans: Record<string, any>[], workouts: Record<string, any>[]): WeeklyTargetGenerationOutput {
+  return {
+    weeks: weeklyPlans.map((plan) => {
+      const planWorkouts = workouts.filter((workout) => workout.weekly_plan_id === plan.id);
+      const activeDays = new Set(planWorkouts.map((workout) => workout.scheduled_date)).size;
+      const primaryModality = primaryWeeklyModality(planWorkouts);
+      const targets: WeeklyTargetProposal[] = [
+        {
+          slotID: `${plan.id}:target:1`,
+          family: "planned_session_completion",
+          modality: null,
+          title: "Planned sessions",
+          summary: "Complete the planned sessions that define this week.",
+          proposedDisplayValue: `${planWorkouts.length}/${planWorkouts.length}`,
+          targetValue: planWorkouts.length,
+          unit: "sessions",
+          comparator: "at_least",
+          rationale: "Session completion is the most direct weekly proof.",
+        },
+      ];
+      if (primaryModality) {
+        targets.push({
+          slotID: `${plan.id}:target:2`,
+          family: "modality_minutes",
+          modality: primaryModality,
+          title: `${titleCase(primaryModality)} minutes`,
+          summary: "Complete the planned weekly minutes for the main training modality.",
+          proposedDisplayValue: `${plannedMinutes(planWorkouts, primaryModality)} min`,
+          targetValue: plannedMinutes(planWorkouts, primaryModality),
+          unit: "min",
+          comparator: "at_least",
+          rationale: "Minutes keep the weekly dose measurable.",
+        });
+      }
+      if (activeDays > 1) {
+        targets.push({
+          slotID: `${plan.id}:target:3`,
+          family: "active_days",
+          modality: null,
+          title: "Active days",
+          summary: "Spread completed workouts across the planned training days.",
+          proposedDisplayValue: `${activeDays} days`,
+          targetValue: activeDays,
+          unit: "days",
+          comparator: "at_least",
+          rationale: "Active days protect the weekly rhythm.",
+        });
+      }
+      return { weeklyPlanID: plan.id, targets: targets.slice(0, 3) };
+    }),
+  };
+}
+
+function validatedWeeklyTargetRows(args: {
+  userID: string;
+  weeklyPlans: Record<string, any>[];
+  workouts: Record<string, any>[];
+  generated: WeeklyTargetGenerationOutput;
+}) {
+  const rows: Record<string, unknown>[] = [];
+  const weekByID = new Map(args.weeklyPlans.map((plan) => [plan.id, plan]));
+  const generatedByWeek = new Map(args.generated.weeks.map((week) => [week.weeklyPlanID, week.targets]));
+  for (const plan of args.weeklyPlans) {
+    const planWorkouts = args.workouts.filter((workout) => workout.weekly_plan_id === plan.id);
+    const proposals = generatedByWeek.get(plan.id) ?? [];
+    const accepted = proposals
+      .filter((proposal) => weekByID.has(plan.id))
+      .map((proposal) => weeklyTargetRowFromProposal(args.userID, plan, planWorkouts, proposal))
+      .filter(Boolean) as Record<string, unknown>[];
+    const finalRows = accepted.length > 0
+      ? accepted.slice(0, 3)
+      : (fallbackWeeklyTargetOutput([plan], args.workouts).weeks[0]?.targets ?? [])
+        .map((proposal) => weeklyTargetRowFromProposal(args.userID, plan, planWorkouts, proposal))
+        .filter(Boolean) as Record<string, unknown>[];
+    rows.push(...finalRows.map((row, index) => ({ ...row, target_kind: index === 0 ? "primary" : "supporting" })));
+  }
+  return rows;
+}
+
+function weeklyTargetRowFromProposal(
+  userID: string,
+  plan: Record<string, any>,
+  workouts: Record<string, any>[],
+  proposal: WeeklyTargetProposal,
+) {
+  const family = normalizedWeeklyTargetFamily(proposal.family);
+  if (!family || hasBadTargetLanguage(`${proposal.title} ${proposal.summary}`)) return null;
+
+  const modality = normalizedWeeklyModality(proposal.modality, workouts, family);
+  const targetValue = normalizedWeeklyTargetValue(proposal.targetValue, family, modality, workouts);
+  if (targetValue === null) return null;
+
+  const comparator = normalizedWeeklyComparator(proposal.comparator, family);
+  const unit = normalizedWeeklyUnit(proposal.unit, family);
+  const title = compactWeeklyTargetTitle(proposal.title, family, modality);
+  const displayValue = compactWeeklyDisplayValue(proposal.proposedDisplayValue) ?? weeklyDisplayValue(targetValue, unit, comparator);
+  const plannedWorkoutIDs = relevantWeeklyWorkoutIDs(workouts, family, modality);
+
+  return {
+    user_id: userID,
+    user_goal_id: null,
+    fitness_strategy_id: null,
+    fitness_strategy_phase_id: null,
+    weekly_plan_id: plan.id,
+    planned_workout_id: null,
+    target_scope: "week",
+    target_kind: "supporting",
+    title,
+    description: cleanTargetCopy(proposal.summary) || defaultWeeklySummary(family, modality),
+    metric_key: weeklyMetricKey(family, modality),
+    metric_category: `weekly_${family}`,
+    direction: comparator === "at_most" ? "decrease" : family === "planned_session_completion" ? "complete" : "increase",
+    baseline_value: null,
+    target_value: targetValue,
+    unit,
+    start_date: plan.week_start_date,
+    target_date: plan.week_end_date,
+    evaluation_rule_json: {
+      family,
+      comparator,
+      displayValue,
+      modality,
+      plannedWorkoutIDs,
+      slotID: proposal.slotID,
+      rationale: cleanTargetCopy(proposal.rationale),
+    },
+    source: "planning_engine",
+    status: "needs_review",
+  };
+}
+
+function normalizedWeeklyTargetFamily(family: string | undefined): WeeklyTargetFamily | null {
+  const value = String(family ?? "").toLowerCase().replace(/[-\s]+/g, "_");
+  const allowed = new Set([
+    "planned_session_completion",
+    "modality_session_count",
+    "modality_minutes",
+    "modality_distance",
+    "active_days",
+    "support_modality_presence",
+    "max_gap_guardrail",
+    "minimum_viable_week",
+    "body_weight_logging",
+    "running_pace",
+    "cycling_pace",
+  ]);
+  return allowed.has(value) ? value as WeeklyTargetFamily : null;
+}
+
+function normalizedWeeklyModality(value: string | null | undefined, workouts: Record<string, any>[], family: WeeklyTargetFamily) {
+  if (family === "planned_session_completion" || family === "active_days" || family === "max_gap_guardrail" || family === "body_weight_logging" || family === "minimum_viable_week") {
+    return null;
+  }
+  const normalized = value ? normalizeActivity(value) : primaryWeeklyModality(workouts);
+  if (!normalized) return null;
+  const present = new Set(workouts.map((workout) => normalizeActivity(`${workout.activity_type} ${workout.title} ${workout.purpose}`)));
+  if (family === "running_pace") return present.has("run") ? "run" : null;
+  if (family === "cycling_pace") return present.has("ride") ? "ride" : null;
+  return present.has(normalized) ? normalized : null;
+}
+
+function normalizedWeeklyTargetValue(value: number | null | undefined, family: WeeklyTargetFamily, modality: string | null, workouts: Record<string, any>[]) {
+  const numeric = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+  switch (family) {
+    case "planned_session_completion":
+      return Math.max(1, Math.min(workouts.length, numeric ? Math.round(numeric) : workouts.length));
+    case "minimum_viable_week":
+      return Math.max(1, Math.min(workouts.length, numeric ? Math.round(numeric) : Math.ceil(workouts.length * 0.6)));
+    case "active_days":
+      return Math.max(1, Math.min(new Set(workouts.map((workout) => workout.scheduled_date)).size, numeric ? Math.round(numeric) : new Set(workouts.map((workout) => workout.scheduled_date)).size));
+    case "modality_session_count":
+    case "support_modality_presence": {
+      const plannedCount = plannedWorkoutsForModality(workouts, modality).length;
+      return Math.max(1, Math.min(plannedCount, numeric ? Math.round(numeric) : plannedCount));
+    }
+    case "modality_minutes":
+      return Math.max(10, numeric ?? plannedMinutes(workouts, modality));
+    case "modality_distance":
+      return numeric;
+    case "max_gap_guardrail":
+      return Math.max(1, Math.min(4, numeric ? Math.round(numeric) : 3));
+    case "body_weight_logging":
+      return Math.max(1, Math.min(7, numeric ? Math.round(numeric) : 2));
+    case "running_pace":
+    case "cycling_pace":
+      return numeric;
+  }
+}
+
+function normalizedWeeklyComparator(comparator: string | undefined, family: WeeklyTargetFamily) {
+  if (family === "max_gap_guardrail" || family === "running_pace") return "at_most";
+  if (comparator === "between") return "between";
+  if (comparator === "at_most") return "at_most";
+  return "at_least";
+}
+
+function normalizedWeeklyUnit(unit: string | null | undefined, family: WeeklyTargetFamily) {
+  const value = cleanTargetCopy(unit ?? "");
+  if (value && !containsInternalTargetLanguage(value)) return value;
+  switch (family) {
+    case "planned_session_completion":
+    case "modality_session_count":
+    case "support_modality_presence":
+    case "minimum_viable_week":
+      return "sessions";
+    case "modality_minutes":
+      return "min";
+    case "modality_distance":
+      return "km";
+    case "active_days":
+    case "max_gap_guardrail":
+      return "days";
+    case "body_weight_logging":
+      return "entries";
+    case "running_pace":
+      return "min/km";
+    case "cycling_pace":
+      return "km/h";
+  }
+}
+
+function compactWeeklyTargetTitle(title: string, family: WeeklyTargetFamily, modality: string | null) {
+  const fallback = defaultWeeklyTitle(family, modality);
+  const clean = cleanTargetCopy(title);
+  if (!clean || containsInternalTargetLanguage(clean)) return fallback;
+  const withoutColon = clean.includes(":") ? clean.split(":").pop()?.trim() ?? clean : clean;
+  const words = withoutColon.split(/\s+/).filter(Boolean);
+  return words.slice(0, 6).join(" ").slice(0, 42).trim() || fallback;
+}
+
+function cleanTargetCopy(value: string) {
+  return String(value ?? "")
+    .replace(/\bbenchmark\b/gi, "result")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function containsInternalTargetLanguage(value: string) {
+  return /metric_key|snake_case|target_scope|weekly_plan_id|planned_workout_id|evaluation_rule/i.test(value);
+}
+
+function hasBadTargetLanguage(value: string) {
+  return /feel|feeling|confidence|review|decide|decision|select|next goal|adjust(ed|ment)? plan|plan adjusted|check[- ]?in|reflect|reflection/i.test(value);
+}
+
+function compactWeeklyDisplayValue(value: string | null | undefined) {
+  const clean = cleanTargetCopy(value ?? "");
+  if (!clean || containsInternalTargetLanguage(clean)) return null;
+  return clean
+    .replace(/\bminutes\b/gi, "min")
+    .replace(/\bminute\b/gi, "min")
+    .replace(/\bsessions\b/gi, "sessions")
+    .replace(/\bkilometers\b/gi, "km")
+    .replace(/\bdays\b/gi, "days")
+    .slice(0, 18)
+    .trim();
+}
+
+function weeklyDisplayValue(targetValue: number, unit: string, comparator: string) {
+  const formatted = targetValue % 1 === 0 ? String(targetValue) : targetValue.toFixed(1);
+  const prefix = comparator === "at_most" ? "<=" : comparator === "at_least" ? ">=" : "";
+  if (unit === "sessions") return `${prefix}${formatted}x`;
+  return `${prefix}${formatted} ${unit}`.trim();
+}
+
+function weeklyMetricKey(family: WeeklyTargetFamily, modality: string | null) {
+  return modality ? `${family}_${modality}` : family;
+}
+
+function defaultWeeklyTitle(family: WeeklyTargetFamily, modality: string | null) {
+  switch (family) {
+    case "planned_session_completion":
+      return "Planned sessions";
+    case "modality_session_count":
+      return `${titleCase(modality ?? "Workout")} sessions`;
+    case "modality_minutes":
+      return `${titleCase(modality ?? "Workout")} minutes`;
+    case "modality_distance":
+      return `${titleCase(modality ?? "Workout")} distance`;
+    case "active_days":
+      return "Active days";
+    case "support_modality_presence":
+      return `${titleCase(modality ?? "Support")} present`;
+    case "max_gap_guardrail":
+      return "Max gap";
+    case "minimum_viable_week":
+      return "Minimum week";
+    case "body_weight_logging":
+      return "Weight logs";
+    case "running_pace":
+      return "Run pace";
+    case "cycling_pace":
+      return "Ride speed";
+  }
+}
+
+function defaultWeeklySummary(family: WeeklyTargetFamily, modality: string | null) {
+  switch (family) {
+    case "max_gap_guardrail":
+      return "Keep workout spacing tight enough for the week to hold.";
+    case "minimum_viable_week":
+      return "Complete the reduced floor that still makes the week count.";
+    default:
+      return `Make the ${modality ? titleCase(modality) : "weekly"} target measurable from completed work.`;
+  }
+}
+
+function relevantWeeklyWorkoutIDs(workouts: Record<string, any>[], family: WeeklyTargetFamily, modality: string | null) {
+  if (!modality) return workouts.map((workout) => workout.id);
+  if (family === "active_days" || family === "planned_session_completion" || family === "minimum_viable_week") {
+    return workouts.map((workout) => workout.id);
+  }
+  return plannedWorkoutsForModality(workouts, modality).map((workout) => workout.id);
+}
+
+function primaryWeeklyModality(workouts: Record<string, any>[]) {
+  const counts = new Map<string, number>();
+  for (const workout of workouts) {
+    const modality = normalizeActivity(`${workout.activity_type} ${workout.title} ${workout.purpose}`);
+    if (modality === "mobility" || modality === "recovery") continue;
+    counts.set(modality, (counts.get(modality) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+}
+
+function plannedWorkoutsForModality(workouts: Record<string, any>[], modality: string | null) {
+  if (!modality) return workouts;
+  return workouts.filter((workout) => normalizeActivity(`${workout.activity_type} ${workout.title} ${workout.purpose}`) === modality);
+}
+
+function plannedMinutes(workouts: Record<string, any>[], modality: string | null) {
+  return plannedWorkoutsForModality(workouts, modality).reduce((sum, workout) => sum + Number(workout.duration_minutes ?? 0), 0);
+}
+
 async function evaluatePlanningTargets(
   admin: SupabaseAdminClient,
   userID: string,
@@ -3649,6 +4441,235 @@ async function evaluatePlanningTargets(
   }
 
   await throwOnError(admin.from("planning_target_evaluations").insert(evaluations));
+}
+
+async function evaluateWeeklyTargetsForPlans(admin: SupabaseAdminClient, userID: string, weeklyPlanIDs: string[]) {
+  if (weeklyPlanIDs.length === 0) return;
+
+  const [targets, workouts, latestSnapshotRow] = await Promise.all([
+    list(
+      admin
+        .from("planning_targets")
+        .select()
+        .eq("user_id", userID)
+        .eq("target_scope", "week")
+        .in("weekly_plan_id", weeklyPlanIDs),
+    ),
+    list(
+      admin
+        .from("planned_workouts")
+        .select()
+        .eq("user_id", userID)
+        .in("weekly_plan_id", weeklyPlanIDs)
+        .not("status", "in", "(deleted,superseded)"),
+    ),
+    maybeSingle(
+      admin
+        .from("health_feature_snapshots")
+        .select()
+        .eq("user_id", userID)
+        .order("generated_at", { ascending: false })
+        .limit(1),
+    ),
+  ]);
+  if (targets.length === 0) return;
+
+  const workoutIDs = workouts.map((workout: Record<string, any>) => workout.id);
+  const actuals = workoutIDs.length > 0
+    ? await list(
+      admin
+        .from("actual_workouts")
+        .select()
+        .eq("user_id", userID)
+        .in("matched_planned_workout_id", workoutIDs),
+    )
+    : [];
+
+  const actualByPlannedID = new Map<string, Record<string, any>>();
+  for (const actual of actuals) {
+    if (actual.matched_planned_workout_id) actualByPlannedID.set(actual.matched_planned_workout_id, actual);
+  }
+
+  const snapshot = latestSnapshotRow?.snapshot_json ?? null;
+  const evaluations: Record<string, unknown>[] = [];
+  for (const target of targets) {
+    const weekWorkouts = workouts.filter((workout: Record<string, any>) => workout.weekly_plan_id === target.weekly_plan_id);
+    const evaluation = evaluateWeeklyTarget(target, weekWorkouts, actualByPlannedID, snapshot);
+    evaluations.push({
+      user_id: userID,
+      planning_target_id: target.id,
+      status: evaluation.status,
+      current_value: evaluation.currentValue,
+      target_value: target.target_value,
+      unit: target.unit,
+      progress_ratio: evaluation.progressRatio,
+      evidence_json: evaluation.evidence,
+      message: evaluation.message,
+      confidence: evaluation.confidence,
+    });
+    await throwOnError(
+      admin
+        .from("planning_targets")
+        .update({ status: evaluation.status })
+        .eq("id", target.id)
+        .eq("user_id", userID),
+    );
+  }
+
+  await throwOnError(admin.from("planning_target_evaluations").insert(evaluations));
+}
+
+function evaluateWeeklyTarget(
+  target: Record<string, any>,
+  workouts: Record<string, any>[],
+  actualByPlannedID: Map<string, Record<string, any>>,
+  snapshot: Record<string, any> | null,
+) {
+  const rule = target.evaluation_rule_json ?? {};
+  const family = normalizedWeeklyTargetFamily(rule.family) ?? normalizedWeeklyTargetFamily(target.metric_key) ?? "planned_session_completion";
+  const comparator = rule.comparator === "at_most" || rule.comparator === "between" ? rule.comparator : "at_least";
+  const modality = typeof rule.modality === "string" ? rule.modality : null;
+  const targetValue = typeof target.target_value === "number" ? target.target_value : null;
+  if (!targetValue) {
+    return weeklyEvaluation("needs_review", null, null, "This weekly target needs a clearer measurable rule.", { reason: "missing_target_value" }, "low");
+  }
+
+  const currentValue = weeklyCurrentValue(family, modality, workouts, actualByPlannedID, snapshot, target);
+  if (currentValue === null) {
+    return weeklyEvaluation("needs_review", null, null, "HAYF does not have enough data to evaluate this weekly target yet.", { reason: "missing_weekly_metric", family }, "low");
+  }
+
+  const today = new Date();
+  const start = parseDateOnly(target.start_date);
+  const end = parseDateOnly(target.target_date);
+  const weekIsFuture = start ? start > today : false;
+  if (weekIsFuture) {
+    return weeklyEvaluation("needs_review", currentValue, null, "This draft-week target will be evaluated once the week starts.", { currentValue, targetValue, family }, "medium");
+  }
+
+  const achieved = comparator === "at_most" ? currentValue <= targetValue : currentValue >= targetValue;
+  const progressRatio = weeklyProgressRatio(currentValue, targetValue, comparator);
+  const expected = start && end ? weeklyExpectedProgressRatio(start, end, today) : 0.5;
+  const status = achieved ? "achieved" : progressRatio >= expected * 0.65 ? "on_track" : "lagging";
+  const message = achieved
+    ? "Weekly target reached."
+    : status === "on_track"
+      ? "This weekly target is broadly on track."
+      : "This weekly target is behind the current week pace.";
+  return weeklyEvaluation(status, currentValue, progressRatio, message, { currentValue, targetValue, family, comparator, expectedProgressRatio: expected }, "medium");
+}
+
+function weeklyExpectedProgressRatio(start: Date, end: Date, today: Date) {
+  if (today <= start) return 0;
+  if (today >= end) return 1;
+  const totalDays = Math.max(1, daysBetween(start, end));
+  const elapsedDays = Math.max(0, daysBetween(start, today));
+  return Math.max(0, Math.min(1, elapsedDays / totalDays));
+}
+
+function weeklyCurrentValue(
+  family: WeeklyTargetFamily,
+  modality: string | null,
+  workouts: Record<string, any>[],
+  actualByPlannedID: Map<string, Record<string, any>>,
+  snapshot: Record<string, any> | null,
+  target: Record<string, any>,
+) {
+  const completed = workouts.filter((workout) => isCompletedWorkout(workout));
+  const completedForModality = completed.filter((workout) => !modality || normalizeActivity(`${workout.activity_type} ${workout.title} ${workout.purpose}`) === modality);
+  const actualsForModality = completedForModality.map((workout) => actualByPlannedID.get(workout.id)).filter(Boolean) as Record<string, any>[];
+
+  switch (family) {
+    case "planned_session_completion":
+    case "minimum_viable_week":
+      return completed.length;
+    case "modality_session_count":
+    case "support_modality_presence":
+      return completedForModality.length;
+    case "modality_minutes":
+      return actualsForModality.length > 0
+        ? actualsForModality.reduce((sum, actual) => sum + Number(actual.duration_minutes ?? 0), 0)
+        : completedForModality.reduce((sum, workout) => sum + Number(workout.duration_minutes ?? 0), 0);
+    case "modality_distance":
+      return actualsForModality.reduce((sum, actual) => sum + Number(actual.distance_kilometers ?? 0), 0);
+    case "active_days":
+      return new Set(completed.map((workout) => workout.scheduled_date)).size;
+    case "max_gap_guardrail":
+      return longestWorkoutGapDays(completed, target.start_date, target.target_date);
+    case "body_weight_logging":
+      return bodyWeightEntriesForWeek(snapshot, target.start_date, target.target_date);
+    case "running_pace":
+      return paceMinutesPerKilometer(actualsForModality);
+    case "cycling_pace":
+      return speedKilometersPerHour(actualsForModality);
+  }
+}
+
+function isCompletedWorkout(workout: Record<string, any>) {
+  return ["done", "checked_in"].includes(String(workout.status));
+}
+
+function longestWorkoutGapDays(workouts: Record<string, any>[], startDate: string, endDate: string) {
+  const start = parseDateOnly(startDate);
+  const end = parseDateOnly(endDate);
+  if (!start || !end) return null;
+  const completedDates = workouts.map((workout) => workout.scheduled_date).filter(Boolean).sort();
+  const anchors = [startDate, ...completedDates, endDate];
+  let longest = 0;
+  for (let index = 1; index < anchors.length; index += 1) {
+    const previous = parseDateOnly(anchors[index - 1]);
+    const current = parseDateOnly(anchors[index]);
+    if (!previous || !current) continue;
+    longest = Math.max(longest, Math.max(0, daysBetween(previous, current)));
+  }
+  return longest;
+}
+
+function bodyWeightEntriesForWeek(snapshot: Record<string, any> | null, startDate: string, endDate: string) {
+  const latest = snapshot?.body?.bodyMassLatestSampleDate;
+  if (typeof latest !== "string") return null;
+  const latestDate = latest.slice(0, 10);
+  return latestDate >= startDate && latestDate <= endDate ? 1 : 0;
+}
+
+function paceMinutesPerKilometer(actuals: Record<string, any>[]) {
+  const distance = actuals.reduce((sum, actual) => sum + Number(actual.distance_kilometers ?? 0), 0);
+  const duration = actuals.reduce((sum, actual) => sum + Number(actual.duration_minutes ?? 0), 0);
+  if (distance <= 0 || duration <= 0) return null;
+  return Number((duration / distance).toFixed(2));
+}
+
+function speedKilometersPerHour(actuals: Record<string, any>[]) {
+  const distance = actuals.reduce((sum, actual) => sum + Number(actual.distance_kilometers ?? 0), 0);
+  const duration = actuals.reduce((sum, actual) => sum + Number(actual.duration_minutes ?? 0), 0);
+  if (distance <= 0 || duration <= 0) return null;
+  return Number((distance / (duration / 60)).toFixed(1));
+}
+
+function weeklyProgressRatio(currentValue: number, targetValue: number, comparator: string) {
+  if (targetValue <= 0) return 0;
+  if (comparator === "at_most") {
+    return currentValue <= targetValue ? 1 : Math.max(0, Math.min(1, targetValue / currentValue));
+  }
+  return Math.max(0, Math.min(1.5, currentValue / targetValue));
+}
+
+function weeklyEvaluation(
+  status: "on_track" | "lagging" | "achieved" | "needs_review",
+  currentValue: number | null,
+  progressRatio: number | null,
+  message: string,
+  evidence: Record<string, unknown>,
+  confidence: "low" | "medium" | "high",
+) {
+  return {
+    status,
+    currentValue,
+    progressRatio: progressRatio !== null ? Number(progressRatio.toFixed(2)) : null,
+    message,
+    evidence,
+    confidence,
+  };
 }
 
 function objectAt(object: Record<string, unknown> | undefined | null, key: string): Record<string, any> | null {
@@ -4591,6 +5612,20 @@ async function hasUsablePlanWindow(
   const dates = workouts.map((workout: Record<string, any>) => workout.scheduled_date).sort();
   const lastWorkoutDate = dates[dates.length - 1];
   return lastWorkoutDate >= isoDate(addDays(parseDateOnly(window.end) ?? new Date(), -1));
+}
+
+async function hasWeeklyTargetsForPlans(admin: SupabaseAdminClient, userID: string, weeklyPlanIDs: string[]) {
+  if (weeklyPlanIDs.length === 0) return false;
+  const targets = await list(
+    admin
+      .from("planning_targets")
+      .select("id,weekly_plan_id")
+      .eq("user_id", userID)
+      .eq("target_scope", "week")
+      .in("weekly_plan_id", weeklyPlanIDs),
+  );
+  const coveredPlans = new Set(targets.map((target: Record<string, any>) => target.weekly_plan_id));
+  return weeklyPlanIDs.every((weeklyPlanID) => coveredPlans.has(weeklyPlanID));
 }
 
 async function createPlanEvent(

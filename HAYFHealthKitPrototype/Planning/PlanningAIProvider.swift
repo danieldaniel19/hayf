@@ -51,6 +51,16 @@ struct PlanningAIProvider {
         )
     }
 
+    func generateWeeklyPlanTargets(windowStart: Date? = nil) async throws -> PlanningFunctionResponse {
+        try await invoke(
+            PlanningFunctionRequest(
+                task: .generateWeeklyPlanTargets,
+                deviceTimezone: TimeZone.current.identifier,
+                windowStart: windowStart.map(Self.dateOnlyFormatter.string(from:))
+            )
+        )
+    }
+
     func recordPlanEdit(
         _ edit: PlanningPlanEdit,
         repairPolicy: PlanningRepairPolicy = .immediate
@@ -511,6 +521,7 @@ enum PlanningAITask: String, Codable {
     case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"
     case refreshPlanWindow = "refresh_plan_window"
+    case generateWeeklyPlanTargets = "generate_weekly_plan_targets"
     case recordPlanEdit = "record_plan_edit"
     case recordWeeklyPlanConstraint = "record_weekly_plan_constraint"
     case recommendWorkoutReplacements = "recommend_workout_replacements"

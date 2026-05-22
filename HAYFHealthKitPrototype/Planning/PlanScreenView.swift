@@ -17,6 +17,7 @@ struct PlanScreenView: View {
     @State private var workoutCandidateLoadID: UUID?
     @State private var selectedConstraintDay: PlanConstraintEditingContext?
     @State private var isSavingConstraint = false
+    @State private var didAttemptWeeklyTargetBackfill = false
 
     private let planningAIProvider = PlanningAIProvider()
 
@@ -40,29 +41,17 @@ struct PlanScreenView: View {
                 Group {
                     if store.isLoading && !didLoad {
                         PlanLoadingView()
-                    } else if let block = store.activeBlock {
+                    } else if store.activeBlock != nil {
                         PlanContentView(
-                            block: block,
-                            phases: store.phases,
                             weeklyRhythms: store.weeklyRhythms,
                             workouts: store.workouts,
                             goalTargets: store.goalTargets,
                             goalEvaluations: store.goalEvaluations,
-                            pendingReplanProposal: store.pendingReplanProposals.first,
                             errorMessage: store.errorMessage,
                             movingWorkout: movingWorkout,
                             isAnalyzingEdit: activeEditAnalysis != nil,
-                            showActiveBlockDetail: {
-                                selectedDetail = .activeBlock
-                            },
-                            showPhaseDetail: { item in
-                                selectedDetail = .phase(item)
-                            },
                             showTargetDetail: { target in
                                 selectedDetail = .target(target)
-                            },
-                            showReplanProposal: { proposal in
-                                selectedReplanProposal = proposal
                             },
                             moveWorkout: { workout, date, sequenceOrder in
                                 Task { await moveWorkout(workout, to: date, sequenceOrder: sequenceOrder) }
@@ -86,16 +75,14 @@ struct PlanScreenView: View {
                                 showConstraintEditor(for: group)
                             },
                             reload: {
-                                await store.loadVisiblePlan()
-                                didLoad = true
+                                await loadPlan(allowWeeklyTargetBackfill: true, forceWeeklyTargetBackfill: true)
                             }
                         )
                     } else {
                         PlanEmptyView(
                             errorMessage: store.errorMessage,
                             reload: {
-                                await store.loadVisiblePlan()
-                                didLoad = true
+                                await loadPlan(allowWeeklyTargetBackfill: true, forceWeeklyTargetBackfill: true)
                             }
                         )
                     }
@@ -110,8 +97,7 @@ struct PlanScreenView: View {
         }
         .task {
             guard !didLoad else { return }
-            await store.loadVisiblePlan()
-            didLoad = true
+            await loadPlan(allowWeeklyTargetBackfill: true)
             presentInitialBlockDetailIfNeeded()
         }
         .onChange(of: store.activeBlock?.id) { _, _ in
@@ -198,8 +184,55 @@ struct PlanScreenView: View {
         }
 
         didPresentInitialBlockDetail = true
-        selectedDetail = .activeBlock
         onDidPresentActiveBlockOnFirstLoad()
+    }
+
+    private func loadPlan(
+        allowWeeklyTargetBackfill: Bool,
+        forceWeeklyTargetBackfill: Bool = false
+    ) async {
+        await store.loadVisiblePlan()
+        didLoad = true
+
+        guard allowWeeklyTargetBackfill,
+              shouldBackfillWeeklyTargets(force: forceWeeklyTargetBackfill) else {
+            return
+        }
+
+        didAttemptWeeklyTargetBackfill = true
+        do {
+            _ = try await planningAIProvider.generateWeeklyPlanTargets()
+            await store.loadVisiblePlan()
+        } catch is CancellationError {
+            return
+        } catch {
+            #if DEBUG
+            print("Weekly target backfill failed: \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func shouldBackfillWeeklyTargets(force: Bool) -> Bool {
+        guard (force || !didAttemptWeeklyTargetBackfill),
+              store.activeBlock != nil else {
+            return false
+        }
+
+        let visibleWeekIDs = Set(store.weeklyRhythms
+            .filter { $0.status == "committed" || $0.status == "draft" }
+            .map(\.id))
+        guard !visibleWeekIDs.isEmpty else { return false }
+
+        let coveredWeekIDs = Set(store.goalTargets.compactMap { target -> UUID? in
+            guard target.targetScope == .week,
+                  let weeklyPlanID = target.weeklyPlanID,
+                  visibleWeekIDs.contains(weeklyPlanID) else {
+                return nil
+            }
+            return weeklyPlanID
+        })
+
+        return !visibleWeekIDs.isSubset(of: coveredWeekIDs)
     }
 
     private func moveWorkout(_ workout: PlanWorkout, to date: String, sequenceOrder: Int?) async {
@@ -625,20 +658,14 @@ private struct PlanEditAnalysisOverlay: View {
 }
 
 private struct PlanContentView: View {
-    let block: PlanActiveFitnessBlock
-    let phases: [PlanFitnessBlockPhase]
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
     let goalTargets: [PlanGoalTarget]
     let goalEvaluations: [PlanGoalEvaluation]
-    let pendingReplanProposal: PlanReplanProposal?
     let errorMessage: String?
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
-    let showActiveBlockDetail: () -> Void
-    let showPhaseDetail: (PlanRoadmapItem) -> Void
     let showTargetDetail: (PlanGoalTarget) -> Void
-    let showReplanProposal: (PlanReplanProposal) -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
     let cancelMoveWorkout: () -> Void
@@ -651,51 +678,25 @@ private struct PlanContentView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                PlanHeader()
-
-                VStack(alignment: .leading, spacing: 22) {
-                    Text("Plan")
-                        .font(.system(size: 44, weight: .bold))
-                        .foregroundStyle(HAYFColor.primary)
-
-                    PlanBlockCard(
-                        block: block,
-                        phases: phases,
-                        workouts: workouts,
-                        showActiveBlockDetail: showActiveBlockDetail,
-                        showPhaseDetail: showPhaseDetail
-                    )
-
-                    PlanTrainingTargetsCard(
-                        targets: goalTargets,
-                        evaluations: goalEvaluations,
-                        showTargetDetail: showTargetDetail
-                    )
-
-                    if let pendingReplanProposal {
-                        PlanCoachReviewCard(
-                            proposal: pendingReplanProposal,
-                            open: { showReplanProposal(pendingReplanProposal) }
-                        )
-                    }
-
-                    PlanWorkoutsPanel(
-                        weeklyRhythms: weeklyRhythms,
-                        workouts: workouts,
-                        movingWorkout: movingWorkout,
-                        isAnalyzingEdit: isAnalyzingEdit,
-                        moveWorkout: moveWorkout,
-                        beginMoveWorkout: beginMoveWorkout,
-                        cancelMoveWorkout: cancelMoveWorkout,
-                        deleteWorkout: deleteWorkout,
-                        replaceWorkout: replaceWorkout,
-                        addWorkout: addWorkout,
-                        editConstraint: editConstraint
-                    )
-                }
+                PlanWorkoutsPanel(
+                    weeklyRhythms: weeklyRhythms,
+                    workouts: workouts,
+                    targets: goalTargets,
+                    evaluations: goalEvaluations,
+                    movingWorkout: movingWorkout,
+                    isAnalyzingEdit: isAnalyzingEdit,
+                    showTargetDetail: showTargetDetail,
+                    moveWorkout: moveWorkout,
+                    beginMoveWorkout: beginMoveWorkout,
+                    cancelMoveWorkout: cancelMoveWorkout,
+                    deleteWorkout: deleteWorkout,
+                    replaceWorkout: replaceWorkout,
+                    addWorkout: addWorkout,
+                    editConstraint: editConstraint
+                )
             }
             .padding(.horizontal, 24)
-            .padding(.top, 28)
+            .padding(.top, 18)
             .padding(.bottom, 28)
             .frame(maxWidth: 520)
             .frame(maxWidth: .infinity)
@@ -1109,8 +1110,11 @@ private struct PlanMoveCue: View {
 private struct PlanWorkoutsPanel: View {
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
+    let targets: [PlanGoalTarget]
+    let evaluations: [PlanGoalEvaluation]
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
+    let showTargetDetail: (PlanGoalTarget) -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
     let cancelMoveWorkout: () -> Void
@@ -1121,17 +1125,6 @@ private struct PlanWorkoutsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("This week + draft week")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text("Your committed week is the plan to execute. Next week stays draft until Sunday at 9pm.")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             VStack(alignment: .leading, spacing: 0) {
                 if let movingWorkout {
                     PlanMoveCue(workout: movingWorkout, cancel: cancelMoveWorkout)
@@ -1142,8 +1135,11 @@ private struct PlanWorkoutsPanel: View {
                     title: "This week",
                     rhythm: rhythm(for: .current),
                     groups: groups(for: .current),
+                    targets: weekTargets(for: .current),
+                    evaluations: evaluations,
                     movingWorkout: movingWorkout,
                     isAnalyzingEdit: isAnalyzingEdit,
+                    showTargetDetail: showTargetDetail,
                     moveWorkout: moveWorkout,
                     beginMoveWorkout: beginMoveWorkout,
                     deleteWorkout: deleteWorkout,
@@ -1160,8 +1156,11 @@ private struct PlanWorkoutsPanel: View {
                     title: "Next week",
                     rhythm: rhythm(for: .next),
                     groups: groups(for: .next),
+                    targets: weekTargets(for: .next),
+                    evaluations: evaluations,
                     movingWorkout: movingWorkout,
                     isAnalyzingEdit: isAnalyzingEdit,
+                    showTargetDetail: showTargetDetail,
                     moveWorkout: moveWorkout,
                     beginMoveWorkout: beginMoveWorkout,
                     deleteWorkout: deleteWorkout,
@@ -1185,6 +1184,11 @@ private struct PlanWorkoutsPanel: View {
         weeklyRhythms.first { PlanDate.bucket(for: $0.weekStartDate) == week }
     }
 
+    private func weekTargets(for week: PlanWeekBucket) -> [PlanGoalTarget] {
+        guard let weekPlanID = rhythm(for: week)?.id else { return [] }
+        return targets.filter { $0.targetScope == .week && $0.weeklyPlanID == weekPlanID }
+    }
+
     private func groups(for week: PlanWeekBucket) -> [PlanWorkoutDayGroup] {
         let weekRhythm = rhythm(for: week)
         let filtered = workouts.filter { PlanDate.bucket(for: $0.scheduledDate) == week }
@@ -1206,8 +1210,11 @@ private struct PlanWeekSection: View {
     let title: String
     let rhythm: PlanWeeklyRhythm?
     let groups: [PlanWorkoutDayGroup]
+    let targets: [PlanGoalTarget]
+    let evaluations: [PlanGoalEvaluation]
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
+    let showTargetDetail: (PlanGoalTarget) -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
@@ -1245,6 +1252,14 @@ private struct PlanWeekSection: View {
                 }
             }
 
+            if !targets.isEmpty {
+                PlanWeeklyTargetsView(
+                    targets: targets,
+                    evaluations: evaluations,
+                    showTargetDetail: showTargetDetail
+                )
+            }
+
             VStack(spacing: 8) {
                 ForEach(groups) { group in
                     PlanWorkoutDayRow(
@@ -1259,6 +1274,24 @@ private struct PlanWeekSection: View {
                         editConstraint: editConstraint
                     )
                 }
+            }
+        }
+    }
+}
+
+private struct PlanWeeklyTargetsView: View {
+    let targets: [PlanGoalTarget]
+    let evaluations: [PlanGoalEvaluation]
+    let showTargetDetail: (PlanGoalTarget) -> Void
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(targets.prefix(3)) { target in
+                PlanTrainingTargetRow(
+                    target: target,
+                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
+                    openDetail: { showTargetDetail(target) }
+                )
             }
         }
     }
@@ -3563,6 +3596,9 @@ private enum PlanDisplay {
 
 private enum PlanTargetDisplay {
     static func isWeeklyTarget(_ target: PlanGoalTarget) -> Bool {
+        if target.targetScope == .week {
+            return true
+        }
         let category = target.metricCategory ?? ""
         return category.hasPrefix("weekly_")
     }

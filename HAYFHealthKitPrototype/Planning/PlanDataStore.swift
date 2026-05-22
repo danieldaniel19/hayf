@@ -48,21 +48,28 @@ final class PlanDataStore: ObservableObject {
             async let phases = fetchPhases(for: block.id)
             async let weeklyRhythms = fetchWeeklyRhythms(for: block.id)
             async let workouts = fetchWorkouts(for: block.id)
-            async let goalTargets = fetchGoalTargets(for: block.id)
             async let goalEvaluations = fetchGoalEvaluations(for: block.id)
             async let historyInsights = fetchHistoryInsights(for: block.id)
             async let debriefRequests = fetchDebriefRequests(for: block.id)
             async let pendingReplanProposals = fetchPendingReplanProposals(for: block.id)
 
+            let loadedWeeklyRhythms = try await weeklyRhythms
+            let loadedTargets = try await fetchPlanningTargets(
+                for: block.id,
+                weeklyPlanIDs: loadedWeeklyRhythms.map(\.id)
+            )
+
             activeBlock = block
             self.phases = try await phases
-            self.weeklyRhythms = try await weeklyRhythms
+            self.weeklyRhythms = loadedWeeklyRhythms
             self.workouts = try await workouts
-            self.goalTargets = try await goalTargets
+            self.goalTargets = loadedTargets
             self.goalEvaluations = try await goalEvaluations
             self.historyInsights = try await historyInsights
             self.debriefRequests = try await debriefRequests
             self.pendingReplanProposals = try await pendingReplanProposals
+        } catch is CancellationError {
+            // SwiftUI can cancel an in-flight refresh when a newer load starts. Keep the current plan visible.
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -139,15 +146,40 @@ final class PlanDataStore: ObservableObject {
         }
     }
 
-    private func fetchGoalTargets(for strategyID: UUID) async throws -> [PlanGoalTarget] {
+    private func fetchPlanningTargets(for strategyID: UUID, weeklyPlanIDs: [UUID]) async throws -> [PlanGoalTarget] {
+        async let strategyTargets = fetchStrategyTargets(for: strategyID)
+        async let weeklyTargets = fetchWeeklyTargets(for: weeklyPlanIDs)
+        let loadedStrategyTargets = try await strategyTargets
+        let loadedWeeklyTargets = try await weeklyTargets
+        return loadedStrategyTargets + loadedWeeklyTargets
+    }
+
+    private func fetchStrategyTargets(for strategyID: UUID) async throws -> [PlanGoalTarget] {
         try await supabase
             .from("planning_targets")
-            .select("id, fitness_strategy_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at")
+            .select(PlanGoalTarget.selectColumns)
             .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .order("target_kind", ascending: true)
             .order("created_at", ascending: true)
             .execute()
             .value
+    }
+
+    private func fetchWeeklyTargets(for weeklyPlanIDs: [UUID]) async throws -> [PlanGoalTarget] {
+        var targets: [PlanGoalTarget] = []
+        for weeklyPlanID in weeklyPlanIDs {
+            let weekTargets: [PlanGoalTarget] = try await supabase
+                .from("planning_targets")
+                .select(PlanGoalTarget.selectColumns)
+                .eq("weekly_plan_id", value: weeklyPlanID.uuidString.lowercased())
+                .eq("target_scope", value: "week")
+                .order("target_kind", ascending: true)
+                .order("created_at", ascending: true)
+                .execute()
+                .value
+            targets.append(contentsOf: weekTargets)
+        }
+        return targets
     }
 
     private func fetchGoalEvaluations(for strategyID: UUID) async throws -> [PlanGoalEvaluation] {
@@ -492,8 +524,12 @@ struct PlanWorkout: Decodable, Identifiable {
 }
 
 struct PlanGoalTarget: Decodable, Identifiable {
+    static let selectColumns = "id, fitness_strategy_id, weekly_plan_id, target_scope, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at"
+
     let id: UUID
     let activeBlockID: UUID?
+    let weeklyPlanID: UUID?
+    let targetScope: PlanTargetScope?
     let parentGoalTargetID: UUID?
     let targetKind: PlanGoalTargetKind
     let title: String
@@ -513,6 +549,8 @@ struct PlanGoalTarget: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id
         case activeBlockID = "fitness_strategy_id"
+        case weeklyPlanID = "weekly_plan_id"
+        case targetScope = "target_scope"
         case parentGoalTargetID = "parent_goal_target_id"
         case targetKind = "target_kind"
         case title
@@ -535,6 +573,14 @@ enum PlanGoalTargetKind: String, Decodable {
     case primary
     case supporting
     case subGoal = "sub_goal"
+}
+
+enum PlanTargetScope: String, Decodable {
+    case goal
+    case strategy
+    case phase
+    case week
+    case session
 }
 
 enum PlanGoalStatus: String, Decodable {

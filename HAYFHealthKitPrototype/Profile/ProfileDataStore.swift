@@ -89,7 +89,7 @@ final class ProfileDataStore: ObservableObject {
     private func fetchGoalTargets(for strategyID: UUID) async throws -> [PlanGoalTarget] {
         try await supabase
             .from("planning_targets")
-            .select("id, fitness_strategy_id, target_kind, title, description, metric_key, metric_category, direction, baseline_value, target_value, unit, start_date, target_date, evaluation_rule_json, source, status, created_at")
+            .select(PlanGoalTarget.selectColumns)
             .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .order("target_kind", ascending: true)
             .order("created_at", ascending: true)
