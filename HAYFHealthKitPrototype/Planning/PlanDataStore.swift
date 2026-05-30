@@ -140,10 +140,12 @@ final class PlanDataStore: ObservableObject {
             .execute()
             .value
 
-        return workouts.filter { workout in
+        let visibleWorkouts = workouts.filter { workout in
             guard let weeklyPlanID = workout.weeklyPlanID else { return false }
             return planIDs.contains(weeklyPlanID)
         }
+
+        return deduplicatedGeneratedWorkouts(visibleWorkouts)
     }
 
     private func fetchPlanningTargets(for strategyID: UUID, weeklyPlanIDs: [UUID]) async throws -> [PlanGoalTarget] {
@@ -241,6 +243,45 @@ final class PlanDataStore: ObservableObject {
             .value
 
         return Set(plans.filter { $0.status == "committed" || $0.status == "draft" }.map(\.id))
+    }
+
+    private func deduplicatedGeneratedWorkouts(_ workouts: [PlanWorkout]) -> [PlanWorkout] {
+        var seenGeneratedKeys = Set<String>()
+
+        return workouts.filter { workout in
+            guard isGeneratedPlanWorkout(workout) else {
+                return true
+            }
+
+            let key = generatedWorkoutKey(workout)
+            return seenGeneratedKeys.insert(key).inserted
+        }
+    }
+
+    private func isGeneratedPlanWorkout(_ workout: PlanWorkout) -> Bool {
+        (workout.source == "generated" || workout.source == "replanned")
+            && (workout.status == .planned || workout.status == .current)
+    }
+
+    private func generatedWorkoutKey(_ workout: PlanWorkout) -> String {
+        [
+            workout.weeklyPlanID?.uuidString.lowercased() ?? "",
+            workout.scheduledDate,
+            String(workout.sequenceOrder),
+            normalizedGeneratedWorkoutText(workout.activityType),
+            normalizedGeneratedWorkoutText(workout.title),
+            String(workout.durationMinutes),
+            normalizedGeneratedWorkoutText(workout.intensityLabel),
+            normalizedGeneratedWorkoutText(workout.purpose)
+        ].joined(separator: "|")
+    }
+
+    private func normalizedGeneratedWorkoutText(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 }
 
@@ -593,6 +634,7 @@ enum PlanGoalStatus: String, Decodable {
     case onTrack = "on_track"
     case lagging
     case achieved
+    case notStarted = "not_started"
     case needsReview = "needs_review"
 
     var displayName: String {
@@ -603,6 +645,8 @@ enum PlanGoalStatus: String, Decodable {
             return "Lagging"
         case .achieved:
             return "Achieved"
+        case .notStarted:
+            return "Not started"
         case .needsReview:
             return "Needs review"
         }

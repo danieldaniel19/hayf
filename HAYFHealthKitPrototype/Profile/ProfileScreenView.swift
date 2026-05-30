@@ -1058,7 +1058,7 @@ private enum ProfileDisplay {
 
     static func statusColor(for status: PlanGoalStatus?) -> Color {
         switch status {
-        case .onTrack, .achieved:
+        case .onTrack, .achieved, .notStarted:
             return HAYFColor.primary
         case .lagging:
             return HAYFColor.error

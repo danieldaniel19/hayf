@@ -19,12 +19,12 @@ struct PlanScreenView: View {
     @State private var movingWorkout: PlanWorkout?
     @State private var activeEditAnalysis: PlanEditAnalysis?
     @State private var workoutCandidateLoadID: UUID?
+    @State private var selectedDayAction: PlanDayActionContext?
     @State private var selectedConstraintDay: PlanConstraintEditingContext?
     @State private var isSavingConstraint = false
     @State private var didAttemptWeeklyTargetBackfill = false
 
     private let planningAIProvider = PlanningAIProvider()
-    private let healthSyncService = HealthSyncService()
 
     let presentActiveBlockOnFirstLoad: Bool
     let onDidPresentActiveBlockOnFirstLoad: () -> Void
@@ -80,11 +80,8 @@ struct PlanScreenView: View {
                             replaceWorkout: { workout in
                                 showWorkoutPlanning(WorkoutPlanningContext(mode: .replace(workout: workout)))
                             },
-                            addWorkout: { date, sequenceOrder in
-                                showWorkoutPlanning(WorkoutPlanningContext(mode: .add(date: date, sequenceOrder: sequenceOrder)))
-                            },
-                            editConstraint: { group in
-                                showConstraintEditor(for: group)
+                            showDayActions: { group in
+                                selectedDayAction = PlanDayActionContext(group: group)
                             },
                             reload: {
                                 await loadPlan(allowWeeklyTargetBackfill: true, forceWeeklyTargetBackfill: true)
@@ -162,6 +159,25 @@ struct PlanScreenView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(item: $selectedDayAction) { context in
+            PlanDayActionSheet(
+                context: context,
+                addWorkout: {
+                    selectedDayAction = nil
+                    DispatchQueue.main.async {
+                        showWorkoutPlanning(WorkoutPlanningContext(mode: .add(date: context.date, sequenceOrder: context.nextSequenceOrder)))
+                    }
+                },
+                editAvailability: {
+                    selectedDayAction = nil
+                    DispatchQueue.main.async {
+                        showConstraintEditor(for: context.group)
+                    }
+                }
+            )
+            .presentationDetents([.height(280)])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(item: $selectedReplanProposal) { proposal in
             ReplanProposalSheet(
                 proposal: proposal,
@@ -204,7 +220,6 @@ struct PlanScreenView: View {
         allowWeeklyTargetBackfill: Bool,
         forceWeeklyTargetBackfill: Bool = false
     ) async {
-        await syncImportedWorkoutsIntoPlan()
         await store.loadVisiblePlan()
         didLoad = true
 
@@ -224,14 +239,6 @@ struct PlanScreenView: View {
             print("Weekly target backfill failed: \(error.localizedDescription)")
             #endif
         }
-    }
-
-    private func syncImportedWorkoutsIntoPlan() async {
-        guard let payload = try? await healthSyncService.buildSyncPayload(daysBack: 14) else {
-            return
-        }
-
-        _ = try? await planningAIProvider.syncHealthKitAndReconcile(payload: payload)
     }
 
     private func shouldBackfillWeeklyTargets(force: Bool) -> Bool {
@@ -700,6 +707,119 @@ private struct PlanConstraintEditingContext: Identifiable {
     }
 }
 
+private struct PlanDayActionContext: Identifiable {
+    let group: PlanWorkoutDayGroup
+
+    var id: String {
+        group.id
+    }
+
+    var date: String {
+        group.date
+    }
+
+    var nextSequenceOrder: Int {
+        (group.workouts.map(\.sequenceOrder).max() ?? 0) + 1
+    }
+
+    var isUnavailable: Bool {
+        group.constraint?.kind == .unavailable
+    }
+}
+
+private struct PlanDayActionSheet: View {
+    let context: PlanDayActionContext
+    let addWorkout: () -> Void
+    let editAvailability: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            HAYFColor.neutral
+                .ignoresSafeArea()
+
+            VStack(alignment: .leading, spacing: 18) {
+                SheetHeader(
+                    overline: "DAY SLOT",
+                    title: PlanDate.longLabel(context.date),
+                    dismiss: { dismiss() }
+                )
+
+                VStack(spacing: 10) {
+                    PlanDayActionSheetRow(
+                        iconName: "plus",
+                        title: "Add workout",
+                        subtitle: context.isUnavailable ? "Make this day available first." : "Plan-aware suggestions or manual entry.",
+                        isDisabled: context.isUnavailable,
+                        action: addWorkout
+                    )
+
+                    PlanDayActionSheetRow(
+                        iconName: "slider.horizontal.3",
+                        title: "Availability",
+                        subtitle: "Limited, unavailable, or note for HAYF.",
+                        isDisabled: false,
+                        action: editAvailability
+                    )
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
+        }
+    }
+}
+
+private struct PlanDayActionSheetRow: View {
+    let iconName: String
+    let title: String
+    let subtitle: String
+    let isDisabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: iconName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isDisabled ? HAYFColor.muted : HAYFColor.orange)
+                    .frame(width: 34, height: 34)
+                    .background((isDisabled ? HAYFColor.surfaceDisabled : HAYFColor.orange.opacity(0.08)))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(isDisabled ? HAYFColor.muted : HAYFColor.primary)
+
+                    Text(subtitle)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(HAYFColor.muted)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .accessibilityLabel(title)
+    }
+}
+
 private struct PlanEditAnalysisOverlay: View {
     let message: String
 
@@ -752,8 +872,7 @@ private struct PlanContentView: View {
     let cancelMoveWorkout: () -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
-    let addWorkout: (String, Int) -> Void
-    let editConstraint: (PlanWorkoutDayGroup) -> Void
+    let showDayActions: (PlanWorkoutDayGroup) -> Void
     let reload: () async -> Void
 
     var body: some View {
@@ -777,8 +896,7 @@ private struct PlanContentView: View {
                     cancelMoveWorkout: cancelMoveWorkout,
                     deleteWorkout: deleteWorkout,
                     replaceWorkout: replaceWorkout,
-                    addWorkout: addWorkout,
-                    editConstraint: editConstraint
+                    showDayActions: showDayActions
                 )
             }
             .padding(.horizontal, 24)
@@ -1070,13 +1188,13 @@ private struct PlanTrainingTargetRow: View {
     let openDetail: () -> Void
 
     private var status: PlanGoalStatus {
-        evaluation?.status ?? target.status
+        PlanTargetDisplay.status(for: target, evaluation: evaluation)
     }
 
     var body: some View {
         Button(action: openDetail) {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: PlanTargetDisplay.iconName(for: target))
+                Image(systemName: status == .achieved ? "checkmark" : PlanTargetDisplay.iconName(for: target))
                     .font(.system(size: 18, weight: .regular))
                     .foregroundStyle(HAYFColor.primary)
                     .frame(width: 38, height: 44)
@@ -1194,6 +1312,8 @@ private struct PlanMoveCue: View {
 }
 
 private struct PlanWorkoutsPanel: View {
+    @State private var selectedWeek: PlanWeekBucket = .current
+
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
     let targets: [PlanGoalTarget]
@@ -1211,12 +1331,17 @@ private struct PlanWorkoutsPanel: View {
     let cancelMoveWorkout: () -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
-    let addWorkout: (String, Int) -> Void
-    let editConstraint: (PlanWorkoutDayGroup) -> Void
+    let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 0) {
+                PlanWeekSwitcher(
+                    selectedWeek: selectedWeek,
+                    selectWeek: { selectedWeek = $0 }
+                )
+                .padding(.bottom, 16)
+
                 if pendingProposal != nil || pendingReview != nil {
                     PlanReviewChangesCTA(
                         pendingReview: pendingReview,
@@ -1236,10 +1361,10 @@ private struct PlanWorkoutsPanel: View {
                 }
 
                 PlanWeekSection(
-                    title: "This week",
-                    rhythm: rhythm(for: .current),
-                    groups: groups(for: .current),
-                    targets: weekTargets(for: .current),
+                    title: title(for: selectedWeek),
+                    rhythm: rhythm(for: selectedWeek),
+                    groups: groups(for: selectedWeek),
+                    targets: weekTargets(for: selectedWeek),
                     evaluations: evaluations,
                     movingWorkout: movingWorkout,
                     isAnalyzingEdit: isAnalyzingEdit,
@@ -1248,31 +1373,8 @@ private struct PlanWorkoutsPanel: View {
                     beginMoveWorkout: beginMoveWorkout,
                     deleteWorkout: deleteWorkout,
                     replaceWorkout: replaceWorkout,
-                    addWorkout: addWorkout,
-                    editConstraint: editConstraint
+                    showDayActions: showDayActions
                 )
-
-                Divider()
-                    .background(HAYFColor.borderStrong)
-                    .padding(.vertical, 14)
-
-                PlanWeekSection(
-                    title: "Next week",
-                    rhythm: rhythm(for: .next),
-                    groups: groups(for: .next),
-                    targets: weekTargets(for: .next),
-                    evaluations: evaluations,
-                    movingWorkout: movingWorkout,
-                    isAnalyzingEdit: isAnalyzingEdit,
-                    showTargetDetail: showTargetDetail,
-                    moveWorkout: moveWorkout,
-                    beginMoveWorkout: beginMoveWorkout,
-                    deleteWorkout: deleteWorkout,
-                    replaceWorkout: replaceWorkout,
-                    addWorkout: addWorkout,
-                    editConstraint: editConstraint
-                )
-
             }
             .padding(18)
             .background(HAYFColor.surface)
@@ -1281,6 +1383,17 @@ private struct PlanWorkoutsPanel: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(HAYFColor.borderStrong, lineWidth: 1)
             }
+        }
+    }
+
+    private func title(for week: PlanWeekBucket) -> String {
+        switch week {
+        case .current:
+            return "This week"
+        case .next:
+            return "Next week"
+        case .outside:
+            return "Week"
         }
     }
 
@@ -1416,6 +1529,52 @@ private struct PlanReviewConfirmationRow: View {
     }
 }
 
+private struct PlanWeekSwitcher: View {
+    let selectedWeek: PlanWeekBucket
+    let selectWeek: (PlanWeekBucket) -> Void
+
+    var body: some View {
+        HStack(spacing: 4) {
+            switcherButton(title: "This week", week: .current)
+            switcherButton(title: "Next week", week: .next)
+        }
+        .padding(4)
+        .frame(maxWidth: .infinity)
+        .background(HAYFColor.neutral)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func switcherButton(title: String, week: PlanWeekBucket) -> some View {
+        Button(action: { selectWeek(week) }) {
+            Text(title)
+                .font(.system(size: 14, weight: selectedWeek == week ? .semibold : .medium))
+                .foregroundStyle(selectedWeek == week ? HAYFColor.primary : HAYFColor.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .background {
+                    if selectedWeek == week {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(HAYFColor.surface)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                            }
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(selectedWeek == week ? "Selected" : "")
+    }
+}
+
 private struct PlanWeekSection: View {
     let title: String
     let rhythm: PlanWeeklyRhythm?
@@ -1429,8 +1588,7 @@ private struct PlanWeekSection: View {
     let beginMoveWorkout: (PlanWorkout) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
-    let addWorkout: (String, Int) -> Void
-    let editConstraint: (PlanWorkoutDayGroup) -> Void
+    let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1445,14 +1603,6 @@ private struct PlanWeekSection: View {
                     }
 
                     Spacer(minLength: 8)
-                }
-
-                if let objective = rhythm?.objective,
-                   !objective.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(objective)
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(HAYFColor.muted)
-                        .lineLimit(2)
                 }
 
                 if rhythm?.status == "draft" {
@@ -1471,21 +1621,45 @@ private struct PlanWeekSection: View {
             }
 
             VStack(spacing: 8) {
-                ForEach(groups) { group in
-                    PlanWorkoutDayRow(
-                        group: group,
-                        movingWorkout: movingWorkout,
-                        isAnalyzingEdit: isAnalyzingEdit,
-                        moveWorkout: moveWorkout,
-                        beginMoveWorkout: beginMoveWorkout,
-                        deleteWorkout: deleteWorkout,
-                        replaceWorkout: replaceWorkout,
-                        addWorkout: addWorkout,
-                        editConstraint: editConstraint
-                    )
+                ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                    VStack(spacing: 8) {
+                        PlanWorkoutDayRow(
+                            group: group,
+                            movingWorkout: movingWorkout,
+                            isAnalyzingEdit: isAnalyzingEdit,
+                            moveWorkout: moveWorkout,
+                            beginMoveWorkout: beginMoveWorkout,
+                            deleteWorkout: deleteWorkout,
+                            replaceWorkout: replaceWorkout,
+                            showDayActions: showDayActions
+                        )
+
+                        if index < groups.count - 1 {
+                            PlanWorkoutDayDivider()
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+private struct PlanWorkoutDayDivider: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Color.clear
+                .frame(width: 38)
+
+            Color.clear
+                .frame(width: 12)
+
+            Rectangle()
+                .fill(HAYFColor.border.opacity(0.72))
+                .frame(height: 1)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(height: 1)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1495,15 +1669,65 @@ private struct PlanWeeklyTargetsView: View {
     let showTargetDetail: (PlanGoalTarget) -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
+            spacing: 8
+        ) {
             ForEach(targets.prefix(3)) { target in
-                PlanTrainingTargetRow(
+                PlanWeeklyTargetCard(
                     target: target,
                     evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
                     openDetail: { showTargetDetail(target) }
                 )
             }
         }
+    }
+}
+
+private struct PlanWeeklyTargetCard: View {
+    let target: PlanGoalTarget
+    let evaluation: PlanGoalEvaluation?
+    let openDetail: () -> Void
+
+    var body: some View {
+        Button(action: openDetail) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: PlanTargetDisplay.weeklyCardIconName(for: target, evaluation: evaluation))
+                        .font(.system(size: 19, weight: .regular))
+                        .foregroundStyle(HAYFColor.primary)
+                        .frame(width: 28, height: 28, alignment: .leading)
+
+                    Spacer(minLength: 2)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(HAYFColor.muted)
+                        .frame(width: 16, height: 20, alignment: .topTrailing)
+                }
+
+                Text(PlanTargetDisplay.weeklyCardValue(for: target, evaluation: evaluation))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+
+                Spacer(minLength: 0)
+
+                PlanTargetProgressBar(progress: PlanTargetDisplay.progress(for: target, evaluation: evaluation))
+                    .frame(height: 4)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open \(target.title) target details")
     }
 }
 
@@ -1533,8 +1757,7 @@ private struct PlanWorkoutDayRow: View {
     let beginMoveWorkout: (PlanWorkout) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
-    let addWorkout: (String, Int) -> Void
-    let editConstraint: (PlanWorkoutDayGroup) -> Void
+    let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -1550,51 +1773,37 @@ private struct PlanWorkoutDayRow: View {
             .frame(width: 38, alignment: .leading)
             .padding(.top, 10)
 
-            PlanTimelineMarker()
+            PlanTimelineMarker(availabilityKind: group.constraint?.kind)
                 .frame(width: 12)
 
-            VStack(spacing: 8) {
-                if group.workouts.isEmpty {
-                    if isMoveTarget {
-                        PlanEmptyDayDropZone(isMoveTarget: true)
-                    } else if group.constraint?.kind == .unavailable {
-                        PlanConstraintStatusRow(constraint: group.constraint)
-                    } else if canAddWorkout {
-                        PlanAddWorkoutRow(
-                            add: { addWorkout(group.date, nextSequenceOrder) }
-                        )
-                    } else {
-                        PlanHistoryEmptyRow()
-                    }
+            VStack(alignment: .leading, spacing: 8) {
+                if isMoveTarget && group.workouts.isEmpty {
+                    PlanEmptyDayDropZone(isMoveTarget: true)
                 } else {
-                    if let constraint = group.constraint {
-                        PlanConstraintStatusRow(constraint: constraint)
-                    }
-
-                    ForEach(group.workouts) { workout in
-                        PlanWorkoutCard(
-                            workout: workout,
-                            isDisabled: isAnalyzingEdit || isMoveTarget,
-                            moveWorkout: { beginMoveWorkout(workout) },
-                            deleteWorkout: { deleteWorkout(workout) },
-                            replaceWorkout: { replaceWorkout(workout) }
+                    if canShowDayActions {
+                        PlanDaySlotActionControl(
+                            open: { showDayActions(group) }
                         )
                     }
 
-                    if canAddWorkout && !isMoveTarget && !isAnalyzingEdit {
-                        PlanAddWorkoutRow(
-                            add: { addWorkout(group.date, nextSequenceOrder) }
-                        )
+                    if group.workouts.isEmpty {
+                        if !canShowDayActions {
+                            PlanHistoryEmptyRow()
+                        }
+                    } else {
+                        ForEach(group.workouts) { workout in
+                            PlanWorkoutCard(
+                                workout: workout,
+                                isDisabled: isAnalyzingEdit || isMoveTarget,
+                                moveWorkout: { beginMoveWorkout(workout) },
+                                deleteWorkout: { deleteWorkout(workout) },
+                                replaceWorkout: { replaceWorkout(workout) }
+                            )
+                        }
                     }
-                }
-
-                if canEditConstraint {
-                    PlanAvailabilityButton(
-                        constraint: group.constraint,
-                        open: { editConstraint(group) }
-                    )
                 }
             }
+            .frame(maxWidth: .infinity, minHeight: dayContentMinHeight, alignment: .topLeading)
         }
         .padding(.vertical, isMoveTarget ? 4 : 0)
         .padding(.horizontal, isMoveTarget ? 6 : 0)
@@ -1622,16 +1831,17 @@ private struct PlanWorkoutDayRow: View {
         movingWorkout != nil
     }
 
-    private var canAddWorkout: Bool {
-        !isAnalyzingEdit && PlanDate.isTodayOrFuture(group.date) && group.constraint?.kind != .unavailable
-    }
-
-    private var canEditConstraint: Bool {
+    private var canShowDayActions: Bool {
         !isAnalyzingEdit && !isMoveTarget && PlanDate.isTodayOrFuture(group.date) && group.weeklyPlanID != nil
     }
 
-    private var nextSequenceOrder: Int {
-        (group.workouts.map(\.sequenceOrder).max() ?? 0) + 1
+    private var dayContentMinHeight: CGFloat? {
+        guard group.workouts.isEmpty,
+              canShowDayActions else {
+            return nil
+        }
+
+        return 44
     }
 }
 
@@ -1661,138 +1871,43 @@ private struct PlanHistoryEmptyRow: View {
     }
 }
 
-private struct PlanConstraintStatusRow: View {
-    let constraint: PlanDayConstraint?
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: iconName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                if let note = constraint?.note?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !note.isEmpty {
-                    Text(note)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(HAYFColor.muted)
-                        .lineLimit(2)
-                }
-            }
-
-            Spacer(minLength: 8)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(tint.opacity(0.22), lineWidth: 1)
-        }
-    }
-
-    private var title: String {
-        switch constraint?.kind {
-        case .limited:
-            return "Limited day"
-        case .unavailable:
-            return "Unavailable"
-        default:
-            return "Available"
-        }
-    }
-
-    private var tint: Color {
-        switch constraint?.kind {
-        case .limited:
-            return HAYFColor.orange
-        case .unavailable:
-            return HAYFColor.error
-        default:
-            return HAYFColor.muted
-        }
-    }
-
-    private var iconName: String {
-        switch constraint?.kind {
-        case .limited:
-            return "speedometer"
-        case .unavailable:
-            return "nosign"
-        default:
-            return "checkmark.circle"
-        }
-    }
-}
-
-private struct PlanAvailabilityButton: View {
-    let constraint: PlanDayConstraint?
+private struct PlanDaySlotActionControl: View {
     let open: () -> Void
 
     var body: some View {
         Button(action: open) {
             HStack(spacing: 10) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 24, height: 24)
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.orange)
+                    .frame(width: 22, height: 22)
 
-                Text(label)
-                    .font(.system(size: 14, weight: .semibold))
+                Text("Add Workout/Availability")
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(HAYFColor.secondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.82)
 
-                Spacer(minLength: 8)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(HAYFColor.muted)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
-            .frame(minHeight: 44)
+            .frame(height: 44, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.neutral)
+            .background(HAYFColor.surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
+                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Edit day availability")
-    }
-
-    private var label: String {
-        switch constraint?.kind {
-        case .limited:
-            return "Limited"
-        case .unavailable:
-            return "Unavailable"
-        default:
-            return "Available"
-        }
-    }
-
-    private var tint: Color {
-        switch constraint?.kind {
-        case .limited:
-            return HAYFColor.orange
-        case .unavailable:
-            return HAYFColor.error
-        default:
-            return HAYFColor.muted
-        }
+        .accessibilityLabel("Add workout or availability")
     }
 }
 
 private struct PlanTimelineMarker: View {
+    let availabilityKind: PlanningWeeklyPlanConstraintKind?
+
     var body: some View {
         ZStack(alignment: .top) {
             Rectangle()
@@ -1800,10 +1915,57 @@ private struct PlanTimelineMarker: View {
                 .frame(width: 1)
                 .frame(maxHeight: .infinity)
 
+            marker
+                .padding(.top, markerTopPadding)
+        }
+    }
+
+    @ViewBuilder
+    private var marker: some View {
+        switch availabilityKind {
+        case .limited:
+            ZStack {
+                Circle()
+                    .fill(HAYFColor.orange.opacity(0.12))
+                    .overlay {
+                        Circle()
+                            .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
+                    }
+
+                Image(systemName: "exclamationmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(HAYFColor.orange)
+            }
+            .frame(width: 18, height: 18)
+            .accessibilityLabel("Limited availability")
+        case .unavailable:
+            ZStack {
+                Circle()
+                    .fill(HAYFColor.error.opacity(0.11))
+                    .overlay {
+                        Circle()
+                            .stroke(HAYFColor.error.opacity(0.2), lineWidth: 1)
+                    }
+
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(HAYFColor.error)
+            }
+            .frame(width: 18, height: 18)
+            .accessibilityLabel("Unavailable")
+        case .available, .none:
             Circle()
                 .fill(HAYFColor.borderStrong)
                 .frame(width: 7, height: 7)
-                .padding(.top, 20)
+        }
+    }
+
+    private var markerTopPadding: CGFloat {
+        switch availabilityKind {
+        case .limited, .unavailable:
+            return 14
+        case .available, .none:
+            return 20
         }
     }
 }
@@ -1831,39 +1993,6 @@ private struct PlanEmptyDayDropZone: View {
                     .stroke(HAYFColor.orange.opacity(0.45), lineWidth: 1)
             }
         }
-    }
-}
-
-private struct PlanAddWorkoutRow: View {
-    let add: () -> Void
-
-    var body: some View {
-        Button(action: add) {
-            HStack(spacing: 12) {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(HAYFColor.orange)
-                    .frame(width: 24, height: 24)
-
-                Text("Add workout")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(HAYFColor.secondary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 52)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface.opacity(0.65))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.border, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Add workout")
     }
 }
 
@@ -3556,7 +3685,7 @@ private struct PlanWorkoutDayGroup: Identifiable {
     var id: String { date }
 }
 
-private enum PlanWeekBucket {
+private enum PlanWeekBucket: Equatable {
     case current
     case next
     case outside
@@ -3835,17 +3964,87 @@ private enum PlanTargetDisplay {
     }
 
     static func status(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> PlanGoalStatus {
-        evaluation?.status ?? target.status
+        if isFutureWeekTarget(target) {
+            return .notStarted
+        }
+
+        return evaluation?.status ?? target.status
     }
 
     static func statusColor(for status: PlanGoalStatus) -> Color {
         switch status {
-        case .onTrack, .achieved:
+        case .onTrack, .achieved, .notStarted:
             return HAYFColor.primary
         case .lagging:
             return HAYFColor.error
         case .needsReview:
             return HAYFColor.orange
+        }
+    }
+
+    static func weeklyCardIconName(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
+        if status(for: target, evaluation: evaluation) == .achieved {
+            return "checkmark"
+        }
+
+        if let modality = weeklyTargetModality(for: target) {
+            return modalityIconName(for: modality)
+        }
+
+        switch weeklyTargetFamily(for: target) {
+        case "planned_session_completion":
+            return "scope"
+        case "active_days":
+            return "figure.walk.motion"
+        case "max_gap_guardrail":
+            return "calendar.badge.clock"
+        case "minimum_viable_week":
+            return "checkmark.circle"
+        case "body_weight_logging":
+            return "scalemass"
+        case "running_pace", "cycling_pace":
+            return "speedometer"
+        default:
+            return iconName(for: target)
+        }
+    }
+
+    static func weeklyCardValue(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
+        let family = weeklyTargetFamily(for: target)
+        let modality = weeklyTargetModality(for: target)
+        let targetValue = evaluation?.targetValue ?? target.targetValue
+
+        guard let targetValue else {
+            return weeklyRuleDisplayValue(for: target) ?? compactTitle(target.title)
+        }
+
+        switch family {
+        case "planned_session_completion":
+            return "\(formatted(targetValue)) sessions"
+        case "modality_session_count", "support_modality_presence":
+            return "\(formatted(targetValue)) \(modalityCountLabel(for: modality))"
+        case "modality_minutes":
+            return "\(formatted(targetValue)) min"
+        case "modality_distance":
+            return "\(formatted(targetValue))\(unitSuffix(compactDistanceUnit(target.unit)))"
+        case "active_days":
+            return "\(formatted(targetValue)) active days"
+        case "max_gap_guardrail":
+            return "≤\(formatted(targetValue)) day gap"
+        case "minimum_viable_week":
+            return "\(formatted(targetValue)) minimum"
+        case "body_weight_logging":
+            return "\(formatted(targetValue)) weigh-ins"
+        case "running_pace", "cycling_pace":
+            if let displayValue = weeklyRuleDisplayValue(for: target) {
+                return displayValue
+            }
+            return "\(formatted(targetValue))\(unitSuffix(target.unit ?? ""))"
+        default:
+            if let unit = target.unit, !unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "\(formatted(targetValue))\(unitSuffix(unit))"
+            }
+            return weeklyRuleDisplayValue(for: target) ?? compactTitle(target.title)
         }
     }
 
@@ -3869,6 +4068,164 @@ private enum PlanTargetDisplay {
         } else {
             return "target"
         }
+    }
+
+    private static func weeklyTargetFamily(for target: PlanGoalTarget) -> String {
+        if let family = weeklyRuleString(for: target, key: "family") {
+            return family
+        }
+
+        if let category = target.metricCategory?.lowercased(),
+           category.hasPrefix("weekly_") {
+            return String(category.dropFirst("weekly_".count))
+        }
+
+        let metricKey = target.metricKey?.lowercased() ?? ""
+        for family in [
+            "planned_session_completion",
+            "modality_session_count",
+            "modality_minutes",
+            "modality_distance",
+            "active_days",
+            "support_modality_presence",
+            "max_gap_guardrail",
+            "minimum_viable_week",
+            "body_weight_logging",
+            "running_pace",
+            "cycling_pace"
+        ] where metricKey.contains(family) {
+            return family
+        }
+
+        return ""
+    }
+
+    private static func weeklyTargetModality(for target: PlanGoalTarget) -> String? {
+        if let modality = weeklyRuleString(for: target, key: "modality"),
+           !modality.isEmpty {
+            return modality
+        }
+
+        let text = "\(target.metricKey ?? "") \(target.metricCategory ?? "") \(target.title)".lowercased()
+        if text.contains("cycling") || text.contains("cycle") || text.contains("bike") || text.contains("ride") {
+            return "ride"
+        } else if text.contains("running") || text.contains("run") {
+            return "run"
+        } else if text.contains("swim") {
+            return "swim"
+        } else if text.contains("row") {
+            return "row"
+        } else if text.contains("hike") {
+            return "hike"
+        } else if text.contains("climb") || text.contains("boulder") {
+            return "climb"
+        } else if text.contains("strength") || text.contains("lift") {
+            return "strength"
+        } else if text.contains("mobility") {
+            return "mobility"
+        } else if text.contains("recovery") {
+            return "recovery"
+        } else if text.contains("walk") {
+            return "walk"
+        }
+
+        return nil
+    }
+
+    private static func weeklyRuleString(for target: PlanGoalTarget, key: String) -> String? {
+        guard case let .object(object) = target.evaluationRule,
+              case let .string(value)? = object[key] else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed.lowercased()
+    }
+
+    private static func weeklyRuleDisplayValue(for target: PlanGoalTarget) -> String? {
+        guard case let .object(object) = target.evaluationRule,
+              case let .string(value)? = object["displayValue"] else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func modalityIconName(for modality: String) -> String {
+        switch modality {
+        case "cycling", "ride":
+            return "bicycle"
+        case "running", "run":
+            return "figure.run"
+        case "swimming", "swim":
+            return "figure.pool.swim"
+        case "rowing", "row":
+            return "figure.rower"
+        case "hiking", "hike":
+            return "figure.hiking"
+        case "climbing", "climb":
+            return "figure.climbing"
+        case "strength":
+            return "dumbbell"
+        case "mobility":
+            return "figure.flexibility"
+        case "recovery":
+            return "figure.cooldown"
+        case "walking", "walk":
+            return "figure.walk"
+        default:
+            return "target"
+        }
+    }
+
+    private static func modalityCountLabel(for modality: String?) -> String {
+        switch modality {
+        case "cycling", "ride":
+            return "rides"
+        case "running", "run":
+            return "runs"
+        case "swimming", "swim":
+            return "swims"
+        case "rowing", "row":
+            return "rows"
+        case "hiking", "hike":
+            return "hikes"
+        case "climbing", "climb":
+            return "climbs"
+        case "strength":
+            return "strength"
+        case "mobility":
+            return "mobility"
+        case "recovery":
+            return "recovery"
+        case "walking", "walk":
+            return "walks"
+        default:
+            return "sessions"
+        }
+    }
+
+    private static func compactTitle(_ title: String) -> String {
+        title
+            .replacingOccurrences(of: "Complete ", with: "")
+            .replacingOccurrences(of: "Planned ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func compactDistanceUnit(_ unit: String?) -> String {
+        let trimmed = unit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "km" : trimmed
+    }
+
+    private static func isFutureWeekTarget(_ target: PlanGoalTarget) -> Bool {
+        guard isWeeklyTarget(target),
+              let start = PlanDate.date(from: target.startDate) else {
+            return false
+        }
+
+        let calendar = Calendar.current
+        return calendar.startOfDay(for: start) > calendar.startOfDay(for: Date())
     }
 
     static func progress(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> Double? {
@@ -3918,6 +4275,10 @@ private enum PlanTargetDisplay {
 
     static func statusText(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
         let value = valueLine(for: target, evaluation: evaluation)
+
+        if status(for: target, evaluation: evaluation) == .notStarted {
+            return "This target starts with the draft week. Current target: \(value)."
+        }
 
         guard let evaluation else {
             return "HAYF has created this target and will evaluate it after the next sync. Current target: \(value)."

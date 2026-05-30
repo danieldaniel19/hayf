@@ -1105,6 +1105,87 @@ async function generateWeeklyPlanTargetsForVisiblePlan(
   };
 }
 
+async function ensureWeeklyTargetsForPlans(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    goal: Record<string, any>;
+    strategy: Record<string, any>;
+    weeklyPlans: Record<string, any>[];
+    model: string;
+  },
+) {
+  if (args.weeklyPlans.length === 0) return 0;
+  const weeklyPlanIDs = args.weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  if (await hasWeeklyTargetsForPlans(admin, args.userID, weeklyPlanIDs)) return 0;
+
+  const latestSnapshot = await maybeSingle(
+    admin
+      .from("health_feature_snapshots")
+      .select()
+      .eq("user_id", args.userID)
+      .order("generated_at", { ascending: false })
+      .limit(1),
+  );
+  const rows = await generateAndPersistWeeklyTargets(admin, {
+    userID: args.userID,
+    goal: args.goal,
+    strategy: args.strategy,
+    weeklyPlans: args.weeklyPlans,
+    healthSnapshot: latestSnapshot?.snapshot_json ?? null,
+    acceptedStrategy: args.strategy.context_json?.acceptedStrategy ?? null,
+    model: args.model,
+  });
+  return rows.length;
+}
+
+async function pendingManualReviewState(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  weeklyPlanIDs: string[],
+) {
+  const pendingProposal = await maybeSingle(
+    admin
+      .from("replan_proposals")
+      .select("id")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1),
+  );
+
+  if (weeklyPlanIDs.length === 0) {
+    return {
+      hasPending: Boolean(pendingProposal),
+      pendingEditCount: 0,
+      pendingProposalID: pendingProposal?.id ?? null,
+    };
+  }
+
+  const checkpoint = await latestManualReviewResolutionCheckpoint(admin, userID, strategyID);
+  let eventQuery = admin
+    .from("plan_events")
+    .select("id")
+    .eq("user_id", userID)
+    .eq("fitness_strategy_id", strategyID)
+    .in("weekly_plan_id", weeklyPlanIDs)
+    .in("event_type", pendingReviewEditEventTypes())
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (checkpoint?.created_at) {
+    eventQuery = eventQuery.gt("created_at", checkpoint.created_at);
+  }
+
+  const pendingEvents = await list(eventQuery);
+  return {
+    hasPending: Boolean(pendingProposal) || pendingEvents.length > 0,
+    pendingEditCount: pendingEvents.length,
+    pendingProposalID: pendingProposal?.id ?? null,
+  };
+}
+
 async function refreshPlanWindowForUser(
   admin: SupabaseAdminClient,
   userID: string,
@@ -1117,44 +1198,77 @@ async function refreshPlanWindowForUser(
   const timezone = scope.timezone || "UTC";
   const start = parseDateOnly(windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
   const window = twoWeekWindow(start);
-  if (!force && trigger === "user" && await hasUsablePlanWindow(admin, userID, scope.strategy.id, window)) {
-    const existingWeeklyPlans = await visibleWeeklyPlans(admin, userID, scope.strategy.id, window);
-    if (!await hasWeeklyTargetsForPlans(admin, userID, existingWeeklyPlans.map((plan: Record<string, any>) => plan.id))) {
-      const latestSnapshot = await maybeSingle(
-        admin
-          .from("health_feature_snapshots")
-          .select()
-          .eq("user_id", userID)
-          .order("generated_at", { ascending: false })
-          .limit(1),
-      );
-      await generateAndPersistWeeklyTargets(admin, {
-        userID,
-        goal: scope.goal,
-        strategy: scope.strategy,
-        weeklyPlans: existingWeeklyPlans,
-        healthSnapshot: latestSnapshot?.snapshot_json ?? null,
-        acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
-        model,
-      });
-    }
+  const existingWeeklyPlans = (await visibleWeeklyPlans(admin, userID, scope.strategy.id, window))
+    .filter((plan: Record<string, any>) => plan.status === "committed" || plan.status === "draft");
+  const existingWeeklyPlanIDs = existingWeeklyPlans.map((plan: Record<string, any>) => plan.id);
+  const pendingManualReview = await pendingManualReviewState(
+    admin,
+    userID,
+    scope.strategy.id,
+    existingWeeklyPlanIDs,
+  );
+  const windowAlreadyExists = existingWeeklyPlans.length >= 2;
 
-    if (await planWindowSatisfiesWeeklyTargets(admin, userID, existingWeeklyPlans)) {
-      const event = await createPlanEvent(admin, {
-        userID,
-        fitnessStrategyID: scope.strategy.id,
-        eventType: "window_refreshed",
-        payload: { trigger, skipped: true, reason: "visible_two_week_window_already_exists", window },
-      });
+  if (existingWeeklyPlanIDs.length > 0) {
+    await ensureWeeklyTargetsForPlans(admin, {
+      userID,
+      goal: scope.goal,
+      strategy: scope.strategy,
+      weeklyPlans: existingWeeklyPlans,
+      model,
+    });
+  }
 
-      return {
-        userID,
-        model: "deterministic",
+  if (pendingManualReview.hasPending) {
+    const event = await createPlanEvent(admin, {
+      userID,
+      fitnessStrategyID: scope.strategy.id,
+      eventType: "window_refreshed",
+      payload: {
+        trigger,
         skipped: true,
-        fitnessStrategyID: scope.strategy.id,
-        eventID: event.id,
-      };
-    }
+        reason: "pending_manual_review",
+        window,
+        pendingEditCount: pendingManualReview.pendingEditCount,
+        pendingProposalID: pendingManualReview.pendingProposalID,
+      },
+    });
+
+    return {
+      userID,
+      model: "deterministic",
+      skipped: true,
+      reason: "pending_manual_review",
+      pendingEditCount: pendingManualReview.pendingEditCount,
+      pendingProposalID: pendingManualReview.pendingProposalID,
+      fitnessStrategyID: scope.strategy.id,
+      eventID: event.id,
+    };
+  }
+
+  if (trigger === "user" && windowAlreadyExists) {
+    const duplicateGeneratedWorkouts = await cleanupDuplicateGeneratedPlanWorkouts(admin, userID, scope.strategy.id, window);
+    const event = await createPlanEvent(admin, {
+      userID,
+      fitnessStrategyID: scope.strategy.id,
+      eventType: "window_refreshed",
+      payload: {
+        trigger,
+        skipped: true,
+        reason: "visible_two_week_window_already_exists",
+        window,
+        duplicateGeneratedWorkouts,
+      },
+    });
+
+    return {
+      userID,
+      model: "deterministic",
+      skipped: true,
+      reason: "visible_two_week_window_already_exists",
+      fitnessStrategyID: scope.strategy.id,
+      eventID: event.id,
+    };
   }
 
   const latestSnapshot = await maybeSingle(
@@ -1194,6 +1308,7 @@ async function refreshPlanWindowForUser(
       .lte("week_start_date", window.end)
       .order("week_start_date", { ascending: true }),
   );
+  const duplicateGeneratedWorkouts = await cleanupDuplicateGeneratedPlanWorkouts(admin, userID, scope.strategy.id, window);
   const weeklyTargetConstraints = await loadWeeklyTargetConstraints(
     admin,
     userID,
@@ -1239,7 +1354,7 @@ async function refreshPlanWindowForUser(
     await throwOnError(
       admin
         .from("planned_workouts")
-        .update({ status: "superseded" })
+        .update({ status: "superseded", generation_key: null })
         .eq("user_id", userID)
         .in("weekly_plan_id", planIDs)
         .gte("scheduled_date", window.start)
@@ -1268,6 +1383,7 @@ async function refreshPlanWindowForUser(
     committedWeekStart: isoDate(start),
     ownerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
   });
+  const duplicateGeneratedWorkoutsAfterInsert = await cleanupDuplicateGeneratedPlanWorkouts(admin, userID, scope.strategy.id, window);
   await generateAndPersistWeeklyTargets(admin, {
     userID,
     goal: scope.goal,
@@ -1282,7 +1398,13 @@ async function refreshPlanWindowForUser(
     userID,
     fitnessStrategyID: scope.strategy.id,
     eventType: "window_refreshed",
-    payload: { trigger, usedFallback, window, healthDataFreshness },
+    payload: {
+      trigger,
+      usedFallback,
+      window,
+      healthDataFreshness,
+      duplicateGeneratedWorkouts: duplicateGeneratedWorkouts + duplicateGeneratedWorkoutsAfterInsert,
+    },
   });
 
   return {
@@ -1320,6 +1442,7 @@ async function recordPlanEdit(
         .from("planned_workouts")
         .update({
           weekly_plan_id: targetPlan?.id ?? workout.weekly_plan_id ?? null,
+          generation_key: null,
           scheduled_date: edit.scheduled_date,
           sequence_order: edit.sequence_order ?? workout.sequence_order,
           source: "user_moved",
@@ -1327,6 +1450,14 @@ async function recordPlanEdit(
         })
         .eq("id", workout.id),
     );
+    await updateMutableGeneratedSlotRows(admin, {
+      userID,
+      weeklyPlanID: workout.weekly_plan_id,
+      scheduledDate: workout.scheduled_date,
+      sequenceOrder: workout.sequence_order,
+      excludeWorkoutID: workout.id,
+      fields: { status: "superseded", generation_key: null },
+    });
     event = await createPlanEvent(admin, {
       userID,
       fitnessStrategyID: scope.strategy.id,
@@ -1339,9 +1470,17 @@ async function recordPlanEdit(
     await throwOnError(
       admin
         .from("planned_workouts")
-        .update({ status: "deleted", source: "user_deleted", version: (workout.version ?? 1) + 1 })
+        .update({ status: "deleted", source: "user_deleted", generation_key: null, version: (workout.version ?? 1) + 1 })
         .eq("id", workout.id),
     );
+    await updateMutableGeneratedSlotRows(admin, {
+      userID,
+      weeklyPlanID: workout.weekly_plan_id,
+      scheduledDate: workout.scheduled_date,
+      sequenceOrder: workout.sequence_order,
+      excludeWorkoutID: workout.id,
+      fields: { status: "deleted", source: "user_deleted", generation_key: null },
+    });
     event = await createPlanEvent(admin, {
       userID,
       fitnessStrategyID: scope.strategy.id,
@@ -1387,6 +1526,33 @@ async function recordPlanEdit(
       }
       : null,
   };
+}
+
+async function updateMutableGeneratedSlotRows(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    weeklyPlanID?: string | null;
+    scheduledDate: string;
+    sequenceOrder: number;
+    excludeWorkoutID: string;
+    fields: Record<string, unknown>;
+  },
+) {
+  if (!args.weeklyPlanID) return;
+
+  await throwOnError(
+    admin
+      .from("planned_workouts")
+      .update(args.fields)
+      .eq("user_id", args.userID)
+      .eq("weekly_plan_id", args.weeklyPlanID)
+      .eq("scheduled_date", args.scheduledDate)
+      .eq("sequence_order", args.sequenceOrder)
+      .neq("id", args.excludeWorkoutID)
+      .in("status", ["planned", "current"])
+      .in("source", ["generated", "replanned"]),
+  );
 }
 
 async function recordWeeklyPlanConstraint(
@@ -2482,6 +2648,7 @@ async function replaceWorkout(
       .update({
         status: "superseded",
         source: workout.source,
+        generation_key: null,
         version: (workout.version ?? 1) + 1,
       })
       .eq("id", workout.id),
@@ -2494,6 +2661,7 @@ async function replaceWorkout(
         active_block_id: null,
         weekly_rhythm_id: null,
         weekly_plan_id: workout.weekly_plan_id ?? null,
+        generation_key: null,
         user_id: userID,
         scheduled_date: workout.scheduled_date,
         sequence_order: workout.sequence_order,
@@ -2602,6 +2770,7 @@ async function addWorkout(
         active_block_id: null,
         weekly_rhythm_id: null,
         weekly_plan_id: context.weeklyPlan?.id ?? null,
+        generation_key: null,
         user_id: userID,
         scheduled_date: scheduledDate,
         sequence_order: sequenceOrder,
@@ -3097,6 +3266,19 @@ async function latestPlanReviewCheckpoint(admin: SupabaseAdminClient, userID: st
   );
 }
 
+async function latestManualReviewResolutionCheckpoint(admin: SupabaseAdminClient, userID: string, strategyID: string) {
+  return maybeSingle(
+    admin
+      .from("plan_events")
+      .select("id,event_type,created_at")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .in("event_type", ["proposal_accepted", "proposal_rejected", "plan_review_completed"])
+      .order("created_at", { ascending: false })
+      .limit(1),
+  );
+}
+
 function compactWeeklyPlanForReview(plan: Record<string, any>) {
   return {
     id: plan.id,
@@ -3248,6 +3430,7 @@ function validateCreateWorkoutMutation(
       active_block_id: null,
       weekly_rhythm_id: null,
       weekly_plan_id: weeklyPlan.id,
+      generation_key: null,
       scheduled_date: scheduledDate,
       sequence_order: sequenceOrder,
       activity_type: activityType,
@@ -3302,6 +3485,7 @@ function validateUpdateWorkoutMutation(
   if (inputFields.fueling_summary !== undefined && inputFields.fueling_summary !== null) fields.fueling_summary = requiredString(inputFields.fueling_summary, "update_workout fueling_summary");
 
   fields.source = "replanned";
+  fields.generation_key = null;
   if (isNoOpWorkoutUpdate(workout, fields)) return null;
   return {
     type: "update_workout",
@@ -3386,7 +3570,7 @@ function integerOrDefault(value: unknown, fallback: number) {
 }
 
 function isNoOpWorkoutUpdate(workout: Record<string, any>, fields: Record<string, unknown>) {
-  const entries = Object.entries(fields).filter(([key]) => key !== "source");
+  const entries = Object.entries(fields).filter(([key]) => key !== "source" && key !== "generation_key");
   if (entries.length === 0) return true;
   return entries.every(([key, value]) => {
     if (key === "duration_minutes" || key === "sequence_order") return Number(workout[key]) === Number(value);
@@ -4425,29 +4609,66 @@ async function insertWeeklyPlansAndWorkouts(
     );
     if (workouts.length === 0) continue;
 
+    const protectedKeys = await protectedGenerationKeysForPlan(admin, args.userID, savedPlan.id);
+    const workoutRows = workouts
+      .filter((workout) => !protectedKeys.has(generatedWorkoutKey(workout)))
+      .map((workout) => ({
+        active_block_id: null,
+        weekly_rhythm_id: null,
+        weekly_plan_id: savedPlan.id,
+        user_id: args.userID,
+        generation_key: generatedWorkoutKey(workout),
+        scheduled_date: workout.scheduledDate,
+        sequence_order: workout.sequenceOrder,
+        activity_type: workout.activityType,
+        title: workout.title,
+        duration_minutes: workout.durationMinutes,
+        intensity_label: workout.intensityLabel,
+        purpose: workout.purpose,
+        status: "planned",
+        source: args.source,
+        prescription_json: workout.prescription,
+        fueling_summary: workout.fuelingSummary,
+      }));
+
+    if (workoutRows.length === 0) continue;
+
     await throwOnError(
-      admin.from("planned_workouts").insert(
-        workouts.map((workout) => ({
-          active_block_id: null,
-          weekly_rhythm_id: null,
-          weekly_plan_id: savedPlan.id,
-          user_id: args.userID,
-          scheduled_date: workout.scheduledDate,
-          sequence_order: workout.sequenceOrder,
-          activity_type: workout.activityType,
-          title: workout.title,
-          duration_minutes: workout.durationMinutes,
-          intensity_label: workout.intensityLabel,
-          purpose: workout.purpose,
-          status: "planned",
-          source: args.source,
-          prescription_json: workout.prescription,
-          fueling_summary: workout.fuelingSummary,
-        })),
-      ),
+      admin
+        .from("planned_workouts")
+        .upsert(workoutRows, {
+          onConflict: "user_id,weekly_plan_id,generation_key",
+          ignoreDuplicates: true,
+        }),
     );
   }
   return savedPlans;
+}
+
+async function protectedGenerationKeysForPlan(admin: SupabaseAdminClient, userID: string, weeklyPlanID: string) {
+  const rows = await list(
+    admin
+      .from("planned_workouts")
+      .select("scheduled_date,sequence_order,status,source")
+      .eq("user_id", userID)
+      .eq("weekly_plan_id", weeklyPlanID)
+      .neq("status", "superseded"),
+  );
+
+  const keys = new Set<string>();
+  for (const row of rows) {
+    const source = String(row.source ?? "");
+    const status = String(row.status ?? "");
+    const isMutableGeneratedSlot = ["generated", "replanned"].includes(source) && ["planned", "current"].includes(status);
+    if (!isMutableGeneratedSlot) {
+      keys.add(`${row.scheduled_date}:${row.sequence_order ?? 1}`);
+    }
+  }
+  return keys;
+}
+
+function generatedWorkoutKey(workout: GeneratedWorkout) {
+  return `${workout.scheduledDate}:${workout.sequenceOrder}`;
 }
 
 function applyWeeklyConstraintsToGeneratedWorkouts(workouts: GeneratedWorkout[], constraints: Record<string, any>) {
@@ -6557,6 +6778,82 @@ async function cleanupDuplicateDetectedWorkouts(
   return removed;
 }
 
+async function cleanupDuplicateGeneratedPlanWorkouts(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  window: { start: string; end: string },
+) {
+  const weeklyPlans = await list(
+    admin
+      .from("weekly_plans")
+      .select("id")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .gte("week_start_date", window.start)
+      .lte("week_start_date", window.end)
+      .in("status", ["committed", "draft"]),
+  );
+  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  if (planIDs.length === 0) return 0;
+
+  const workouts = await list(
+    admin
+      .from("planned_workouts")
+      .select("id,weekly_plan_id,scheduled_date,sequence_order,activity_type,title,duration_minutes,intensity_label,purpose,status,source,created_at")
+      .eq("user_id", userID)
+      .in("weekly_plan_id", planIDs)
+      .gte("scheduled_date", window.start)
+      .lte("scheduled_date", window.end)
+      .in("status", ["planned", "current"])
+      .in("source", ["generated", "replanned"]),
+  );
+
+  const groups = new Map<string, Record<string, any>[]>();
+  for (const workout of workouts) {
+    const key = [
+      workout.weekly_plan_id,
+      workout.scheduled_date,
+      Number(workout.sequence_order ?? 0),
+      normalizeActivity(workout.activity_type ?? ""),
+      normalizedGeneratedWorkoutText(workout.title),
+      Number(workout.duration_minutes ?? 0),
+      normalizedGeneratedWorkoutText(workout.intensity_label),
+      normalizedGeneratedWorkoutText(workout.purpose),
+    ].join("|");
+    groups.set(key, [...(groups.get(key) ?? []), workout]);
+  }
+
+  let removed = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const sorted = group.sort((a, b) => {
+      const statusRank = generatedWorkoutStatusRank(a.status) - generatedWorkoutStatusRank(b.status);
+      if (statusRank !== 0) return statusRank;
+      return String(a.created_at ?? "").localeCompare(String(b.created_at ?? ""));
+    });
+    const duplicateIDs = sorted.slice(1).map((workout) => workout.id);
+    await throwOnError(
+      admin
+        .from("planned_workouts")
+        .update({ status: "superseded", generation_key: null })
+        .eq("user_id", userID)
+        .in("id", duplicateIDs),
+    );
+    removed += duplicateIDs.length;
+  }
+
+  return removed;
+}
+
+function normalizedGeneratedWorkoutText(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function generatedWorkoutStatusRank(status: unknown) {
+  return String(status) === "current" ? 0 : 1;
+}
+
 async function persistFitnessEvidence(
   admin: SupabaseAdminClient,
   userID: string,
@@ -7195,7 +7492,7 @@ async function applyProposalMutations(admin: SupabaseAdminClient, userID: string
       await throwOnError(
         admin
           .from("planned_workouts")
-          .update({ status: "deleted", source: "user_deleted" })
+          .update({ status: "deleted", source: "user_deleted", generation_key: null })
           .eq("id", mutation.workout_id)
           .eq("user_id", userID),
       );
