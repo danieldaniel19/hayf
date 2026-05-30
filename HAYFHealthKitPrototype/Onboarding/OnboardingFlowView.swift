@@ -29,6 +29,7 @@ struct OnboardingFlowView: View {
     @State private var isCompleting = false
 
     private let healthKitManager = HealthKitManager()
+    private let healthSyncService = HealthSyncService()
     private let aiProvider: any OnboardingAIProvider = RemoteOnboardingAIProvider()
     private let planningAIProvider = PlanningAIProvider()
     private let completionLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "HAYF", category: "onboarding.completion")
@@ -1824,9 +1825,12 @@ struct OnboardingFlowView: View {
                 let acceptedAt = Date()
                 let acceptedBlueprint = currentAthleteBlueprint
                 let acceptedStrategy = currentFitnessStrategy
+                let syncPayload = try? await healthSyncService.buildSyncPayload(daysBack: 14)
                 let healthSnapshot: HealthFeatureSnapshot?
                 if let pendingHealthSnapshot {
                     healthSnapshot = pendingHealthSnapshot
+                } else if let syncPayload {
+                    healthSnapshot = syncPayload.healthSnapshot
                 } else {
                     healthSnapshot = await planningHealthSnapshot()
                 }
@@ -1838,6 +1842,7 @@ struct OnboardingFlowView: View {
                 )
                 _ = try await planningAIProvider.acceptStrategyAndCreateInitialPlan(
                     healthSnapshot: healthSnapshot,
+                    actualWorkouts: syncPayload?.actualWorkouts ?? [],
                     acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
                     acceptedStrategy: acceptedStrategyArtifact(from: acceptedStrategy),
                     deviceTimezone: TimeZone.current.identifier,

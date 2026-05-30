@@ -10,6 +10,7 @@ struct PlanningAIProvider {
 
     func acceptStrategyAndCreateInitialPlan(
         healthSnapshot: HealthFeatureSnapshot?,
+        actualWorkouts: [HealthActualWorkoutSummary] = [],
         acceptedBlueprint: JSONValue,
         acceptedStrategy: JSONValue,
         deviceTimezone: String = TimeZone.current.identifier,
@@ -19,6 +20,7 @@ struct PlanningAIProvider {
             PlanningFunctionRequest(
                 task: .acceptStrategyAndCreateInitialPlan,
                 healthSnapshot: healthSnapshot,
+                actualWorkouts: actualWorkouts,
                 deviceTimezone: deviceTimezone,
                 acceptedBlueprint: acceptedBlueprint,
                 acceptedStrategy: acceptedStrategy,
@@ -656,8 +658,12 @@ private struct PlanningFunctionRequest: Encodable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(task, forKey: .task)
-        try container.encodeIfPresent(healthSnapshot, forKey: .healthSnapshot)
-        try container.encodeIfPresent(actualWorkouts, forKey: .actualWorkouts)
+        if let healthSnapshot {
+            try container.encode(JSONValue.isoEncoded(healthSnapshot), forKey: .healthSnapshot)
+        }
+        if let actualWorkouts {
+            try container.encode(JSONValue.isoEncoded(actualWorkouts), forKey: .actualWorkouts)
+        }
         try container.encodeIfPresent(syncWindow, forKey: .syncWindow)
         try container.encodeIfPresent(deviceTimezone, forKey: .deviceTimezone)
         try container.encodeIfPresent(startDate, forKey: .startDate)
@@ -677,7 +683,9 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(mood, forKey: .mood)
         let trimmedTextContext = textContext?.trimmingCharacters(in: .whitespacesAndNewlines)
         try container.encodeIfPresent(trimmedTextContext?.isEmpty == false ? trimmedTextContext : nil, forKey: .textContext)
-        try container.encodeIfPresent(currentDerivedSnapshot, forKey: .currentDerivedSnapshot)
+        if let currentDerivedSnapshot {
+            try container.encode(JSONValue.isoEncoded(currentDerivedSnapshot), forKey: .currentDerivedSnapshot)
+        }
         try container.encodeIfPresent(repairPolicy, forKey: .repairPolicy)
         try container.encodeIfPresent(weeklyPlanConstraint, forKey: .weeklyPlanConstraint)
     }
@@ -728,5 +736,14 @@ enum JSONValue: Codable {
         case .null:
             try container.encodeNil()
         }
+    }
+}
+
+extension JSONValue {
+    static func isoEncoded<T: Encodable>(_ value: T) throws -> JSONValue {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(value)
+        return try JSONDecoder().decode(JSONValue.self, from: data)
     }
 }

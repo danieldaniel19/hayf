@@ -82,6 +82,22 @@ type ActualWorkoutInput = {
   heart_rate_samples?: Array<{ offset_seconds?: number; bpm?: number }> | null;
 };
 
+type WorkoutMatchDisparity = {
+  needsReview: boolean;
+  reasons: string[];
+  duration?: {
+    plannedMinutes: number;
+    actualMinutes: number;
+    ratio: number;
+    significant: boolean;
+  };
+  intensity?: {
+    planned: "low" | "moderate" | "high";
+    actual: "low" | "moderate" | "high";
+    significant: boolean;
+  };
+};
+
 type PlanEditInput =
   | {
       type: "move_workout";
@@ -175,6 +191,18 @@ type WeeklyTargetProposal = {
   unit: string | null;
   comparator: "at_least" | "at_most" | "between";
   rationale: string;
+};
+
+type WeeklyTargetConstraint = {
+  id: string;
+  weeklyPlanID: string;
+  weekStartDate: string;
+  weekEndDate: string;
+  title: string;
+  family: WeeklyTargetFamily;
+  modality: string | null;
+  targetValue: number;
+  unit: string | null;
 };
 
 type WeeklyTargetGenerationOutput = {
@@ -840,8 +868,19 @@ async function acceptStrategyAndCreateInitialPlan(
     ],
   };
 
+  const initialActuals = actualWorkoutsForInitialWeek(
+    requestBody.actualWorkouts ?? [],
+    isoDate(committedWeekStart),
+    isoDate(addDays(committedWeekStart, 6)),
+    acceptedLocalDate,
+    timezone,
+  );
   const generated = sanitizeGeneratedPlan(
-    initialPlanFromAcceptedStrategy(onboarding, acceptedStrategy, acceptedBlueprint, committedWeekStart, timezone),
+    applyInitialWeekActualWorkoutContext(
+      initialPlanFromAcceptedStrategy(onboarding, acceptedStrategy, acceptedBlueprint, committedWeekStart, timezone),
+      initialActuals,
+      ownerStartDate,
+    ),
     onboarding,
     committedWeekStart,
     timezone,
@@ -854,6 +893,26 @@ async function acceptStrategyAndCreateInitialPlan(
     source: "generated",
     committedWeekStart: isoDate(committedWeekStart),
     ownerStartDate,
+  });
+  const planningScope: PlanningScope = {
+    goal,
+    strategy,
+    timezone,
+    block: {
+      id: strategy.id,
+      kind: goal.goal_kind,
+      title: strategy.title,
+      goal_text: goal.title,
+      start_date: strategy.start_date,
+      target_date: strategy.target_date,
+      review_cadence_days: strategy.review_cadence_days,
+      timezone,
+      context_json: strategy.context_json ?? {},
+    },
+  };
+  const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? [], {
+    createDetectedProposal: false,
+    createDisparityProposal: false,
   });
   await generateAndPersistWeeklyTargets(admin, {
     userID,
@@ -882,6 +941,7 @@ async function acceptStrategyAndCreateInitialPlan(
       committedWeekStart: isoDate(committedWeekStart),
       draftWeekStart: isoDate(draftWeekStart),
       planOwnerStartDate: ownerStartDate,
+      actualSync: initialActualSync,
     },
   });
 
@@ -919,82 +979,11 @@ async function syncHealthKitAndReconcile(
     await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot);
   }
 
-  let synced = 0;
-  let matched = 0;
-  let detected = 0;
-  const detectedEvents: Array<{ eventID: string; plannedWorkoutID: string; actual: ActualWorkoutInput }> = [];
-  const workouts = requestBody.actualWorkouts ?? [];
-  for (const actual of workouts) {
-    const upserted = await single(
-      admin
-        .from("actual_workouts")
-        .upsert(
-          {
-            user_id: userID,
-            healthkit_uuid: actual.healthkit_uuid,
-            start_date: actual.start_date,
-            activity_type: actual.activity_type,
-            duration_minutes: actual.duration_minutes,
-            distance_kilometers: actual.distance_kilometers ?? null,
-            energy_kilocalories: actual.energy_kilocalories ?? null,
-            load_value: actual.load_value ?? null,
-            average_heart_rate_bpm: actual.average_heart_rate_bpm ?? null,
-            max_heart_rate_bpm: actual.max_heart_rate_bpm ?? null,
-            heart_rate_samples_json: actual.heart_rate_samples ?? [],
-          },
-          { onConflict: "user_id,healthkit_uuid" },
-        )
-        .select()
-        .single(),
-      "Could not upsert actual workout",
-    );
-    synced += 1;
-
-    if (upserted.matched_planned_workout_id) {
-      continue;
-    }
-
-    const match = await findWorkoutMatch(admin, userID, scope, actual);
-    if (match) {
-      await throwOnError(
-        admin
-          .from("actual_workouts")
-          .update({ matched_planned_workout_id: match.workout.id, match_confidence: match.confidence })
-          .eq("id", upserted.id),
-      );
-      await throwOnError(admin.from("planned_workouts").update({ status: "done" }).eq("id", match.workout.id));
-      await createPlanEvent(admin, {
-        userID,
-        fitnessStrategyID: scope.strategy.id,
-        weeklyPlanID: match.workout.weekly_plan_id ?? null,
-        plannedWorkoutID: match.workout.id,
-        eventType: "actual_matched",
-        payload: { actual, confidence: match.confidence },
-      });
-      await createWorkoutDebriefRequest(admin, userID, null, match.workout.id, upserted.id);
-      matched += 1;
-    } else {
-      const inserted = await insertDetectedWorkout(admin, userID, scope, actual);
-      await throwOnError(
-        admin
-          .from("actual_workouts")
-          .update({ matched_planned_workout_id: inserted.id, match_confidence: 1 })
-          .eq("id", upserted.id),
-      );
-      const event = await createPlanEvent(admin, {
-        userID,
-        fitnessStrategyID: scope.strategy.id,
-        weeklyPlanID: inserted.weekly_plan_id ?? null,
-        plannedWorkoutID: inserted.id,
-        eventType: "extra_workout_detected",
-        payload: { actual },
-      });
-      await createWorkoutDebriefRequest(admin, userID, null, inserted.id, upserted.id);
-      detectedEvents.push({ eventID: event.id, plannedWorkoutID: inserted.id, actual });
-      detected += 1;
-    }
-  }
-
+  const actualSync = await reconcileActualWorkouts(admin, userID, scope, requestBody.actualWorkouts ?? [], {
+    createDetectedProposal: false,
+    createDisparityProposal: true,
+  });
+  const { synced, matched, detected, dedupedDetected, detectedEvents } = actualSync;
   const missedWorkouts = await markMissedWorkouts(admin, userID, scope.strategy.id, requestBody.syncWindow?.endDate);
 
   const event = await createPlanEvent(admin, {
@@ -1005,6 +994,7 @@ async function syncHealthKitAndReconcile(
       synced,
       matched,
       detected,
+      dedupedDetected,
       missed: missedWorkouts.length,
       missedWorkoutIDs: missedWorkouts.map((workout: Record<string, any>) => workout.id),
       syncWindow: requestBody.syncWindow ?? null,
@@ -1052,7 +1042,7 @@ async function syncHealthKitAndReconcile(
   );
   await evaluateWeeklyTargetsForPlans(admin, userID, visiblePlans.map((plan: Record<string, any>) => plan.id));
 
-  return { userID, eventID: event.id, synced, matched, detected, missed: missedWorkouts.length, refreshOutput };
+  return { userID, eventID: event.id, synced, matched, detected, dedupedDetected, missed: missedWorkouts.length, refreshOutput };
 }
 
 async function refreshPlanWindow(
@@ -1149,20 +1139,22 @@ async function refreshPlanWindowForUser(
       });
     }
 
-    const event = await createPlanEvent(admin, {
-      userID,
-      fitnessStrategyID: scope.strategy.id,
-      eventType: "window_refreshed",
-      payload: { trigger, skipped: true, reason: "visible_two_week_window_already_exists", window },
-    });
+    if (await planWindowSatisfiesWeeklyTargets(admin, userID, existingWeeklyPlans)) {
+      const event = await createPlanEvent(admin, {
+        userID,
+        fitnessStrategyID: scope.strategy.id,
+        eventType: "window_refreshed",
+        payload: { trigger, skipped: true, reason: "visible_two_week_window_already_exists", window },
+      });
 
-    return {
-      userID,
-      model: "deterministic",
-      skipped: true,
-      fitnessStrategyID: scope.strategy.id,
-      eventID: event.id,
-    };
+      return {
+        userID,
+        model: "deterministic",
+        skipped: true,
+        fitnessStrategyID: scope.strategy.id,
+        eventID: event.id,
+      };
+    }
   }
 
   const latestSnapshot = await maybeSingle(
@@ -1202,6 +1194,11 @@ async function refreshPlanWindowForUser(
       .lte("week_start_date", window.end)
       .order("week_start_date", { ascending: true }),
   );
+  const weeklyTargetConstraints = await loadWeeklyTargetConstraints(
+    admin,
+    userID,
+    weeklyPlans,
+  );
   const context = {
     goal: scope.goal,
     strategy: scope.strategy,
@@ -1213,6 +1210,7 @@ async function refreshPlanWindowForUser(
     windowStart: isoDate(start),
     trigger,
     force,
+    weeklyTargetConstraints,
   };
   const healthDataFreshness = healthFreshness(latestSnapshot);
 
@@ -1234,6 +1232,7 @@ async function refreshPlanWindowForUser(
     });
     generated = fallbackPlanFromBlock(scope.block, start);
   }
+  generated = alignGeneratedPlanToWeeklyTargets(generated, weeklyTargetConstraints);
 
   const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
   if (planIDs.length > 0) {
@@ -3549,7 +3548,7 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
             task,
             context,
             rules:
-              "Generate the committed week and draft week. If context.planOwnerStartDate is present, the committed week must include planned workouts only on or after that date; earlier committed-week dates are HealthKit history ledger days, not missed planned sessions. Include full workout prescriptions for every returned workout and a one-line fuelingSummary. Keep distant strategy context directional; make only the next two weeks concrete. Strategy title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in strategy context, not in the title.",
+              "Generate the committed week and draft week. If context.weeklyTargetConstraints contains targets for a week, the workouts for that week must satisfy them: modality session counts need that many workouts of that modality, modality minutes need enough minutes in that modality, and active-day/minimum-day targets need enough distinct workout days. If context.planOwnerStartDate is present, the committed week must include planned workouts only on or after that date; earlier committed-week dates are HealthKit history ledger days, not missed planned sessions. Include full workout prescriptions for every returned workout and a one-line fuelingSummary. Keep distant strategy context directional; make only the next two weeks concrete. Strategy title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in strategy context, not in the title.",
           }),
         },
       ],
@@ -5061,6 +5060,167 @@ function plannedMinutes(workouts: Record<string, any>[], modality: string | null
   return plannedWorkoutsForModality(workouts, modality).reduce((sum, workout) => sum + Number(workout.duration_minutes ?? 0), 0);
 }
 
+function alignGeneratedPlanToWeeklyTargets(
+  plan: GeneratedPlan,
+  constraints: WeeklyTargetConstraint[],
+): GeneratedPlan {
+  if (constraints.length === 0) return plan;
+
+  const constraintsByWeek = new Map<string, WeeklyTargetConstraint[]>();
+  for (const constraint of constraints) {
+    constraintsByWeek.set(constraint.weekStartDate, [...(constraintsByWeek.get(constraint.weekStartDate) ?? []), constraint]);
+  }
+
+  return {
+    ...plan,
+    rhythms: plan.rhythms.map((rhythm) => alignRhythmToWeeklyTargets(rhythm, constraintsByWeek.get(rhythm.weekStartDate) ?? [])),
+  };
+}
+
+function alignRhythmToWeeklyTargets(
+  rhythm: GeneratedRhythm,
+  constraints: WeeklyTargetConstraint[],
+): GeneratedRhythm {
+  if (constraints.length === 0) return rhythm;
+
+  const workouts = [...rhythm.workouts].sort((a, b) =>
+    a.scheduledDate.localeCompare(b.scheduledDate) || a.sequenceOrder - b.sequenceOrder
+  );
+  for (const constraint of constraints) {
+    if (!constraint.modality) continue;
+    if (constraint.family === "modality_session_count" || constraint.family === "support_modality_presence") {
+      while (generatedWorkoutsForModality(workouts, constraint.modality).length < Math.round(constraint.targetValue)) {
+        workouts.push(generatedWorkoutForConstraint(constraint, rhythm, workouts));
+      }
+    }
+  }
+
+  for (const constraint of constraints) {
+    if (!constraint.modality || constraint.family !== "modality_minutes") continue;
+    let minutes = generatedWorkoutsForModality(workouts, constraint.modality)
+      .reduce((sum, workout) => sum + Number(workout.durationMinutes ?? 0), 0);
+    while (minutes < constraint.targetValue) {
+      const workout = generatedWorkoutForConstraint(constraint, rhythm, workouts, Math.min(60, Math.max(30, Math.ceil(constraint.targetValue - minutes))));
+      workouts.push(workout);
+      minutes += workout.durationMinutes;
+    }
+  }
+
+  for (const constraint of constraints) {
+    if (!weeklyTargetCountsActiveDays(constraint)) continue;
+    while (new Set(workouts.map((workout) => workout.scheduledDate)).size < Math.round(constraint.targetValue)) {
+      workouts.push(generatedWorkoutForConstraint({ ...constraint, modality: "recovery" }, rhythm, workouts, 30));
+    }
+  }
+
+  const sequenceByDate = new Map<string, number>();
+  return {
+    ...rhythm,
+    workouts: workouts
+      .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate) || a.sequenceOrder - b.sequenceOrder)
+      .map((workout) => {
+        const sequenceOrder = (sequenceByDate.get(workout.scheduledDate) ?? 0) + 1;
+        sequenceByDate.set(workout.scheduledDate, sequenceOrder);
+        return { ...workout, sequenceOrder };
+      }),
+  };
+}
+
+function generatedWorkoutsForModality(workouts: GeneratedWorkout[], modality: string) {
+  return workouts.filter((workout) => normalizeActivity(`${workout.activityType} ${workout.title} ${workout.purpose}`) === modality);
+}
+
+function weeklyTargetCountsActiveDays(constraint: WeeklyTargetConstraint) {
+  if (constraint.family === "active_days") return true;
+  return constraint.family === "minimum_viable_week" && (constraint.unit === "days" || /day/i.test(constraint.title));
+}
+
+function generatedWorkoutForConstraint(
+  constraint: WeeklyTargetConstraint,
+  rhythm: GeneratedRhythm,
+  workouts: GeneratedWorkout[],
+  durationMinutes?: number,
+): GeneratedWorkout {
+  const modality = constraint.modality ?? "recovery";
+  const scheduledDate = bestDateForConstraintWorkout(rhythm, workouts, modality);
+  const template = workoutTemplateForModality(modality);
+  return {
+    scheduledDate,
+    sequenceOrder: nextGeneratedSequenceOrder(workouts, scheduledDate),
+    activityType: template.activityType,
+    title: template.title,
+    durationMinutes: durationMinutes ?? template.durationMinutes,
+    intensityLabel: template.intensityLabel,
+    purpose: template.purpose,
+    prescription: template.prescription,
+    fuelingSummary: template.fuelingSummary,
+  };
+}
+
+function bestDateForConstraintWorkout(rhythm: GeneratedRhythm, workouts: GeneratedWorkout[], modality: string) {
+  const start = parseDateOnly(rhythm.weekStartDate) ?? new Date();
+  const candidates = Array.from({ length: 7 }, (_, offset) => isoDate(addDays(start, offset)));
+  const sameModalityDates = new Set(generatedWorkoutsForModality(workouts, modality).map((workout) => workout.scheduledDate));
+  const scored = candidates.map((date) => ({
+    date,
+    sameModality: sameModalityDates.has(date) ? 1 : 0,
+    workouts: workouts.filter((workout) => workout.scheduledDate === date).length,
+  }));
+  scored.sort((a, b) => a.sameModality - b.sameModality || a.workouts - b.workouts || a.date.localeCompare(b.date));
+  return scored[0]?.date ?? rhythm.weekStartDate;
+}
+
+function nextGeneratedSequenceOrder(workouts: GeneratedWorkout[], date: string) {
+  return workouts
+    .filter((workout) => workout.scheduledDate === date)
+    .reduce((max, workout) => Math.max(max, workout.sequenceOrder), 0) + 1;
+}
+
+function workoutTemplateForModality(modality: string) {
+  switch (modality) {
+    case "strength":
+      return {
+        activityType: "strength",
+        title: "Strength support",
+        durationMinutes: 45,
+        intensityLabel: "Moderate",
+        purpose: "Strength anchor",
+        prescription: { source: "weekly_target_alignment", focus: "Full-body strength support" },
+        fuelingSummary: "Carbs + protein, 60-120 min before.",
+      };
+    case "ride":
+      return {
+        activityType: "ride",
+        title: "Easy endurance ride",
+        durationMinutes: 45,
+        intensityLabel: "Zone 2",
+        purpose: "Aerobic base",
+        prescription: { source: "weekly_target_alignment", focus: "Steady endurance" },
+        fuelingSummary: "Banana + yogurt, 60-90 min before.",
+      };
+    case "run":
+      return {
+        activityType: "run",
+        title: "Easy run",
+        durationMinutes: 35,
+        intensityLabel: "Easy",
+        purpose: "Aerobic base",
+        prescription: { source: "weekly_target_alignment", focus: "Comfortable aerobic running" },
+        fuelingSummary: "Banana + yogurt, 60-90 min before.",
+      };
+    default:
+      return {
+        activityType: "recovery",
+        title: "Recovery",
+        durationMinutes: 30,
+        intensityLabel: "Low",
+        purpose: "Recovery",
+        prescription: { source: "weekly_target_alignment", focus: "Low-load movement" },
+        fuelingSummary: "Normal meal timing; prioritize protein.",
+      };
+  }
+}
+
 async function evaluatePlanningTargets(
   admin: SupabaseAdminClient,
   userID: string,
@@ -5190,7 +5350,7 @@ function evaluateWeeklyTarget(
   const rule = target.evaluation_rule_json ?? {};
   const family = normalizedWeeklyTargetFamily(rule.family) ?? normalizedWeeklyTargetFamily(target.metric_key) ?? "planned_session_completion";
   const comparator = rule.comparator === "at_most" || rule.comparator === "between" ? rule.comparator : "at_least";
-  const modality = typeof rule.modality === "string" ? rule.modality : null;
+  const modality = weeklyTargetModality(target, rule);
   const targetValue = typeof target.target_value === "number" ? target.target_value : null;
   if (!targetValue) {
     return weeklyEvaluation("needs_review", null, null, "This weekly target needs a clearer measurable rule.", { reason: "missing_target_value" }, "low");
@@ -5238,8 +5398,11 @@ function weeklyCurrentValue(
   target: Record<string, any>,
 ) {
   const completed = workouts.filter((workout) => isCompletedWorkout(workout));
-  const completedForModality = completed.filter((workout) => !modality || normalizeActivity(`${workout.activity_type} ${workout.title} ${workout.purpose}`) === modality);
-  const actualsForModality = completedForModality.map((workout) => actualByPlannedID.get(workout.id)).filter(Boolean) as Record<string, any>[];
+  const completedForModality = completed.filter((workout) => !modality || workoutMatchesModality(workout, modality));
+  const actualsForCompleted = completedForModality.map((workout) => actualByPlannedID.get(workout.id)).filter(Boolean) as Record<string, any>[];
+  const actualsForModality = modality
+    ? actualsForCompleted.filter((actual) => actualMatchesModality(actual, modality))
+    : actualsForCompleted;
 
   switch (family) {
     case "planned_session_completion":
@@ -5249,7 +5412,8 @@ function weeklyCurrentValue(
     case "support_modality_presence":
       return completedForModality.length;
     case "modality_minutes":
-      return actualsForModality.length > 0
+      if (!modality) return null;
+      return actualsForCompleted.length > 0
         ? actualsForModality.reduce((sum, actual) => sum + Number(actual.duration_minutes ?? 0), 0)
         : completedForModality.reduce((sum, workout) => sum + Number(workout.duration_minutes ?? 0), 0);
     case "modality_distance":
@@ -5265,6 +5429,27 @@ function weeklyCurrentValue(
     case "cycling_pace":
       return speedKilometersPerHour(actualsForModality);
   }
+}
+
+function weeklyTargetModality(target: Record<string, any>, rule: Record<string, any>) {
+  if (typeof rule.modality === "string" && rule.modality.trim()) {
+    return normalizeActivity(rule.modality);
+  }
+  const inferred = inferModality(`${target.metric_key ?? ""} ${target.title ?? ""} ${target.description ?? ""}`);
+  return inferred;
+}
+
+function inferModality(value: string) {
+  const normalized = normalizeActivity(value);
+  return normalized === "workout" ? null : normalized;
+}
+
+function workoutMatchesModality(workout: Record<string, any>, modality: string) {
+  return normalizeActivity(`${workout.activity_type ?? ""} ${workout.title ?? ""} ${workout.purpose ?? ""}`) === modality;
+}
+
+function actualMatchesModality(actual: Record<string, any>, modality: string) {
+  return normalizeActivity(`${actual.activity_type ?? ""}`) === modality;
 }
 
 function isCompletedWorkout(workout: Record<string, any>) {
@@ -5439,6 +5624,154 @@ function initialPlanFromAcceptedStrategy(
   };
 }
 
+type InitialWeekActualWorkout = {
+  localDate: string;
+  modality: string;
+  activityType: string;
+  durationMinutes: number;
+};
+
+function actualWorkoutsForInitialWeek(
+  actualWorkouts: ActualWorkoutInput[],
+  weekStartDate: string,
+  weekEndDate: string,
+  acceptedLocalDate: Date,
+  timezone: string,
+): InitialWeekActualWorkout[] {
+  const acceptedDate = isoDate(acceptedLocalDate);
+  return uniqueActualWorkouts(actualWorkouts)
+    .map((actual) => {
+      const localDate = actualWorkoutLocalDate(actual, timezone);
+      return {
+        localDate,
+        modality: normalizeActivity(actual.activity_type),
+        activityType: actual.activity_type,
+        durationMinutes: Number(actual.duration_minutes ?? 0),
+      };
+    })
+    .filter((actual) =>
+      actual.localDate >= weekStartDate &&
+      actual.localDate <= weekEndDate &&
+      actual.localDate <= acceptedDate &&
+      actual.modality !== "recovery" &&
+      actual.modality !== "mobility"
+    );
+}
+
+function actualWorkoutLocalDate(actual: ActualWorkoutInput, timezone: string) {
+  const parsed = parseTimestamp(actual.start_date);
+  if (!parsed) return actual.start_date.slice(0, 10);
+  return isoDate(dateOnlyInTimezone(parsed, timezone));
+}
+
+function applyInitialWeekActualWorkoutContext(
+  plan: GeneratedPlan,
+  completedActuals: InitialWeekActualWorkout[],
+  ownerStartDate: string,
+): GeneratedPlan {
+  if (completedActuals.length === 0) return plan;
+
+  const completedSummary = completedActuals.map((actual) => ({
+    date: actual.localDate,
+    modality: actual.modality,
+    activityType: actual.activityType,
+    durationMinutes: actual.durationMinutes,
+  }));
+
+  return {
+    ...plan,
+    block: {
+      ...plan.block,
+      context: {
+        ...(plan.block.context ?? {}),
+        completedThisWeekBeforePlanStart: completedSummary,
+      },
+    },
+    rhythms: plan.rhythms.map((rhythm, rhythmIndex) => {
+      if (rhythmIndex !== 0) return rhythm;
+      const actualsInWeek = completedActuals.filter((actual) =>
+        actual.localDate >= rhythm.weekStartDate && actual.localDate <= rhythm.weekEndDate
+      );
+      if (actualsInWeek.length === 0) return rhythm;
+
+      const desiredByModality = countByModality(rhythm.workouts.filter(isTrainingWorkout));
+      const actualByModality = countActualsByModality(actualsInWeek);
+      const sameDayActuals = countActualsByDateAndModality(actualsInWeek);
+      const keptByModality = new Map<string, number>();
+      const desiredTrainingTotal = rhythm.workouts.filter(isTrainingWorkout).length;
+      const remainingTrainingTotal = Math.max(0, desiredTrainingTotal - actualsInWeek.length);
+      let keptTrainingTotal = 0;
+
+      const adjustedWorkouts = rhythm.workouts.filter((workout) => {
+        if (workout.scheduledDate < ownerStartDate || !isTrainingWorkout(workout)) {
+          return true;
+        }
+
+        const modality = normalizeActivity(`${workout.activityType} ${workout.title}`);
+        const sameDayKey = `${workout.scheduledDate}|${modality}`;
+        const sameDayActualCount = sameDayActuals.get(sameDayKey) ?? 0;
+        if (sameDayActualCount > 0) {
+          sameDayActuals.set(sameDayKey, sameDayActualCount - 1);
+          return false;
+        }
+
+        const desiredForModality = desiredByModality.get(modality) ?? 0;
+        const actualForModality = actualByModality.get(modality) ?? 0;
+        const remainingForModality = Math.max(0, desiredForModality - actualForModality);
+        const keptForModality = keptByModality.get(modality) ?? 0;
+        if (desiredForModality > 0 && keptForModality >= remainingForModality) {
+          return false;
+        }
+        if (keptTrainingTotal >= remainingTrainingTotal) {
+          return false;
+        }
+
+        keptByModality.set(modality, keptForModality + 1);
+        keptTrainingTotal += 1;
+        return true;
+      });
+
+      const resequenced = adjustedWorkouts.map((workout, index) => ({ ...workout, sequenceOrder: index + 1 }));
+      return {
+        ...rhythm,
+        priorityOrder: resequenced.map((workout) => workout.title),
+        workouts: resequenced,
+      };
+    }),
+  };
+}
+
+function isTrainingWorkout(workout: GeneratedWorkout) {
+  const modality = normalizeActivity(`${workout.activityType} ${workout.title}`);
+  return modality !== "recovery" && modality !== "mobility";
+}
+
+function countByModality(workouts: GeneratedWorkout[]) {
+  const counts = new Map<string, number>();
+  for (const workout of workouts) {
+    const modality = normalizeActivity(`${workout.activityType} ${workout.title}`);
+    counts.set(modality, (counts.get(modality) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countActualsByModality(actuals: InitialWeekActualWorkout[]) {
+  const counts = new Map<string, number>();
+  for (const actual of actuals) {
+    counts.set(actual.modality, (counts.get(actual.modality) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function countActualsByDateAndModality(actuals: InitialWeekActualWorkout[]) {
+  const counts = new Map<string, number>();
+  for (const actual of actuals) {
+    const key = `${actual.localDate}|${actual.modality}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function sanitizeGeneratedPlan(
   generated: GeneratedPlan,
   onboarding: Record<string, any> | null,
@@ -5512,14 +5845,28 @@ function fallbackRhythms(start: Date, selected: Record<string, any>, kind: strin
 
 function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind: string): GeneratedWorkout[] {
   const duration = durationMinutes(selected.sessionLength);
+  const daysPerWeek = trainingDaysPerWeek(selected.frequency);
   const goalText = `${selected.goalBrief ?? ""} ${selected.chosenGoal?.title ?? ""}`.toLowerCase();
   const runningGoal = /run|half|marathon|5k|10k/.test(goalText);
   const priorities = Array.isArray(selected.trainingOptions)
     ? selected.trainingOptions.map((option: Record<string, unknown>) => String(option.activity ?? option.title ?? "").toLowerCase())
     : [];
   const cyclingPreferred = priorities.some((activity: string) => /cycl|bike|ride/.test(activity));
+  const cyclingPrimary = /cycl|bike|ride/.test(priorities[0] ?? "") || /cycl|bike|ride/.test(goalText);
   const strengthPreferred = priorities.some((activity: string) => /strength|gym|lift/.test(activity));
   const runningPreferred = priorities.some((activity: string) => /run/.test(activity));
+  const cyclingFocusedTemplate = [
+    { day: 0, type: "ride", title: "Easy endurance ride", intensity: "Zone 2", purpose: "Aerobic base", minutes: Math.max(45, duration) },
+    { day: 1, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength support", minutes: Math.max(40, Math.min(50, duration)) },
+    { day: 3, type: "ride", title: "Cycling intervals", intensity: "Hard", purpose: "Cycling power progression", minutes: Math.max(50, duration) },
+    { day: 5, type: "ride", title: "Long endurance ride", intensity: "Moderate", purpose: "Weekly cycling anchor", minutes: Math.max(75, duration + 30) },
+    { day: 6, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength support", minutes: Math.max(40, Math.min(50, duration)) },
+    { day: 2, type: "run", title: "Easy run", intensity: "Easy", purpose: "Light aerobic variety", minutes: Math.min(35, duration) },
+  ].filter((item) => {
+    if (item.type === "run") return runningPreferred && daysPerWeek >= 6;
+    if (item.day === 6) return strengthPreferred && daysPerWeek >= 5;
+    return true;
+  }).slice(0, Math.max(3, daysPerWeek));
   const template = kind === "consistency"
     ? [
         { day: 0, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength anchor" },
@@ -5527,6 +5874,8 @@ function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind
         { day: 4, type: "mobility", title: "Mobility", intensity: "Low", purpose: "Movement quality" },
         { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
       ]
+    : cyclingPreferred && cyclingPrimary
+      ? cyclingFocusedTemplate
     : cyclingPreferred && strengthPreferred
       ? [
           { day: 0, type: "strength", title: "Strength anchor", intensity: "Moderate", purpose: "Preserve muscle and support the goal" },
@@ -5556,12 +5905,21 @@ function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind
     sequenceOrder: index + 1,
     activityType: item.type,
     title: item.title,
-    durationMinutes: item.type === "recovery" || item.type === "mobility" ? 30 : duration,
+    durationMinutes: "minutes" in item ? item.minutes : item.type === "recovery" || item.type === "mobility" ? 30 : duration,
     intensityLabel: item.intensity,
     purpose: item.purpose,
     prescription: fallbackPrescription(item.title, item.type, item.intensity),
     fuelingSummary: fuelingSummary(item.type, item.intensity),
   }));
+}
+
+function trainingDaysPerWeek(frequency: string | undefined) {
+  const value = String(frequency ?? "").toLowerCase();
+  if (value.includes("2")) return 2;
+  if (value.includes("3")) return 3;
+  if (value.includes("4")) return 4;
+  if (value.includes("5")) return 5;
+  return 5;
 }
 
 function fallbackPhases(start: Date, targetDate: string | null): GeneratedPhase[] {
@@ -5611,7 +5969,6 @@ async function markMissedWorkouts(
       .select("id")
       .eq("user_id", userID)
       .eq("fitness_strategy_id", strategyID)
-      .in("status", ["committed", "draft"]),
   );
   const planIDs = plans.map((plan: Record<string, any>) => plan.id);
   if (planIDs.length === 0) return [];
@@ -5634,7 +5991,17 @@ async function markCurrentWorkoutForStrategy(
   strategyID: string,
   today: Date,
 ) {
-  const plans = await list(
+  const allPlans = await list(
+    admin
+      .from("weekly_plans")
+      .select("id")
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID),
+  );
+  const allPlanIDs = allPlans.map((plan: Record<string, any>) => plan.id);
+  if (allPlanIDs.length === 0) return;
+
+  const activePlans = await list(
     admin
       .from("weekly_plans")
       .select("id")
@@ -5642,17 +6009,17 @@ async function markCurrentWorkoutForStrategy(
       .eq("fitness_strategy_id", strategyID)
       .in("status", ["committed", "draft"]),
   );
-  const planIDs = plans.map((plan: Record<string, any>) => plan.id);
-  if (planIDs.length === 0) return;
+  const planIDs = activePlans.map((plan: Record<string, any>) => plan.id);
 
   await throwOnError(
     admin
       .from("planned_workouts")
       .update({ status: "planned" })
       .eq("user_id", userID)
-      .in("weekly_plan_id", planIDs)
+      .in("weekly_plan_id", allPlanIDs)
       .eq("status", "current"),
   );
+  if (planIDs.length === 0) return;
 
   const next = await maybeSingle(
     admin
@@ -5814,6 +6181,205 @@ async function loadPlannedWorkoutForActiveStrategy(
   return workout;
 }
 
+async function reconcileActualWorkouts(
+  admin: SupabaseAdminClient,
+  userID: string,
+  scope: PlanningScope,
+  actualWorkouts: ActualWorkoutInput[],
+  options: {
+    createDetectedProposal: boolean;
+    createDisparityProposal: boolean;
+  },
+) {
+  let synced = 0;
+  let matched = 0;
+  let detected = 0;
+  const detectedEvents: Array<{ eventID: string; plannedWorkoutID: string; actual: ActualWorkoutInput }> = [];
+  const syncedDates = new Set<string>();
+
+  for (const actual of uniqueActualWorkouts(actualWorkouts)) {
+    syncedDates.add(actual.start_date.slice(0, 10));
+    const upserted = await single(
+      admin
+        .from("actual_workouts")
+        .upsert(
+          {
+            user_id: userID,
+            healthkit_uuid: actual.healthkit_uuid,
+            start_date: actual.start_date,
+            activity_type: actual.activity_type,
+            duration_minutes: actual.duration_minutes,
+            distance_kilometers: actual.distance_kilometers ?? null,
+            energy_kilocalories: actual.energy_kilocalories ?? null,
+            load_value: actual.load_value ?? null,
+            average_heart_rate_bpm: actual.average_heart_rate_bpm ?? null,
+            max_heart_rate_bpm: actual.max_heart_rate_bpm ?? null,
+            heart_rate_samples_json: actual.heart_rate_samples ?? [],
+          },
+          { onConflict: "user_id,healthkit_uuid" },
+        )
+        .select()
+        .single(),
+      "Could not upsert actual workout",
+    );
+    synced += 1;
+
+    let staleDetectedWorkoutID: string | null = null;
+    if (upserted.matched_planned_workout_id) {
+      const existingMatch = await actualMatchForStrategy(
+        admin,
+        userID,
+        scope.strategy.id,
+        upserted.matched_planned_workout_id,
+      );
+      if (existingMatch && existingMatch.source !== "healthkit_detected") {
+        continue;
+      }
+      if (existingMatch?.source === "healthkit_detected") {
+        staleDetectedWorkoutID = existingMatch.id;
+      }
+      await throwOnError(
+        admin
+          .from("actual_workouts")
+          .update({ matched_planned_workout_id: null, match_confidence: null })
+          .eq("id", upserted.id),
+      );
+    }
+
+    const match = await findWorkoutMatch(admin, userID, scope, actual);
+    if (match) {
+      await throwOnError(
+        admin
+          .from("actual_workouts")
+          .update({ matched_planned_workout_id: match.workout.id, match_confidence: match.confidence })
+          .eq("id", upserted.id),
+      );
+      await throwOnError(admin.from("planned_workouts").update({ status: "done" }).eq("id", match.workout.id));
+      const matchEvent = await createPlanEvent(admin, {
+        userID,
+        fitnessStrategyID: scope.strategy.id,
+        weeklyPlanID: match.workout.weekly_plan_id ?? null,
+        plannedWorkoutID: match.workout.id,
+        eventType: "actual_matched",
+        payload: {
+          actual,
+          confidence: match.confidence,
+          matchDisparity: match.disparity,
+          plannedWorkout: compactPlannedWorkout(match.workout),
+        },
+      });
+      await createWorkoutDebriefRequest(admin, userID, null, match.workout.id, upserted.id);
+      if (options.createDisparityProposal && match.disparity?.needsReview) {
+        await createReplanProposal(admin, {
+          userID,
+          fitnessStrategyID: scope.strategy.id,
+          weeklyPlanID: match.workout.weekly_plan_id ?? null,
+          triggerEventID: matchEvent.id,
+          reason: "Completed workout differed meaningfully from the planned session. Review whether the rest of the week should change.",
+          mutations: [],
+          metadata: {
+            type: "actual_workout_disparity",
+            plannedWorkoutID: match.workout.id,
+            actualWorkoutID: upserted.id,
+            plannedWorkout: compactPlannedWorkout(match.workout),
+            actualWorkout: compactActualWorkout(actual),
+            disparity: match.disparity,
+          },
+        });
+      }
+      if (staleDetectedWorkoutID) {
+        await throwOnError(
+          admin
+            .from("planned_workouts")
+            .update({ status: "deleted" })
+            .eq("user_id", userID)
+            .eq("id", staleDetectedWorkoutID),
+        );
+      }
+      matched += 1;
+    } else {
+      const inserted = await insertDetectedWorkout(admin, userID, scope, actual);
+      await throwOnError(
+        admin
+          .from("actual_workouts")
+          .update({ matched_planned_workout_id: inserted.id, match_confidence: 1 })
+          .eq("id", upserted.id),
+      );
+      const event = await createPlanEvent(admin, {
+        userID,
+        fitnessStrategyID: scope.strategy.id,
+        weeklyPlanID: inserted.weekly_plan_id ?? null,
+        plannedWorkoutID: inserted.id,
+        eventType: "extra_workout_detected",
+        payload: { actual },
+      });
+      await createWorkoutDebriefRequest(admin, userID, null, inserted.id, upserted.id);
+      if (staleDetectedWorkoutID && staleDetectedWorkoutID !== inserted.id) {
+        await throwOnError(
+          admin
+            .from("planned_workouts")
+            .update({ status: "deleted" })
+            .eq("user_id", userID)
+            .eq("id", staleDetectedWorkoutID),
+        );
+      }
+      detectedEvents.push({ eventID: event.id, plannedWorkoutID: inserted.id, actual });
+      detected += 1;
+    }
+  }
+
+  const dedupedDetected = await cleanupDuplicateDetectedWorkouts(admin, userID, Array.from(syncedDates));
+  if (options.createDetectedProposal && detectedEvents.length > 0) {
+    await createReplanProposal(admin, {
+      userID,
+      fitnessStrategyID: scope.strategy.id,
+      triggerEventID: null,
+      reason: detectedEvents.length === 1
+        ? "Unexpected HealthKit workout detected. Review whether the rest of the week should change."
+        : `${detectedEvents.length} unexpected HealthKit workouts detected. Review whether the current rhythm should change.`,
+      mutations: [],
+      metadata: {
+        detectedWorkoutEventIDs: detectedEvents.map((detectedEvent) => detectedEvent.eventID),
+        detectedPlannedWorkoutIDs: detectedEvents.map((detectedEvent) => detectedEvent.plannedWorkoutID),
+      },
+    });
+  }
+
+  return { synced, matched, detected, dedupedDetected, detectedEvents };
+}
+
+async function actualMatchForStrategy(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  plannedWorkoutID: string,
+) {
+  const workout = await maybeSingle(
+    admin
+      .from("planned_workouts")
+      .select("id,weekly_plan_id,status,source")
+      .eq("id", plannedWorkoutID)
+      .eq("user_id", userID)
+      .maybeSingle(),
+  );
+  if (!workout || ["deleted", "superseded"].includes(String(workout.status ?? ""))) {
+    return null;
+  }
+  if (!workout.weekly_plan_id) {
+    return null;
+  }
+  const weeklyPlan = await maybeSingle(
+    admin
+      .from("weekly_plans")
+      .select("id")
+      .eq("id", workout.weekly_plan_id)
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .maybeSingle(),
+  );
+  return weeklyPlan ? workout : null;
+}
+
 async function findWorkoutMatch(
   admin: SupabaseAdminClient,
   userID: string,
@@ -5833,12 +6399,12 @@ async function findWorkoutMatch(
       .in("status", ["planned", "current", "checked_in", "adjusted"]),
   );
 
-  let best: { workout: Record<string, any>; confidence: number } | null = null;
+  let best: { workout: Record<string, any>; confidence: number; disparity: WorkoutMatchDisparity | null } | null = null;
   for (const workout of candidates) {
     const match = workoutMatchScore(actual, workout);
-    if (match && (!best || match.confidence > best.confidence)) {
+    if (match && (!best || compareWorkoutMatches(match, workout, best) > 0)) {
       const confidence = match.confidence;
-      best = { workout, confidence };
+      best = { workout, confidence, disparity: match.disparity };
     }
   }
   return best;
@@ -5855,11 +6421,18 @@ async function insertDetectedWorkout(
   const existing = await list(
     admin
       .from("planned_workouts")
-      .select("sequence_order")
+      .select()
       .eq("user_id", userID)
       .eq("scheduled_date", actualDate)
-      .eq("weekly_plan_id", weeklyPlan?.id ?? "00000000-0000-0000-0000-000000000000"),
+      .eq("source", "healthkit_detected")
+      .not("status", "in", "(deleted,superseded)"),
   );
+  const duplicate = existing.find((workout: Record<string, any>) =>
+    (workout.weekly_plan_id ?? null) === (weeklyPlan?.id ?? null) &&
+    normalizeActivity(`${workout.activity_type ?? ""} ${workout.title ?? ""}`) === normalizeActivity(actual.activity_type) &&
+    Number(workout.duration_minutes ?? 0) === Number(actual.duration_minutes ?? 0)
+  );
+  if (duplicate) return duplicate;
 
   return single(
     admin
@@ -5884,6 +6457,104 @@ async function insertDetectedWorkout(
       .single(),
     "Could not insert detected workout",
   );
+}
+
+function uniqueActualWorkouts(workouts: ActualWorkoutInput[]) {
+  const seen = new Set<string>();
+  const unique: ActualWorkoutInput[] = [];
+  for (const workout of workouts) {
+    const key = [
+      workout.start_date.slice(0, 16),
+      normalizeActivity(workout.activity_type),
+      Math.round(Number(workout.duration_minutes ?? 0)),
+      workout.distance_kilometers == null ? "" : Number(workout.distance_kilometers).toFixed(2),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(workout);
+  }
+  return unique;
+}
+
+function compactPlannedWorkout(workout: Record<string, any>) {
+  return {
+    id: workout.id,
+    scheduledDate: workout.scheduled_date,
+    source: workout.source ?? null,
+    activityType: workout.activity_type,
+    title: workout.title,
+    durationMinutes: workout.duration_minutes,
+    intensityLabel: workout.intensity_label,
+    purpose: workout.purpose,
+  };
+}
+
+function compactActualWorkout(actual: ActualWorkoutInput) {
+  return {
+    healthkitUUID: actual.healthkit_uuid,
+    startDate: actual.start_date,
+    activityType: actual.activity_type,
+    durationMinutes: actual.duration_minutes,
+    distanceKilometers: actual.distance_kilometers ?? null,
+    energyKilocalories: actual.energy_kilocalories ?? null,
+    averageHeartRateBPM: actual.average_heart_rate_bpm ?? null,
+    maxHeartRateBPM: actual.max_heart_rate_bpm ?? null,
+  };
+}
+
+async function cleanupDuplicateDetectedWorkouts(
+  admin: SupabaseAdminClient,
+  userID: string,
+  dates: string[],
+) {
+  const uniqueDates = Array.from(new Set(dates.filter(Boolean)));
+  if (uniqueDates.length === 0) return 0;
+
+  const detected = await list(
+    admin
+      .from("planned_workouts")
+      .select("id,weekly_plan_id,scheduled_date,activity_type,title,duration_minutes,created_at")
+      .eq("user_id", userID)
+      .eq("source", "healthkit_detected")
+      .in("scheduled_date", uniqueDates)
+      .not("status", "in", "(deleted,superseded)"),
+  );
+
+  const groups = new Map<string, Record<string, any>[]>();
+  for (const workout of detected) {
+    const key = [
+      workout.weekly_plan_id ?? "none",
+      workout.scheduled_date,
+      normalizeActivity(`${workout.activity_type ?? ""} ${workout.title ?? ""}`),
+      Number(workout.duration_minutes ?? 0),
+    ].join("|");
+    groups.set(key, [...(groups.get(key) ?? []), workout]);
+  }
+
+  let removed = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const sorted = group.sort((a, b) => String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")));
+    const keeper = sorted[0];
+    const duplicateIDs = sorted.slice(1).map((workout) => workout.id);
+    await throwOnError(
+      admin
+        .from("actual_workouts")
+        .update({ matched_planned_workout_id: keeper.id, match_confidence: 1 })
+        .eq("user_id", userID)
+        .in("matched_planned_workout_id", duplicateIDs),
+    );
+    await throwOnError(
+      admin
+        .from("planned_workouts")
+        .update({ status: "deleted" })
+        .eq("user_id", userID)
+        .in("id", duplicateIDs),
+    );
+    removed += duplicateIDs.length;
+  }
+
+  return removed;
 }
 
 async function persistFitnessEvidence(
@@ -6289,6 +6960,98 @@ async function hasWeeklyTargetsForPlans(admin: SupabaseAdminClient, userID: stri
   return weeklyPlanIDs.every((weeklyPlanID) => coveredPlans.has(weeklyPlanID));
 }
 
+async function loadWeeklyTargetConstraints(
+  admin: SupabaseAdminClient,
+  userID: string,
+  weeklyPlans: Record<string, any>[],
+): Promise<WeeklyTargetConstraint[]> {
+  const planIDs = weeklyPlans.map((plan) => plan.id).filter(Boolean);
+  if (planIDs.length === 0) return [];
+
+  const planByID = new Map(weeklyPlans.map((plan) => [plan.id, plan]));
+  const targets = await list(
+    admin
+      .from("planning_targets")
+      .select("id,weekly_plan_id,title,target_value,unit,metric_key,evaluation_rule_json")
+      .eq("user_id", userID)
+      .eq("target_scope", "week")
+      .in("weekly_plan_id", planIDs),
+  );
+
+  return targets
+    .map((target: Record<string, any>) => {
+      const plan = planByID.get(target.weekly_plan_id);
+      const rule = target.evaluation_rule_json ?? {};
+      const family = normalizedWeeklyTargetFamily(rule.family) ?? normalizedWeeklyTargetFamily(target.metric_key);
+      const targetValue = Number(target.target_value ?? 0);
+      if (!plan || !family || !Number.isFinite(targetValue) || targetValue <= 0) return null;
+      return {
+        id: target.id,
+        weeklyPlanID: target.weekly_plan_id,
+        weekStartDate: plan.week_start_date,
+        weekEndDate: plan.week_end_date,
+        title: target.title,
+        family,
+        modality: weeklyTargetModality(target, rule),
+        targetValue,
+        unit: target.unit ?? null,
+      };
+    })
+    .filter(Boolean) as WeeklyTargetConstraint[];
+}
+
+async function planWindowSatisfiesWeeklyTargets(
+  admin: SupabaseAdminClient,
+  userID: string,
+  weeklyPlans: Record<string, any>[],
+) {
+  const constraints = await loadWeeklyTargetConstraints(admin, userID, weeklyPlans);
+  if (constraints.length === 0) return true;
+
+  const planIDs = weeklyPlans.map((plan) => plan.id).filter(Boolean);
+  const workouts = await list(
+    admin
+      .from("planned_workouts")
+      .select("weekly_plan_id,scheduled_date,activity_type,title,duration_minutes,purpose,status")
+      .eq("user_id", userID)
+      .in("weekly_plan_id", planIDs)
+      .not("status", "in", "(deleted,superseded)"),
+  );
+  const workoutsByPlanID = new Map<string, Record<string, any>[]>();
+  for (const workout of workouts) {
+    workoutsByPlanID.set(workout.weekly_plan_id, [...(workoutsByPlanID.get(workout.weekly_plan_id) ?? []), workout]);
+  }
+
+  return constraints.every((constraint) =>
+    plannedConstraintValue(workoutsByPlanID.get(constraint.weeklyPlanID) ?? [], constraint) >= constraint.targetValue
+  );
+}
+
+function plannedConstraintValue(workouts: Record<string, any>[], constraint: WeeklyTargetConstraint) {
+  const activeWorkouts = workouts.filter((workout) => !["deleted", "superseded"].includes(String(workout.status)));
+  const modalityWorkouts = constraint.modality
+    ? activeWorkouts.filter((workout) => workoutMatchesModality(workout, constraint.modality!))
+    : activeWorkouts;
+
+  switch (constraint.family) {
+    case "modality_session_count":
+    case "support_modality_presence":
+      return modalityWorkouts.length;
+    case "modality_minutes":
+      return modalityWorkouts.reduce((sum, workout) => sum + Number(workout.duration_minutes ?? 0), 0);
+    case "active_days":
+      return new Set(activeWorkouts.map((workout) => workout.scheduled_date)).size;
+    case "minimum_viable_week":
+      return constraint.unit === "days" || /day/i.test(constraint.title)
+        ? new Set(activeWorkouts.map((workout) => workout.scheduled_date)).size
+        : activeWorkouts.length;
+    case "planned_session_completion":
+      return activeWorkouts.length;
+    default:
+      return constraint.targetValue;
+  }
+}
+
 async function createPlanEvent(
   admin: SupabaseAdminClient,
   args: {
@@ -6565,12 +7328,32 @@ function durationMinutes(sessionLength: string | undefined) {
 }
 
 function fallbackPrescription(title: string, activityType: string, intensity: string) {
+  const lower = `${title} ${activityType} ${intensity}`.toLowerCase();
   if (activityType === "strength") {
     return {
       warmup: "8-10 min easy movement and ramp-up sets",
       main: ["Compound lift or machine pattern 3-4 sets", "Support pull/push 3 sets", "Accessory/core 2-3 sets"],
       cooldown: "3-5 min easy mobility",
       successCriteria: "Leave 1-2 reps in reserve and keep form clean.",
+    };
+  }
+  if (activityType === "ride" && /interval|hard|threshold|vo2|power/.test(lower)) {
+    return {
+      warmup: "12 min easy spin, then 3 x 30 sec fast cadence with 90 sec easy",
+      main: [
+        "4 x 4 min hard at RPE 8/10 with 4 min easy spin between",
+        "Finish with 8-10 min steady Zone 2 if time remains",
+      ],
+      cooldown: "8-10 min easy spin",
+      successCriteria: "Hard reps stay controlled and repeatable; stop one rep early if power or form drops.",
+    };
+  }
+  if (activityType === "ride" && /long|endurance/.test(lower)) {
+    return {
+      warmup: "10 min easy spin",
+      main: ["Ride mostly Zone 2", "Add 3 x 8 min steady tempo only if legs feel good"],
+      cooldown: "5-10 min easy spin",
+      successCriteria: "Finish with breathing controlled and enough freshness to train again tomorrow.",
     };
   }
   if (activityType === "run" || activityType === "ride") {
@@ -6599,8 +7382,27 @@ function modalityScore(actualType: string, plannedType: string, plannedTitle: st
   const actual = normalizeActivity(actualType);
   const planned = normalizeActivity(`${plannedType} ${plannedTitle}`);
   if (actual === planned) return 1;
-  if ((actual === "ride" && planned === "cycling") || (actual === "cycling" && planned === "ride")) return 1;
-  if ((actual === "walk" && planned === "recovery") || (actual === "recovery" && planned === "walk")) return 0.72;
+  return 0;
+}
+
+function compareWorkoutMatches(
+  candidate: { confidence: number; disparity: WorkoutMatchDisparity | null },
+  candidateWorkout: Record<string, any>,
+  current: { workout: Record<string, any>; confidence: number; disparity: WorkoutMatchDisparity | null },
+) {
+  const candidateUserIntent = userAuthoredWorkoutScore(candidateWorkout);
+  const currentUserIntent = userAuthoredWorkoutScore(current.workout);
+  if (candidateUserIntent !== currentUserIntent) return candidateUserIntent - currentUserIntent;
+  if (candidate.confidence !== current.confidence) return candidate.confidence - current.confidence;
+  const candidateReasons = candidate.disparity?.reasons.length ?? 0;
+  const currentReasons = current.disparity?.reasons.length ?? 0;
+  return currentReasons - candidateReasons;
+}
+
+function userAuthoredWorkoutScore(workout: Record<string, any>) {
+  const source = String(workout.source ?? "");
+  if (source.startsWith("user_")) return 2;
+  if (source === "checkin_adjusted") return 1;
   return 0;
 }
 
@@ -6615,48 +7417,67 @@ function durationScore(actual: number, planned: number) {
 function workoutMatchScore(actual: ActualWorkoutInput, workout: Record<string, any>) {
   const plannedText = `${workout.activity_type ?? ""} ${workout.title ?? ""} ${workout.purpose ?? ""} ${workout.intensity_label ?? ""}`;
   const modality = modalityScore(actual.activity_type, workout.activity_type, workout.title);
-  if (modality < 0.7) return null;
+  if (modality !== 1) return null;
 
-  const duration = durationCompatibility(actual.duration_minutes, Number(workout.duration_minutes ?? 0), plannedText);
-  if (!duration.accepted) return null;
-
-  const intensity = intensityCompatibility(actual, plannedText);
-  if (!intensity.accepted) return null;
-
-  const confidence = Number(((modality * 0.45) + (duration.score * 0.35) + (intensity.score * 0.2)).toFixed(2));
-  if (confidence < 0.72) return null;
-  return { confidence };
+  const duration = durationMatchSignal(actual.duration_minutes, Number(workout.duration_minutes ?? 0));
+  const intensity = intensityMatchSignal(actual, plannedText);
+  const confidence = Number(((modality * 0.5) + (duration.score * 0.3) + (intensity.score * 0.2)).toFixed(2));
+  const disparity = workoutMatchDisparity(duration, intensity);
+  return { confidence, disparity };
 }
 
-function durationCompatibility(actualMinutes: number, plannedMinutes: number, plannedText: string) {
+function durationMatchSignal(actualMinutes: number, plannedMinutes: number) {
   if (!Number.isFinite(actualMinutes) || !Number.isFinite(plannedMinutes) || plannedMinutes <= 0) {
-    return { accepted: false, score: 0 };
+    return { score: 0.5, significant: false, plannedMinutes, actualMinutes, ratio: 1 };
   }
 
-  const activity = normalizeActivity(plannedText);
   const ratio = actualMinutes / plannedMinutes;
-  const lowerBound = isStrengthLike(activity, plannedText)
-    ? Math.max(10, plannedMinutes * 0.45)
-    : Math.max(10, plannedMinutes * 0.55);
-  const upperBound = isStrengthLike(activity, plannedText)
-    ? plannedMinutes * 2.25
-    : plannedMinutes * 1.5;
-  if (actualMinutes < lowerBound || actualMinutes > upperBound) {
-    return { accepted: false, score: 0 };
-  }
-
-  return { accepted: true, score: durationScore(actualMinutes, plannedMinutes) };
+  const absoluteDelta = Math.abs(actualMinutes - plannedMinutes);
+  const significant = absoluteDelta >= 15 && (ratio <= 0.65 || ratio >= 1.35);
+  return {
+    score: durationScore(actualMinutes, plannedMinutes),
+    significant,
+    plannedMinutes,
+    actualMinutes,
+    ratio: Number(ratio.toFixed(2)),
+  };
 }
 
-function intensityCompatibility(actual: ActualWorkoutInput, plannedText: string) {
+function intensityMatchSignal(actual: ActualWorkoutInput, plannedText: string) {
   const planned = plannedIntensityBucket(plannedText);
   const actualBucket = actualHeartRateIntensityBucket(actual);
-  if (!planned || !actualBucket) return { accepted: true, score: 0.8 };
+  if (!planned || !actualBucket) return { score: 0.8, significant: false, planned, actual: actualBucket };
 
-  if (planned === "low" && actualBucket === "high") return { accepted: false, score: 0 };
-  if (planned === "high" && actualBucket === "low") return { accepted: false, score: 0 };
-  if (planned === actualBucket) return { accepted: true, score: 1 };
-  return { accepted: true, score: 0.72 };
+  const significant = (planned === "low" && actualBucket === "high") || (planned === "high" && actualBucket === "low");
+  if (planned === actualBucket) return { score: 1, significant: false, planned, actual: actualBucket };
+  return { score: significant ? 0.35 : 0.72, significant, planned, actual: actualBucket };
+}
+
+function workoutMatchDisparity(
+  duration: ReturnType<typeof durationMatchSignal>,
+  intensity: ReturnType<typeof intensityMatchSignal>,
+): WorkoutMatchDisparity | null {
+  const reasons: string[] = [];
+  if (duration.significant) reasons.push("duration");
+  if (intensity.significant) reasons.push("intensity");
+  if (reasons.length === 0) return null;
+  return {
+    needsReview: true,
+    reasons,
+    duration: {
+      plannedMinutes: duration.plannedMinutes,
+      actualMinutes: duration.actualMinutes,
+      ratio: duration.ratio,
+      significant: duration.significant,
+    },
+    intensity: intensity.planned && intensity.actual
+      ? {
+          planned: intensity.planned,
+          actual: intensity.actual,
+          significant: intensity.significant,
+        }
+      : undefined,
+  };
 }
 
 function plannedIntensityBucket(value: string): "low" | "moderate" | "high" | null {
@@ -6831,7 +7652,7 @@ function compactWorkoutForRepair(workout: Record<string, any>) {
 
 function normalizeActivity(value: string) {
   const lower = value.toLowerCase();
-  if (lower.includes("cycle") || lower.includes("bike") || lower.includes("ride")) return "ride";
+  if (lower.includes("cycl") || lower.includes("bike") || lower.includes("ride")) return "ride";
   if (lower.includes("run")) return "run";
   if (lower.includes("swim")) return "swim";
   if (lower.includes("row")) return "row";
