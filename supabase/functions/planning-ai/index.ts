@@ -249,6 +249,7 @@ type PlanningScope = {
   goal: Record<string, any>;
   strategy: Record<string, any>;
   timezone: string;
+  homeLocationLabel: string | null;
   block: Record<string, any>;
 };
 
@@ -893,11 +894,13 @@ async function acceptStrategyAndCreateInitialPlan(
     source: "generated",
     committedWeekStart: isoDate(committedWeekStart),
     ownerStartDate,
+    homeLocationLabel: profile?.main_city ?? null,
   });
   const planningScope: PlanningScope = {
     goal,
     strategy,
     timezone,
+    homeLocationLabel: profile?.main_city ?? null,
     block: {
       id: strategy.id,
       kind: goal.goal_kind,
@@ -1382,6 +1385,7 @@ async function refreshPlanWindowForUser(
     source: "replanned",
     committedWeekStart: isoDate(start),
     ownerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
+    homeLocationLabel: scope.homeLocationLabel,
   });
   const duplicateGeneratedWorkoutsAfterInsert = await cleanupDuplicateGeneratedPlanWorkouts(admin, userID, scope.strategy.id, window);
   await generateAndPersistWeeklyTargets(admin, {
@@ -2381,9 +2385,9 @@ function supportActivityType(dimension: TrainingDimension, sourceWorkout: Record
 }
 
 function supportTitle(dimension: TrainingDimension, sourceWorkout: Record<string, any>) {
-  if (dimension === "neuromuscular") return "Strength support";
-  if (dimension === "endurance") return "Endurance support";
-  if (dimension === "recovery") return "Recovery support";
+  if (dimension === "neuromuscular") return "Full Body A";
+  if (dimension === "endurance") return "Base Ride";
+  if (dimension === "recovery") return "Mobility";
   return sourceWorkout.title ? `${sourceWorkout.title} support` : "Skill support";
 }
 
@@ -2666,10 +2670,25 @@ async function replaceWorkout(
         scheduled_date: workout.scheduled_date,
         sequence_order: workout.sequence_order,
         activity_type: normalizeActivity(candidate.activityType),
-        title: candidate.title,
+        title: normalizedWorkoutTitle(
+          candidate.activityType,
+          candidate.title,
+          Math.max(10, candidate.durationMinutes || workout.duration_minutes || 30),
+          candidate.intensityLabel || workout.intensity_label || "Moderate",
+          candidate.purpose || workout.purpose || "Replacement workout",
+        ),
         duration_minutes: Math.max(10, candidate.durationMinutes || workout.duration_minutes || 30),
         intensity_label: candidate.intensityLabel || workout.intensity_label || "Moderate",
         purpose: candidate.purpose || workout.purpose || "Replacement workout",
+        ...workoutCardFields({
+          scheduledDate: workout.scheduled_date,
+          activityType: candidate.activityType,
+          title: candidate.title,
+          durationMinutes: Math.max(10, candidate.durationMinutes || workout.duration_minutes || 30),
+          intensityLabel: candidate.intensityLabel || workout.intensity_label || "Moderate",
+          purpose: candidate.purpose || workout.purpose || "Replacement workout",
+          locationLabel: workout.planned_location_label ?? scope.homeLocationLabel,
+        }),
         status,
         source: "replanned",
         prescription_json: {
@@ -2775,10 +2794,25 @@ async function addWorkout(
         scheduled_date: scheduledDate,
         sequence_order: sequenceOrder,
         activity_type: normalizeActivity(candidate.activityType),
-        title: candidate.title,
+        title: normalizedWorkoutTitle(
+          candidate.activityType,
+          candidate.title,
+          Math.max(10, candidate.durationMinutes || 30),
+          candidate.intensityLabel || "Moderate",
+          candidate.purpose || "User-added workout",
+        ),
         duration_minutes: Math.max(10, candidate.durationMinutes || 30),
         intensity_label: candidate.intensityLabel || "Moderate",
         purpose: candidate.purpose || "User-added workout",
+        ...workoutCardFields({
+          scheduledDate,
+          activityType: candidate.activityType,
+          title: candidate.title,
+          durationMinutes: Math.max(10, candidate.durationMinutes || 30),
+          intensityLabel: candidate.intensityLabel || "Moderate",
+          purpose: candidate.purpose || "User-added workout",
+          locationLabel: scope.homeLocationLabel,
+        }),
         status: "planned",
         source: "user_added",
         prescription_json: {
@@ -3084,6 +3118,7 @@ async function createRepairProposalForPendingEdits(
       protectedWorkoutIDs,
       window,
       timezone,
+      homeLocationLabel: scope.homeLocationLabel,
     });
   } catch (error) {
     draft = await runPendingPlanReview(
@@ -3105,6 +3140,7 @@ async function createRepairProposalForPendingEdits(
       protectedWorkoutIDs,
       window,
       timezone,
+      homeLocationLabel: scope.homeLocationLabel,
     });
   }
 
@@ -3377,8 +3413,9 @@ function validatePendingPlanReviewMutations(args: {
   protectedWorkoutIDs: Set<string>;
   window: { start: string; end: string };
   timezone: string;
+  homeLocationLabel?: string | null;
 }) {
-  const { draft, weeklyPlans, workouts, protectedWorkoutIDs, window, timezone } = args;
+  const { draft, weeklyPlans, workouts, protectedWorkoutIDs, window, timezone, homeLocationLabel } = args;
   if (!draft.reviewNeeded) return [];
   if (!Array.isArray(draft.mutations)) {
     throw new Error("Plan review returned invalid mutations.");
@@ -3391,7 +3428,7 @@ function validatePendingPlanReviewMutations(args: {
     }
     const type = String(mutation.type ?? "");
     if (type === "create_workout") {
-      normalized.push(validateCreateWorkoutMutation(mutation, weeklyPlans, workouts, window, timezone));
+      normalized.push(validateCreateWorkoutMutation(mutation, weeklyPlans, workouts, window, timezone, homeLocationLabel));
     } else if (type === "update_workout") {
       const update = validateUpdateWorkoutMutation(mutation, weeklyPlans, workouts, protectedWorkoutIDs, window, timezone);
       if (update) normalized.push(update);
@@ -3410,6 +3447,7 @@ function validateCreateWorkoutMutation(
   workouts: Record<string, any>[],
   window: { start: string; end: string },
   timezone: string,
+  homeLocationLabel?: string | null,
 ) {
   const fields = plainObject(mutation.fields, "create_workout.fields");
   const scheduledDate = requiredString(fields.scheduled_date, "create_workout scheduled_date");
@@ -3434,10 +3472,19 @@ function validateCreateWorkoutMutation(
       scheduled_date: scheduledDate,
       sequence_order: sequenceOrder,
       activity_type: activityType,
-      title,
+      title: normalizedWorkoutTitle(activityType, title, boundedDuration(fields.duration_minutes), intensityLabel, purpose),
       duration_minutes: boundedDuration(fields.duration_minutes),
       intensity_label: intensityLabel,
       purpose,
+      ...workoutCardFields({
+        scheduledDate,
+        activityType,
+        title,
+        durationMinutes: boundedDuration(fields.duration_minutes),
+        intensityLabel,
+        purpose,
+        locationLabel: homeLocationLabel,
+      }),
       status: "planned",
       source: "replanned",
       prescription_json: prescription,
@@ -3483,6 +3530,32 @@ function validateUpdateWorkoutMutation(
   if (inputFields.purpose !== undefined && inputFields.purpose !== null) fields.purpose = requiredString(inputFields.purpose, "update_workout purpose");
   if (inputFields.prescription_json !== undefined && inputFields.prescription_json !== null) fields.prescription_json = plainObject(inputFields.prescription_json, "update_workout prescription_json");
   if (inputFields.fueling_summary !== undefined && inputFields.fueling_summary !== null) fields.fueling_summary = requiredString(inputFields.fueling_summary, "update_workout fueling_summary");
+
+  const mergedWorkout = {
+    scheduled_date: fields.scheduled_date ?? workout.scheduled_date,
+    activity_type: fields.activity_type ?? workout.activity_type,
+    title: fields.title ?? workout.title,
+    duration_minutes: fields.duration_minutes ?? workout.duration_minutes,
+    intensity_label: fields.intensity_label ?? workout.intensity_label,
+    purpose: fields.purpose ?? workout.purpose,
+    planned_location_label: workout.planned_location_label ?? null,
+  };
+  Object.assign(fields, workoutCardFields({
+    scheduledDate: String(mergedWorkout.scheduled_date ?? ""),
+    activityType: String(mergedWorkout.activity_type ?? ""),
+    title: String(mergedWorkout.title ?? ""),
+    durationMinutes: Number(mergedWorkout.duration_minutes ?? 0),
+    intensityLabel: String(mergedWorkout.intensity_label ?? ""),
+    purpose: String(mergedWorkout.purpose ?? ""),
+    locationLabel: mergedWorkout.planned_location_label,
+  }));
+  fields.title = normalizedWorkoutTitle(
+    String(mergedWorkout.activity_type ?? ""),
+    String(mergedWorkout.title ?? ""),
+    Number(mergedWorkout.duration_minutes ?? 0),
+    String(mergedWorkout.intensity_label ?? ""),
+    String(mergedWorkout.purpose ?? ""),
+  );
 
   fields.source = "replanned";
   fields.generation_key = null;
@@ -3732,7 +3805,7 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
             task,
             context,
             rules:
-              "Generate the committed week and draft week. If context.weeklyTargetConstraints contains targets for a week, the workouts for that week must satisfy them: modality session counts need that many workouts of that modality, modality minutes need enough minutes in that modality, and active-day/minimum-day targets need enough distinct workout days. If context.planOwnerStartDate is present, the committed week must include planned workouts only on or after that date; earlier committed-week dates are HealthKit history ledger days, not missed planned sessions. Include full workout prescriptions for every returned workout and a one-line fuelingSummary. Keep distant strategy context directional; make only the next two weeks concrete. Strategy title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in strategy context, not in the title.",
+              `Generate the committed week and draft week. ${workoutTaxonomyRules} If context.weeklyTargetConstraints contains targets for a week, the workouts for that week must satisfy them: modality session counts need that many workouts of that modality, modality minutes need enough minutes in that modality, and active-day/minimum-day targets need enough distinct workout days. If context.planOwnerStartDate is present, the committed week must include planned workouts only on or after that date; earlier committed-week dates are HealthKit history ledger days, not missed planned sessions. Include full workout prescriptions for every returned workout and a one-line fuelingSummary. Keep distant strategy context directional; make only the next two weeks concrete. Strategy title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in strategy context, not in the title.`,
           }),
         },
       ],
@@ -3782,7 +3855,7 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
             task: "recommend_workout_replacements",
             context,
             rules:
-              "Return 2-3 second-best options for the same date/slot. Keep titles short, no em dashes; use commas or parentheses, e.g. 'short quality run, 5x2 min tempo'. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.",
+              `Return 2-3 second-best options for the same date/slot. ${workoutTaxonomyRules} Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.`,
           }),
         },
       ],
@@ -3832,7 +3905,7 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
             task: "recommend_workout_additions",
             context,
             rules:
-              "Return 2-3 useful options for the selected date. Keep titles short, no em dashes; use commas or parentheses, e.g. 'short quality run, 5x2 min tempo'. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.",
+              `Return 2-3 useful options for the selected date. ${workoutTaxonomyRules} Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.`,
           }),
         },
       ],
@@ -3882,7 +3955,7 @@ async function runWorkoutDescriptionInterpretation(context: Record<string, unkno
             task: "interpret_workout_description",
             context,
             rules:
-              "Return one compact candidate in the same format as suggestion cards. Preserve concrete distance, elevation, duration, intensity, and modality. Keep the title short, no em dashes; use commas or parentheses. Rationale and weeklyImpact must each be one short sentence under 14 words.",
+              `Return one compact candidate in the same format as suggestion cards. ${workoutTaxonomyRules} Preserve concrete distance, elevation, duration, intensity, modality, and user-authored route/event names. Keep the title short, no em dashes; use commas or parentheses only for concrete user details. Rationale and weeklyImpact must each be one short sentence under 14 words.`,
           }),
         },
       ],
@@ -4012,12 +4085,12 @@ function fallbackReplacementCandidates(workout: Record<string, any>, surrounding
     },
     {
       id: "candidate-2",
-      title: hasStrengthNearby ? "Easy aerobic reset" : "Strength support",
+      title: hasStrengthNearby ? "Base Ride" : "Full Body A",
       activityType: hasStrengthNearby ? aerobicType : "strength",
       durationMinutes: hasStrengthNearby ? 30 : duration,
       intensityLabel: hasStrengthNearby ? "Zone 2" : "Moderate",
       purpose: hasStrengthNearby ? "Aerobic base" : "Strength anchor",
-      prescription: fallbackPrescription(hasStrengthNearby ? "Easy aerobic reset" : "Strength support", hasStrengthNearby ? aerobicType : "strength", hasStrengthNearby ? "Zone 2" : "Moderate"),
+      prescription: fallbackPrescription(hasStrengthNearby ? "Base Ride" : "Full Body A", hasStrengthNearby ? aerobicType : "strength", hasStrengthNearby ? "Zone 2" : "Moderate"),
       fuelingSummary: fuelingSummary(hasStrengthNearby ? aerobicType : "strength", hasStrengthNearby ? "Zone 2" : "Moderate"),
       rationale: "This is the next-best useful stimulus without overloading the plan.",
       weeklyImpact: "Keep the remaining week unchanged and watch recovery spacing.",
@@ -4044,8 +4117,8 @@ function fallbackReplacementCandidate(workout: Record<string, any>, index: numbe
 
 function fallbackReplacementTitle(workout: Record<string, any>, index: number) {
   if (index === 0) return "Lower dose";
-  if (/strength/.test(`${workout.activity_type ?? ""} ${workout.title ?? ""}`.toLowerCase())) return "Easy aerobic reset";
-  return "Strength support";
+  if (/strength/.test(`${workout.activity_type ?? ""} ${workout.title ?? ""}`.toLowerCase())) return "Base Ride";
+  return "Full Body A";
 }
 
 async function loadWorkoutPlanningContext(
@@ -4115,16 +4188,16 @@ function fallbackAdditionCandidates(context: Record<string, any>): WorkoutCandid
     candidates.push(additionCandidate("Mobility reset", "mobility", 25, "Low", "Recovery support", "This keeps the added day useful without crowding nearby load.", "Low recovery load; the rest of the week should usually stay intact."));
   }
   if (!hasEndurance) {
-    candidates.push(additionCandidate("Easy aerobic base", "ride", 35, "Zone 2", "Aerobic base", "This fills an endurance gap without making the day too sharp.", "Adds low-to-moderate endurance work; HAYF will still check spacing after you confirm."));
+    candidates.push(additionCandidate("Base Ride", "ride", 35, "Zone 2", "Aerobic base", "This fills an endurance gap without making the day too sharp.", "Adds low-to-moderate endurance work; HAYF will still check spacing after you confirm."));
   }
   if (!hasStrength) {
-    candidates.push(additionCandidate("Strength support", "strength", 40, "Moderate", "Strength anchor", "This gives the week useful strength exposure without chasing maximum load.", "Adds neuromuscular load; HAYF will check nearby hard sessions after you confirm."));
+    candidates.push(additionCandidate("Full Body A", "strength", 40, "Moderate", "Strength", "This gives the week useful strength exposure without chasing maximum load.", "Adds neuromuscular load; HAYF will check nearby hard sessions after you confirm."));
   }
-  if (!candidates.some((candidate) => candidate.title === "Easy aerobic base")) {
-    candidates.push(additionCandidate("Easy aerobic base", "ride", 35, "Zone 2", "Aerobic base", "This is a useful low-friction endurance option for an open training impulse.", "Adds manageable endurance load; HAYF will check spacing after you confirm."));
+  if (!candidates.some((candidate) => candidate.title === "Base Ride")) {
+    candidates.push(additionCandidate("Base Ride", "ride", 35, "Zone 2", "Aerobic base", "This is a useful low-friction endurance option for an open training impulse.", "Adds manageable endurance load; HAYF will check spacing after you confirm."));
   }
-  if (!candidates.some((candidate) => candidate.title === "Strength support")) {
-    candidates.push(additionCandidate("Strength support", "strength", 40, "Moderate", "Strength support", "This is a useful strength option if the day can handle more load.", "Adds neuromuscular load; HAYF will check nearby hard sessions after you confirm."));
+  if (!candidates.some((candidate) => candidate.title === "Full Body A")) {
+    candidates.push(additionCandidate("Full Body A", "strength", 40, "Moderate", "Strength", "This is a useful strength option if the day can handle more load.", "Adds neuromuscular load; HAYF will check nearby hard sessions after you confirm."));
   }
   candidates.push(additionCandidate("Easy movement", "walk", 30, "Low", "Consistency support", "This preserves the impulse to train while keeping recovery easy.", "Minimal load; useful when the week is already full."));
 
@@ -4191,10 +4264,10 @@ function isSparseWorkoutDescription(text: string) {
 
 function manualWorkoutTitle(text: string, activityType: string) {
   const lower = text.toLowerCase();
-  if (activityType === "hike") return /long|\d/.test(lower) ? "Long hike" : "Hike";
-  if (activityType === "ride") return /long|\d/.test(lower) ? "Long ride" : "Ride";
-  if (activityType === "run") return /tempo|interval|threshold/.test(lower) ? "Quality run" : /long|\d/.test(lower) ? "Long run" : "Run";
-  if (activityType === "strength") return /upper/.test(lower) ? "Upper strength" : /lower|legs/.test(lower) ? "Lower strength" : "Strength";
+  if (activityType === "hike") return /hard|high|mountain/.test(lower) ? "Hard Hike" : /long|route|elevation|vert|\d/.test(lower) ? "Long Hike" : "Easy Hike";
+  if (activityType === "ride") return /interval|vo2/.test(lower) ? "Intervals Ride" : /recover|easy spin/.test(lower) ? "Recovery Ride" : /long/.test(lower) ? "Long Ride" : /tempo|threshold|steady/.test(lower) ? "Tempo Ride" : "Base Ride";
+  if (activityType === "run") return /tempo|threshold/.test(lower) ? "Tempo Run" : /interval|vo2/.test(lower) ? "Intervals Run" : /long|\d/.test(lower) ? "Long Run" : "Base Run";
+  if (activityType === "strength") return /upper/.test(lower) ? "Upper Body A" : /lower|legs/.test(lower) ? "Lower Body A" : "Full Body A";
   if (activityType === "mobility") return "Mobility";
   if (activityType === "walk") return "Walk";
   if (activityType === "climb") return "Climb";
@@ -4241,7 +4314,7 @@ function distanceKilometersFromText(text: string) {
 
 function manualPurpose(activityType: string, workout: Record<string, any> | undefined) {
   if (workout?.purpose) return workout.purpose;
-  if (activityType === "strength") return "Strength support";
+  if (activityType === "strength") return "Strength";
   if (["run", "ride", "swim", "row", "hike"].includes(activityType)) return "Endurance support";
   if (["mobility", "walk", "recovery"].includes(activityType)) return "Recovery support";
   return "User-described workout";
@@ -4570,6 +4643,7 @@ async function insertWeeklyPlansAndWorkouts(
     source: "generated" | "replanned";
     committedWeekStart: string;
     ownerStartDate: string;
+    homeLocationLabel?: string | null;
   },
 ) {
   const savedPlans: Record<string, any>[] = [];
@@ -4621,10 +4695,19 @@ async function insertWeeklyPlansAndWorkouts(
         scheduled_date: workout.scheduledDate,
         sequence_order: workout.sequenceOrder,
         activity_type: workout.activityType,
-        title: workout.title,
+        title: normalizedWorkoutTitle(workout.activityType, workout.title, workout.durationMinutes, workout.intensityLabel, workout.purpose),
         duration_minutes: workout.durationMinutes,
         intensity_label: workout.intensityLabel,
         purpose: workout.purpose,
+        ...workoutCardFields({
+          scheduledDate: workout.scheduledDate,
+          activityType: workout.activityType,
+          title: workout.title,
+          durationMinutes: workout.durationMinutes,
+          intensityLabel: workout.intensityLabel,
+          purpose: workout.purpose,
+          locationLabel: args.homeLocationLabel,
+        }),
         status: "planned",
         source: args.source,
         prescription_json: workout.prescription,
@@ -4669,6 +4752,165 @@ async function protectedGenerationKeysForPlan(admin: SupabaseAdminClient, userID
 
 function generatedWorkoutKey(workout: GeneratedWorkout) {
   return `${workout.scheduledDate}:${workout.sequenceOrder}`;
+}
+
+const workoutTaxonomyRules =
+  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery.";
+
+function workoutCardFields(input: {
+  scheduledDate: string;
+  activityType: string;
+  title: string;
+  durationMinutes: number;
+  intensityLabel: string;
+  purpose: string;
+  locationLabel?: string | null;
+  distanceKilometers?: number | null;
+}) {
+  const location = compactNullableText(input.locationLabel);
+  const distance = distanceEligibleActivity(input.activityType, input.title, input.purpose)
+    ? input.distanceKilometers ?? estimatedDistanceKilometers(input.activityType, input.title, input.durationMinutes, input.intensityLabel, input.purpose)
+    : null;
+  return {
+    estimated_distance_kilometers: distance,
+    planned_location_label: location,
+    weather_forecast_json: mockedWeatherForecast(input.scheduledDate, location),
+  };
+}
+
+function estimatedDistanceKilometers(
+  activityType: string,
+  title: string,
+  durationMinutes: number,
+  intensityLabel: string,
+  purpose: string,
+) {
+  const activity = normalizeActivity(activityType);
+  const text = `${activityType} ${title} ${intensityLabel} ${purpose}`.toLowerCase();
+  const minutes = Number(durationMinutes);
+  if (!Number.isFinite(minutes) || minutes <= 0) return null;
+  if (!distanceEligibleActivity(activityType, title, purpose)) return null;
+
+  let kilometersPerHour: number | null = null;
+  if (["ride", "cycling", "cycle", "bike", "biking", "indoor_cycling"].includes(activity) || /ride|cycl|bike/.test(text)) {
+    if (/high|hard|interval|threshold|vo2|tempo/.test(text)) {
+      kilometersPerHour = 28;
+    } else if (/moderate|mid|steady/.test(text)) {
+      kilometersPerHour = 24;
+    } else {
+      kilometersPerHour = 22;
+    }
+  } else if (["run", "running"].includes(activity) || /run/.test(text)) {
+    if (/high|hard|interval|threshold|vo2|tempo/.test(text)) {
+      kilometersPerHour = 11;
+    } else if (/moderate|mid|steady/.test(text)) {
+      kilometersPerHour = 10;
+    } else {
+      kilometersPerHour = 9;
+    }
+  } else if (activity === "walk" || /walk/.test(text)) {
+    kilometersPerHour = 5;
+  } else if (activity === "hike" || /hike/.test(text)) {
+    kilometersPerHour = 4.5;
+  } else if (activity === "row" || /row/.test(text)) {
+    kilometersPerHour = 8;
+  } else if (activity === "swim" || /swim/.test(text)) {
+    kilometersPerHour = 2;
+  }
+
+  if (!kilometersPerHour) return null;
+  return Math.max(1, Math.round((minutes / 60) * kilometersPerHour));
+}
+
+function normalizedWorkoutTitle(
+  activityType: string,
+  title: string,
+  durationMinutes: number,
+  intensityLabel: string,
+  purpose: string,
+) {
+  const activity = normalizeActivity(activityType);
+  const text = `${activityType} ${title} ${intensityLabel} ${purpose}`.toLowerCase();
+  const duration = Number(durationMinutes);
+
+  if (["ride", "cycling", "cycle", "bike", "biking", "indoor_cycling"].includes(activity) || /ride|cycl|bike/.test(text)) {
+    if (/interval|vo2|zone\s*4|z4|zone\s*5|z5/.test(text)) return "Intervals Ride";
+    if (/recover|easy spin/.test(text)) return "Recovery Ride";
+    if (duration >= 90 || /long/.test(text)) return "Long Ride";
+    if (/tempo|threshold|steady/.test(text)) return "Tempo Ride";
+    return "Base Ride";
+  }
+
+  if (activity === "hike" || /hik/.test(text)) {
+    if (/hard|high|mountain/.test(text)) return "Hard Hike";
+    if (duration >= 180 || /long|route|elevation|vert/.test(text)) return "Long Hike";
+    return "Easy Hike";
+  }
+
+  if (["strength", "gym", "traditional_strength_training", "functional_strength_training"].includes(activity) || /strength|gym|lift|weights|body/.test(text)) {
+    return normalizedStrengthTitle(text) ?? "Full Body A";
+  }
+
+  if (["run", "running"].includes(activity) || /run/.test(text)) {
+    if (/tempo|threshold/.test(text)) return "Tempo Run";
+    if (/interval|vo2/.test(text)) return "Intervals Run";
+    if (/recover/.test(text)) return "Recovery Run";
+    return duration >= 70 || /long/.test(text) ? "Long Run" : "Base Run";
+  }
+
+  if (activity === "swim" || /swim/.test(text)) {
+    if (/interval|vo2/.test(text)) return "Intervals Swim";
+    if (/recover/.test(text)) return "Recovery Swim";
+    return "Base Swim";
+  }
+
+  if (/mobility|yoga|pilates|stretch|core|prehab/.test(text)) return "Mobility";
+  if (/recover|restorative|\brest\b/.test(text)) return "Recovery";
+  return compactCardWorkoutTitle(title || titleCase(activityType));
+}
+
+function distanceEligibleActivity(activityType: string, title: string, purpose = "") {
+  const activity = normalizeActivity(`${activityType} ${title} ${purpose}`);
+  return ["ride", "run", "hike", "walk", "swim", "row"].includes(activity);
+}
+
+function normalizedStrengthTitle(text: string) {
+  const letter = (text.match(/\b([a-e])\b/i)?.[1] ?? "A").toUpperCase();
+  if (/upper/.test(text)) return `Upper Body ${letter}`;
+  if (/lower|leg/.test(text)) return `Lower Body ${letter}`;
+  if (/full|body/.test(text)) return `Full Body ${letter}`;
+  return null;
+}
+
+function compactCardWorkoutTitle(value: string) {
+  const cleaned = String(value ?? "")
+    .replace(/\([^)]*\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Workout";
+  const words = cleaned.split(" ").slice(0, 3).join(" ");
+  return titleCase(words);
+}
+
+function mockedWeatherForecast(scheduledDate: string, locationLabel: string | null) {
+  const seed = Array.from(`${scheduledDate}|${locationLabel ?? "home"}`).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const conditions = [
+    { conditionEmoji: "☀️", conditionLabel: "Sunny" },
+    { conditionEmoji: "🌤", conditionLabel: "Partly cloudy" },
+    { conditionEmoji: "⛅", conditionLabel: "Cloudy" },
+    { conditionEmoji: "🌧", conditionLabel: "Rain" },
+  ];
+  const condition = conditions[seed % conditions.length];
+  return {
+    temperatureCelsius: 16 + (seed % 11),
+    ...condition,
+    source: "mock",
+  };
+}
+
+function compactNullableText(value: unknown) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > 0 ? text : null;
 }
 
 function applyWeeklyConstraintsToGeneratedWorkouts(workouts: GeneratedWorkout[], constraints: Record<string, any>) {
@@ -5402,17 +5644,17 @@ function workoutTemplateForModality(modality: string) {
     case "strength":
       return {
         activityType: "strength",
-        title: "Strength support",
+        title: "Full Body A",
         durationMinutes: 45,
         intensityLabel: "Moderate",
-        purpose: "Strength anchor",
+        purpose: "Strength",
         prescription: { source: "weekly_target_alignment", focus: "Full-body strength support" },
         fuelingSummary: "Carbs + protein, 60-120 min before.",
       };
     case "ride":
       return {
         activityType: "ride",
-        title: "Easy endurance ride",
+        title: "Base Ride",
         durationMinutes: 45,
         intensityLabel: "Zone 2",
         purpose: "Aerobic base",
@@ -5422,7 +5664,7 @@ function workoutTemplateForModality(modality: string) {
     case "run":
       return {
         activityType: "run",
-        title: "Easy run",
+        title: "Base Run",
         durationMinutes: 35,
         intensityLabel: "Easy",
         purpose: "Aerobic base",
@@ -6019,7 +6261,7 @@ function sanitizeGeneratedPlan(
     phases: kind === "consistency" ? [] : generated.phases,
     rhythms: rhythms.map((rhythm) => ({
       ...rhythm,
-      workouts: rhythm.workouts.map((workout, index) => ({
+      workouts: normalizeGeneratedWorkoutTaxonomy(rhythm.workouts).map((workout, index) => ({
         ...workout,
         sequenceOrder: workout.sequenceOrder || index + 1,
         durationMinutes: Math.max(10, workout.durationMinutes || 30),
@@ -6028,6 +6270,36 @@ function sanitizeGeneratedPlan(
       })),
     })),
   };
+}
+
+function normalizeGeneratedWorkoutTaxonomy(workouts: GeneratedWorkout[]) {
+  let fullBodyCount = 0;
+  let upperCount = 0;
+  let lowerCount = 0;
+  return workouts.map((workout) => {
+    const text = `${workout.activityType} ${workout.title} ${workout.purpose}`.toLowerCase();
+    if (!isStrengthLike(workout.activityType, text)) {
+      return {
+        ...workout,
+        title: normalizedWorkoutTitle(workout.activityType, workout.title, workout.durationMinutes, workout.intensityLabel, workout.purpose),
+      };
+    }
+
+    if (/upper/.test(text)) {
+      upperCount += 1;
+      return { ...workout, title: `Upper Body ${strengthLetter(upperCount)}` };
+    }
+    if (/lower|leg/.test(text)) {
+      lowerCount += 1;
+      return { ...workout, title: `Lower Body ${strengthLetter(lowerCount)}` };
+    }
+    fullBodyCount += 1;
+    return { ...workout, title: `Full Body ${strengthLetter(fullBodyCount)}` };
+  });
+}
+
+function strengthLetter(index: number) {
+  return ["A", "B", "C", "D", "E"][Math.max(0, Math.min(4, index - 1))] ?? "A";
 }
 
 function fallbackPlanFromBlock(block: Record<string, any>, start: Date): GeneratedPlan {
@@ -6077,12 +6349,12 @@ function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind
   const strengthPreferred = priorities.some((activity: string) => /strength|gym|lift/.test(activity));
   const runningPreferred = priorities.some((activity: string) => /run/.test(activity));
   const cyclingFocusedTemplate = [
-    { day: 0, type: "ride", title: "Easy endurance ride", intensity: "Zone 2", purpose: "Aerobic base", minutes: Math.max(45, duration) },
-    { day: 1, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength support", minutes: Math.max(40, Math.min(50, duration)) },
-    { day: 3, type: "ride", title: "Cycling intervals", intensity: "Hard", purpose: "Cycling power progression", minutes: Math.max(50, duration) },
-    { day: 5, type: "ride", title: "Long endurance ride", intensity: "Moderate", purpose: "Weekly cycling anchor", minutes: Math.max(75, duration + 30) },
-    { day: 6, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength support", minutes: Math.max(40, Math.min(50, duration)) },
-    { day: 2, type: "run", title: "Easy run", intensity: "Easy", purpose: "Light aerobic variety", minutes: Math.min(35, duration) },
+    { day: 0, type: "ride", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base", minutes: Math.max(45, duration) },
+    { day: 1, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength anchor", minutes: Math.max(40, Math.min(50, duration)) },
+    { day: 3, type: "ride", title: "Intervals Ride", intensity: "Hard", purpose: "VO2Max", minutes: Math.max(50, duration) },
+    { day: 5, type: "ride", title: "Long Ride", intensity: "Moderate", purpose: "Endurance", minutes: Math.max(75, duration + 30) },
+    { day: 6, type: "strength", title: "Full Body B", intensity: "Moderate", purpose: "Strength", minutes: Math.max(40, Math.min(50, duration)) },
+    { day: 2, type: "run", title: "Base Run", intensity: "Easy", purpose: "Endurance", minutes: Math.min(35, duration) },
   ].filter((item) => {
     if (item.type === "run") return runningPreferred && daysPerWeek >= 6;
     if (item.day === 6) return strengthPreferred && daysPerWeek >= 5;
@@ -6090,8 +6362,8 @@ function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind
   }).slice(0, Math.max(3, daysPerWeek));
   const template = kind === "consistency"
     ? [
-        { day: 0, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength anchor" },
-        { day: 1, type: "cycling", title: "Easy ride", intensity: "Zone 2", purpose: "Aerobic base" },
+        { day: 0, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength anchor" },
+        { day: 1, type: "cycling", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base" },
         { day: 4, type: "mobility", title: "Mobility", intensity: "Low", purpose: "Movement quality" },
         { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
       ]
@@ -6099,25 +6371,25 @@ function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind
       ? cyclingFocusedTemplate
     : cyclingPreferred && strengthPreferred
       ? [
-          { day: 0, type: "strength", title: "Strength anchor", intensity: "Moderate", purpose: "Preserve muscle and support the goal" },
-          { day: 1, type: "cycling", title: "Easy endurance ride", intensity: "Zone 2", purpose: "Aerobic base" },
-          { day: 2, type: runningPreferred ? "running" : "cycling", title: runningPreferred ? "Quality run" : "Aerobic intervals", intensity: "Hard", purpose: "Aerobic power stimulus" },
-          { day: 3, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength maintenance" },
-          { day: 5, type: "cycling", title: "Long endurance ride", intensity: "Moderate", purpose: "Weekly aerobic anchor" },
+          { day: 0, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength" },
+          { day: 1, type: "cycling", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base" },
+          { day: 2, type: runningPreferred ? "running" : "cycling", title: runningPreferred ? "Intervals Run" : "Intervals Ride", intensity: "Hard", purpose: "VO2Max" },
+          { day: 3, type: "strength", title: "Full Body B", intensity: "Moderate", purpose: "Strength maintenance" },
+          { day: 5, type: "cycling", title: "Long Ride", intensity: "Moderate", purpose: "Endurance" },
           { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
         ]
       : runningGoal || runningPreferred
       ? [
-          { day: 0, type: "running", title: "Easy run", intensity: "Zone 2", purpose: "Aerobic base" },
-          { day: 2, type: "strength", title: "Strength support", intensity: "Moderate", purpose: "Strength maintenance" },
-          { day: 4, type: "running", title: "Quality run", intensity: "Moderate", purpose: "Goal progression" },
+          { day: 0, type: "running", title: "Base Run", intensity: "Zone 2", purpose: "Aerobic base" },
+          { day: 2, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength maintenance" },
+          { day: 4, type: "running", title: "Tempo Run", intensity: "Moderate", purpose: "Threshold" },
           { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
         ]
       : [
-          { day: 0, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength anchor" },
-          { day: 1, type: "cycling", title: "Easy ride", intensity: "Zone 2", purpose: "Aerobic base" },
-          { day: 3, type: "strength", title: "Strength", intensity: "Moderate", purpose: "Strength progression" },
-          { day: 5, type: cyclingPreferred ? "cycling" : "conditioning", title: cyclingPreferred ? "Long ride" : "Conditioning", intensity: "Moderate", purpose: "Weekly aerobic anchor" },
+          { day: 0, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength anchor" },
+          { day: 1, type: "cycling", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base" },
+          { day: 3, type: "strength", title: "Full Body B", intensity: "Moderate", purpose: "Strength progression" },
+          { day: 5, type: cyclingPreferred ? "cycling" : "conditioning", title: cyclingPreferred ? "Long Ride" : "Conditioning", intensity: "Moderate", purpose: "Endurance" },
           { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
         ];
 
@@ -6319,11 +6591,13 @@ async function loadActivePlanningScope(admin: SupabaseAdminClient, userID: strin
       .single(),
     "Active user goal not found",
   );
+  const profile = await maybeSingle(admin.from("profiles").select("main_city").eq("id", userID));
   const timezone = strategy.context_json?.timezone || "UTC";
   return {
     goal,
     strategy,
     timezone,
+    homeLocationLabel: profile?.main_city ?? null,
     block: {
       id: strategy.id,
       kind: goal.goal_kind,
@@ -6666,10 +6940,20 @@ async function insertDetectedWorkout(
         scheduled_date: actualDate,
         sequence_order: existing.length + 1,
         activity_type: normalizeActivity(actual.activity_type),
-        title: `${titleCase(actual.activity_type)} (detected)`,
+        title: detectedWorkoutTitle(actual.activity_type),
         duration_minutes: actual.duration_minutes,
         intensity_label: "Detected",
         purpose: "Added from HealthKit",
+        ...workoutCardFields({
+          scheduledDate: actualDate,
+          activityType: actual.activity_type,
+          title: detectedWorkoutTitle(actual.activity_type),
+          durationMinutes: actual.duration_minutes,
+          intensityLabel: "Detected",
+          purpose: "Added from HealthKit",
+          locationLabel: scope.homeLocationLabel,
+          distanceKilometers: actual.distance_kilometers ?? null,
+        }),
         status: "done",
         source: "healthkit_detected",
         prescription_json: { detectedFrom: "HealthKit" },
@@ -6721,6 +7005,18 @@ function compactActualWorkout(actual: ActualWorkoutInput) {
     averageHeartRateBPM: actual.average_heart_rate_bpm ?? null,
     maxHeartRateBPM: actual.max_heart_rate_bpm ?? null,
   };
+}
+
+function detectedWorkoutTitle(activityType: string) {
+  const activity = normalizeActivity(activityType);
+  if (activity === "strength") return "Strength";
+  if (activity === "ride") return "Base Ride";
+  if (activity === "run") return "Base Run";
+  if (activity === "hike") return "Easy Hike";
+  if (activity === "swim") return "Base Swim";
+  if (activity === "mobility") return "Mobility";
+  if (activity === "recovery") return "Recovery";
+  return titleCase(activityType);
 }
 
 async function cleanupDuplicateDetectedWorkouts(
@@ -7953,7 +8249,7 @@ function normalizeActivity(value: string) {
   if (lower.includes("run")) return "run";
   if (lower.includes("swim")) return "swim";
   if (lower.includes("row")) return "row";
-  if (lower.includes("hike")) return "hike";
+  if (lower.includes("hike") || lower.includes("hik")) return "hike";
   if (lower.includes("walk")) return "walk";
   if (lower.includes("climb") || lower.includes("boulder")) return "climb";
   if (lower.includes("strength") || lower.includes("traditional") || lower.includes("lift")) return "strength";

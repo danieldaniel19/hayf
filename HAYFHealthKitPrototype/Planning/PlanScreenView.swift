@@ -50,6 +50,7 @@ struct PlanScreenView: View {
                         PlanContentView(
                             weeklyRhythms: store.weeklyRhythms,
                             workouts: store.workouts,
+                            homeLocationLabel: store.homeLocationLabel,
                             goalTargets: store.goalTargets,
                             goalEvaluations: store.goalEvaluations,
                             pendingReview: pendingPlanReview,
@@ -128,6 +129,7 @@ struct PlanScreenView: View {
             WorkoutPlanningSheet(
                 context: context,
                 candidates: workoutCandidates,
+                fallbackLocationLabel: store.homeLocationLabel,
                 isLoading: isLoadingWorkoutCandidates,
                 didFinishLoading: didFinishLoadingWorkoutCandidates,
                 errorMessage: workoutPlanningErrorMessage,
@@ -148,6 +150,7 @@ struct PlanScreenView: View {
             WorkoutChangeReviewSheet(
                 review: review,
                 workouts: store.workouts,
+                fallbackLocationLabel: store.homeLocationLabel,
                 isApplying: activeEditAnalysis != nil,
                 accept: {
                     Task { await acceptWorkoutReview(review) }
@@ -856,6 +859,7 @@ private struct PlanEditAnalysisOverlay: View {
 private struct PlanContentView: View {
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
+    let homeLocationLabel: String?
     let goalTargets: [PlanGoalTarget]
     let goalEvaluations: [PlanGoalEvaluation]
     let pendingReview: PlanPendingReview?
@@ -881,6 +885,7 @@ private struct PlanContentView: View {
                 PlanWorkoutsPanel(
                     weeklyRhythms: weeklyRhythms,
                     workouts: workouts,
+                    homeLocationLabel: homeLocationLabel,
                     targets: goalTargets,
                     evaluations: goalEvaluations,
                     pendingReview: pendingReview,
@@ -1316,6 +1321,7 @@ private struct PlanWorkoutsPanel: View {
 
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
+    let homeLocationLabel: String?
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
     let pendingReview: PlanPendingReview?
@@ -1364,6 +1370,7 @@ private struct PlanWorkoutsPanel: View {
                     title: title(for: selectedWeek),
                     rhythm: rhythm(for: selectedWeek),
                     groups: groups(for: selectedWeek),
+                    homeLocationLabel: homeLocationLabel,
                     targets: weekTargets(for: selectedWeek),
                     evaluations: evaluations,
                     movingWorkout: movingWorkout,
@@ -1579,6 +1586,7 @@ private struct PlanWeekSection: View {
     let title: String
     let rhythm: PlanWeeklyRhythm?
     let groups: [PlanWorkoutDayGroup]
+    let homeLocationLabel: String?
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
     let movingWorkout: PlanWorkout?
@@ -1625,6 +1633,7 @@ private struct PlanWeekSection: View {
                     VStack(spacing: 8) {
                         PlanWorkoutDayRow(
                             group: group,
+                            homeLocationLabel: homeLocationLabel,
                             movingWorkout: movingWorkout,
                             isAnalyzingEdit: isAnalyzingEdit,
                             moveWorkout: moveWorkout,
@@ -1691,12 +1700,12 @@ private struct PlanWeeklyTargetCard: View {
 
     var body: some View {
         Button(action: openDetail) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: PlanTargetDisplay.weeklyCardIconName(for: target, evaluation: evaluation))
-                        .font(.system(size: 19, weight: .regular))
+                        .font(.system(size: 18, weight: .regular))
                         .foregroundStyle(HAYFColor.primary)
-                        .frame(width: 28, height: 28, alignment: .leading)
+                        .frame(width: 26, height: 24, alignment: .leading)
 
                     Spacer(minLength: 2)
 
@@ -1707,18 +1716,16 @@ private struct PlanWeeklyTargetCard: View {
                 }
 
                 Text(PlanTargetDisplay.weeklyCardValue(for: target, evaluation: evaluation))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
 
-                Spacer(minLength: 0)
-
                 PlanTargetProgressBar(progress: PlanTargetDisplay.progress(for: target, evaluation: evaluation))
                     .frame(height: 4)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 108, alignment: .topLeading)
+            .padding(10)
+            .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
             .background(HAYFColor.surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
@@ -1751,6 +1758,7 @@ private struct PlanWeekStatusChip: View {
 
 private struct PlanWorkoutDayRow: View {
     let group: PlanWorkoutDayGroup
+    let homeLocationLabel: String?
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
@@ -1794,6 +1802,7 @@ private struct PlanWorkoutDayRow: View {
                         ForEach(group.workouts) { workout in
                             PlanWorkoutCard(
                                 workout: workout,
+                                fallbackLocationLabel: homeLocationLabel,
                                 isDisabled: isAnalyzingEdit || isMoveTarget,
                                 moveWorkout: { beginMoveWorkout(workout) },
                                 deleteWorkout: { deleteWorkout(workout) },
@@ -1883,7 +1892,7 @@ private struct PlanDaySlotActionControl: View {
                     .frame(width: 22, height: 22)
 
                 Text("Add Workout/Availability")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(HAYFColor.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
@@ -1998,6 +2007,7 @@ private struct PlanEmptyDayDropZone: View {
 
 private struct PlanWorkoutCard: View {
     let workout: PlanWorkout
+    let fallbackLocationLabel: String?
     let isDisabled: Bool
     let moveWorkout: () -> Void
     let deleteWorkout: () -> Void
@@ -2008,6 +2018,10 @@ private struct PlanWorkoutCard: View {
     @State private var isDragging = false
     private let actionWidth: CGFloat = 132
     private let actionSpacing: CGFloat = 4
+
+    private var display: WorkoutCardDisplayModel {
+        WorkoutCardDisplayModel(workout: workout, fallbackLocationLabel: fallbackLocationLabel)
+    }
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -2075,7 +2089,8 @@ private struct PlanWorkoutCard: View {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: actionButtonWidth, height: rowHeight)
+                    .frame(width: actionButtonWidth)
+                    .frame(maxHeight: .infinity)
                     .background(HAYFColor.orange)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
@@ -2089,7 +2104,8 @@ private struct PlanWorkoutCard: View {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: actionButtonWidth, height: rowHeight)
+                    .frame(width: actionButtonWidth)
+                    .frame(maxHeight: .infinity)
                     .background(HAYFColor.primary)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
@@ -2103,7 +2119,8 @@ private struct PlanWorkoutCard: View {
                 Image(systemName: "trash")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: actionButtonWidth, height: rowHeight)
+                    .frame(width: actionButtonWidth)
+                    .frame(maxHeight: .infinity)
                     .background(HAYFColor.error)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
@@ -2111,6 +2128,7 @@ private struct PlanWorkoutCard: View {
             .accessibilityLabel("Delete workout")
         }
         .frame(width: actionWidth, alignment: .trailing)
+        .frame(minHeight: cardMinHeight)
     }
 
     private var actionButtonWidth: CGFloat {
@@ -2121,8 +2139,8 @@ private struct PlanWorkoutCard: View {
         min(1, max(0, Double(abs(horizontalOffset) / 20)))
     }
 
-    private var rowHeight: CGFloat {
-        workout.status == .current ? 58 : 54
+    private var cardMinHeight: CGFloat {
+        workout.status == .current ? 138 : 130
     }
 
     private func closeActions() {
@@ -2132,97 +2150,605 @@ private struct PlanWorkoutCard: View {
     }
 
     private var cardContent: some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: workout.status == .current ? 5 : 4) {
-                Text(workout.title)
-                    .font(titleFont)
-                    .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
+        WorkoutCardBody(
+            display: display,
+            minHeight: cardMinHeight,
+            titleSize: titleSize,
+            titleWeight: titleWeight
+        ) {
+            PlanWorkoutStateMark(display: display, markSize: titleSize)
+        }
+    }
 
-                Text(metadata)
-                    .font(.system(size: workout.status == .current ? 14 : 13, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
+    private var titleSize: CGFloat {
+        switch workout.status {
+        case .current:
+            return 19
+        case .planned, .checkedIn, .adjusted:
+            return 18
+        case .done, .missed:
+            return 18
+        case .deleted, .superseded:
+            return 17
+        }
+    }
+
+    private var titleWeight: Font.Weight {
+        switch workout.status {
+        case .current:
+            return .bold
+        case .planned, .checkedIn, .adjusted:
+            return .medium
+        case .done, .missed:
+            return .regular
+        case .deleted, .superseded:
+            return .regular
+        }
+    }
+
+}
+
+private struct PlanWorkoutStateMark: View {
+    let display: WorkoutCardDisplayModel
+    let markSize: CGFloat
+
+    var body: some View {
+        if let stateEmoji = display.stateEmoji {
+            Text(stateEmoji)
+                .font(.system(size: markSize))
+                .frame(width: markSize + 4, height: markSize + 4)
+        } else {
+            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                .fill(display.stateColor)
+                .frame(width: 2, height: markSize + 4)
+                .overlay(alignment: .trailing) {
+                    RoundedRectangle(cornerRadius: 1, style: .continuous)
+                        .fill(display.stateColor)
+                        .frame(width: 2, height: markSize + 4)
+                        .offset(x: 8)
+                }
+                .frame(width: 18, height: markSize + 4)
+        }
+    }
+}
+
+private struct WorkoutCardBody<Accessory: View>: View {
+    let display: WorkoutCardDisplayModel
+    let minHeight: CGFloat
+    let titleSize: CGFloat
+    let titleWeight: Font.Weight
+    @ViewBuilder let accessory: Accessory
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(display.modalityEmoji)
+                    .font(.system(size: titleSize))
+                    .frame(width: titleSize + 8, alignment: .leading)
+
+                Text(display.title)
+                    .font(.system(size: titleSize, weight: titleWeight))
+                    .foregroundStyle(display.stateColor)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .layoutPriority(1)
+
+                Spacer(minLength: 8)
+
+                accessory
             }
-            .layoutPriority(1)
 
-            Spacer(minLength: 4)
+            WorkoutPillFlow(spacing: 7, rowSpacing: 6) {
+                ForEach(display.metricPills) { pill in
+                    PlanWorkoutCardPill(pill: pill, style: .metric)
+                }
+            }
 
-            PlanWorkoutStatusPill(status: workout.status)
+            Rectangle()
+                .fill(HAYFColor.borderStrong)
+                .frame(height: 1)
+                .padding(.trailing, 8)
+
+            WorkoutPillFlow(spacing: 7, rowSpacing: 6) {
+                ForEach(display.contextPills) { pill in
+                    PlanWorkoutCardPill(pill: pill, style: .context)
+                }
+            }
         }
         .padding(.horizontal, 12)
-        .frame(height: rowHeight)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
         .background(cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(workout.status == .current ? HAYFColor.orange.opacity(0.28) : HAYFColor.border, lineWidth: 1)
+                .stroke(display.borderColor, lineWidth: display.borderWidth)
         }
-    }
-
-    private var metadata: String {
-        [duration, workout.intensityLabel, workout.purpose]
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .joined(separator: "  ·  ")
-    }
-
-    private var duration: String {
-        "\(workout.durationMinutes) min"
-    }
-
-    private var titleFont: Font {
-        if workout.status == .current {
-            return .system(size: 17, weight: .bold)
-        }
-        return .system(size: 16, weight: .semibold)
     }
 
     @ViewBuilder
     private var cardBackground: some View {
         HAYFColor.surface
 
-        if workout.status == .current {
-            HAYFColor.orange.opacity(0.035)
+        if display.backgroundTintOpacity > 0 {
+            display.stateColor.opacity(display.backgroundTintOpacity)
         }
     }
-
 }
 
-private struct PlanWorkoutStatusPill: View {
-    let status: PlanWorkoutStatus
-
-    var body: some View {
-        statusIcon
-            .frame(width: 22, height: 22)
+private struct PlanWorkoutCardPill: View {
+    enum Style {
+        case metric
+        case context
     }
 
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch status {
-        case .done:
-            Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(HAYFColor.primary)
-                .clipShape(Circle())
-        case .current:
-            Circle()
-                .fill(HAYFColor.orange)
-                .frame(width: 9, height: 9)
-        case .adjusted:
-            Circle()
-                .stroke(HAYFColor.orange, lineWidth: 2)
-                .frame(width: 10, height: 10)
-        case .missed:
-            Circle()
-                .stroke(HAYFColor.error, lineWidth: 2)
-                .frame(width: 10, height: 10)
-        default:
-            Circle()
-                .stroke(HAYFColor.muted, lineWidth: 1.5)
-                .frame(width: 10, height: 10)
+    let pill: PlanWorkoutCardPillModel
+    let style: Style
+
+    var body: some View {
+        Text("\(pill.emoji) \(pill.text)")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(HAYFColor.primary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .background(style == .metric ? HAYFColor.orange.opacity(0.16) : HAYFColor.surfaceRaised)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(style == .metric ? HAYFColor.orange.opacity(0.18) : HAYFColor.border, lineWidth: 1)
+            }
+    }
+}
+
+private struct WorkoutPillFlow: Layout {
+    var spacing: CGFloat = 8
+    var rowSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        layout(in: proposal.width ?? .infinity, subviews: subviews).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let result = layout(in: bounds.width, subviews: subviews)
+        for item in result.items {
+            subviews[item.index].place(
+                at: CGPoint(x: bounds.minX + item.origin.x, y: bounds.minY + item.origin.y),
+                proposal: ProposedViewSize(width: item.size.width, height: item.size.height)
+            )
         }
+    }
+
+    private func layout(in availableWidth: CGFloat, subviews: Subviews) -> (size: CGSize, items: [(index: Int, origin: CGPoint, size: CGSize)]) {
+        let maxWidth = availableWidth.isFinite ? max(availableWidth, 1) : CGFloat.greatestFiniteMagnitude
+        var items: [(index: Int, origin: CGPoint, size: CGSize)] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var usedWidth: CGFloat = 0
+
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                y += rowHeight + rowSpacing
+                x = 0
+                rowHeight = 0
+            }
+
+            items.append((index, CGPoint(x: x, y: y), size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            usedWidth = max(usedWidth, min(maxWidth, x - spacing))
+        }
+
+        return (CGSize(width: usedWidth, height: y + rowHeight), items)
+    }
+}
+
+private struct WorkoutCardDisplayModel {
+    let title: String
+    let modalityEmoji: String
+    let stateEmoji: String?
+    let stateColor: Color
+    let borderColor: Color
+    let borderWidth: CGFloat
+    let backgroundTintOpacity: Double
+    let metricPills: [PlanWorkoutCardPillModel]
+    let contextPills: [PlanWorkoutCardPillModel]
+
+    init(workout: PlanWorkout, fallbackLocationLabel: String?) {
+        let source = WorkoutCardDisplaySource(
+            activityType: workout.activityType,
+            title: workout.title,
+            durationMinutes: workout.durationMinutes,
+            intensityLabel: workout.intensityLabel,
+            purpose: workout.purpose,
+            status: workout.status,
+            source: workout.source,
+            estimatedDistanceKilometers: workout.estimatedDistanceKilometers,
+            scheduledDate: workout.scheduledDate,
+            plannedLocationLabel: workout.plannedLocationLabel,
+            weatherForecast: workout.weatherForecast,
+            fallbackLocationLabel: fallbackLocationLabel
+        )
+        self.init(source: source)
+    }
+
+    init(candidate: PlanningWorkoutCandidate, scheduledDate: String, fallbackLocationLabel: String?) {
+        let source = WorkoutCardDisplaySource(
+            activityType: candidate.activityType,
+            title: candidate.title,
+            durationMinutes: candidate.durationMinutes,
+            intensityLabel: candidate.intensityLabel,
+            purpose: candidate.purpose,
+            status: nil,
+            source: "candidate",
+            estimatedDistanceKilometers: nil,
+            scheduledDate: scheduledDate,
+            plannedLocationLabel: nil,
+            weatherForecast: nil,
+            fallbackLocationLabel: fallbackLocationLabel
+        )
+        self.init(source: source)
+    }
+
+    private init(source: WorkoutCardDisplaySource) {
+        let titleBuilder = WorkoutCardTaxonomy(source: source)
+        title = titleBuilder.title
+        modalityEmoji = titleBuilder.modalityEmoji
+
+        switch (source.status, source.source) {
+        case (.done, _), (_, "healthkit_detected"):
+            stateEmoji = "✅"
+            stateColor = HAYFColor.primary
+            borderColor = HAYFColor.primary.opacity(0.74)
+            borderWidth = 1
+            backgroundTintOpacity = 0
+        case (.missed, _):
+            stateEmoji = "❌"
+            stateColor = HAYFColor.primary
+            borderColor = HAYFColor.primary.opacity(0.74)
+            borderWidth = 1
+            backgroundTintOpacity = 0
+        case (.current, _):
+            stateEmoji = nil
+            stateColor = HAYFColor.orange
+            borderColor = HAYFColor.orange
+            borderWidth = 1
+            backgroundTintOpacity = 0.035
+        default:
+            stateEmoji = nil
+            stateColor = HAYFColor.primary
+            borderColor = HAYFColor.primary.opacity(0.74)
+            borderWidth = 1
+            backgroundTintOpacity = 0
+        }
+
+        var metrics: [PlanWorkoutCardPillModel] = [
+            PlanWorkoutCardPillModel(emoji: "⌚", text: Self.durationText(source.durationMinutes))
+        ]
+        if let distanceText = titleBuilder.distanceText {
+            metrics.append(PlanWorkoutCardPillModel(emoji: "🛣️", text: distanceText))
+        }
+        metrics.append(PlanWorkoutCardPillModel(emoji: "🔥", text: titleBuilder.intensityText))
+        metrics.append(PlanWorkoutCardPillModel(emoji: "🎯", text: titleBuilder.targetText))
+        metricPills = metrics
+
+        let location = Self.compactOptionalString(source.plannedLocationLabel) ?? Self.compactOptionalString(source.fallbackLocationLabel)
+        let forecast = PlanWorkoutForecastDisplay(
+            storedForecast: source.weatherForecast,
+            scheduledDate: source.scheduledDate,
+            locationLabel: location
+        )
+        contextPills = [
+            PlanWorkoutCardPillModel(emoji: forecast.emoji, text: forecast.temperatureText),
+            PlanWorkoutCardPillModel(emoji: Self.locationEmoji(for: location), text: Self.shortLocation(location))
+        ]
+    }
+
+    private static func durationText(_ minutes: Int) -> String {
+        if minutes >= 180, minutes % 60 == 0 {
+            return "\(minutes / 60)h"
+        }
+        return "\(minutes) min"
+    }
+
+    private static func locationEmoji(for location: String?) -> String {
+        let value = location?.lowercased() ?? ""
+        if value.contains("lisbon") || value.contains("porto") || value.contains("airport") {
+            return "✈️"
+        }
+        return "🏠"
+    }
+
+    private static func shortLocation(_ location: String?) -> String {
+        guard let location = compactOptionalString(location) else { return "Home" }
+        return compactOptionalString(location.components(separatedBy: ",").first) ?? location
+    }
+
+    private static func compactOptionalString(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private struct WorkoutCardDisplaySource {
+    let activityType: String
+    let title: String
+    let durationMinutes: Int
+    let intensityLabel: String
+    let purpose: String
+    let status: PlanWorkoutStatus?
+    let source: String
+    let estimatedDistanceKilometers: Double?
+    let scheduledDate: String
+    let plannedLocationLabel: String?
+    let weatherForecast: JSONValue?
+    let fallbackLocationLabel: String?
+}
+
+private struct PlanWorkoutCardPillModel: Identifiable {
+    let id = UUID()
+    let emoji: String
+    let text: String
+}
+
+private struct PlanWorkoutForecastDisplay {
+    let emoji: String
+    let temperatureText: String
+
+    init(storedForecast: JSONValue?, scheduledDate: String, locationLabel: String?) {
+        let object = storedForecast?.planObjectValue ?? [:]
+        let fallback = Self.mockForecast(scheduledDate: scheduledDate, locationLabel: locationLabel)
+        emoji = object["conditionEmoji"]?.planStringValue ?? fallback.emoji
+        let temperature = object["temperatureCelsius"]?.planNumberValue ?? fallback.temperature
+        temperatureText = "\(Int(temperature.rounded()))C"
+    }
+
+    private static func mockForecast(scheduledDate: String, locationLabel: String?) -> (emoji: String, temperature: Double) {
+        let seed = "\(scheduledDate)|\(locationLabel ?? "home")".unicodeScalars.reduce(0) { $0 + Int($1.value) }
+        let emojis = ["☀️", "🌤", "⛅", "🌧"]
+        return (emojis[seed % emojis.count], Double(16 + (seed % 11)))
+    }
+}
+
+private struct WorkoutCardTaxonomy {
+    enum Modality {
+        case ride
+        case run
+        case swim
+        case row
+        case hike
+        case walk
+        case strength
+        case mobility
+        case recovery
+        case other
+    }
+
+    let source: WorkoutCardDisplaySource
+
+    var title: String {
+        if preservesCustomUserTitle {
+            return compactTitle(source.title, maxWords: 4)
+        }
+
+        switch modality {
+        case .ride:
+            if contains("interval") || contains("vo2") || contains("zone 4") || contains("z4") || contains("zone 5") || contains("z5") {
+                return "Intervals Ride"
+            }
+            if contains("recover") || contains("easy spin") {
+                return "Recovery Ride"
+            }
+            if source.durationMinutes >= 90 || contains("long") {
+                return "Long Ride"
+            }
+            if contains("tempo") || contains("threshold") || contains("steady") {
+                return "Tempo Ride"
+            }
+            return "Base Ride"
+        case .hike:
+            if contains("hard") || contains("high") || contains("mountain") {
+                return "Hard Hike"
+            }
+            if source.durationMinutes >= 180 || contains("long") || contains("route") || contains("elevation") || contains("vert") {
+                return "Long Hike"
+            }
+            return "Easy Hike"
+        case .strength:
+            if isHealthKitOnlyDetected {
+                return "Strength"
+            }
+            if let splitTitle {
+                return splitTitle
+            }
+            return "Full Body A"
+        case .run:
+            if contains("tempo") || contains("threshold") { return "Tempo Run" }
+            if contains("interval") || contains("vo2") { return "Intervals Run" }
+            if contains("recover") { return "Recovery Run" }
+            return source.durationMinutes >= 70 || contains("long") ? "Long Run" : "Base Run"
+        case .swim:
+            if contains("interval") || contains("vo2") { return "Intervals Swim" }
+            if contains("recover") { return "Recovery Swim" }
+            return "Base Swim"
+        case .mobility:
+            return "Mobility"
+        case .recovery:
+            return "Recovery"
+        case .walk:
+            return contains("recover") || contains("easy") ? "Recovery Walk" : "Walk"
+        case .row:
+            if contains("interval") || contains("vo2") { return "Intervals Row" }
+            return "Base Row"
+        case .other:
+            return compactTitle(source.title, maxWords: 3)
+        }
+    }
+
+    var modalityEmoji: String {
+        switch modality {
+        case .ride: return "🚴‍♂️"
+        case .run: return "🏃🏻‍♂️‍➡️"
+        case .swim: return "🏊"
+        case .row: return "🚣"
+        case .hike: return "🥾"
+        case .walk: return "🚶"
+        case .strength: return "🏋️‍♂️"
+        case .mobility: return "🧘"
+        case .recovery: return "🛌"
+        case .other: return "🏃🏻‍♂️‍➡️"
+        }
+    }
+
+    var distanceText: String? {
+        guard isDistanceEligible else { return nil }
+        let distance = source.estimatedDistanceKilometers ?? estimatedDistanceKilometers
+        guard let distance else { return nil }
+        return "\(max(1, Int(distance.rounded()))) km"
+    }
+
+    var intensityText: String {
+        if contains("high") || contains("hard") || contains("threshold") || contains("vo2") || contains("interval") || contains("zone 4") || contains("z4") || contains("zone 5") || contains("z5") || contains("race") {
+            return "high"
+        }
+        if contains("moderate") || contains("mid") || contains("steady") || contains("tempo") || contains("zone 3") || contains("z3") {
+            return "mid"
+        }
+        return "low"
+    }
+
+    var targetText: String {
+        if contains("threshold") || title.contains("Tempo") { return "Threshold" }
+        if contains("vo2") { return "VO2Max" }
+        if title.contains("Intervals") { return "VO2Max" }
+        if title.contains("Recovery") || contains("recover") || modality == .recovery { return "Recovery" }
+        if modality == .strength { return "Strength" }
+        if modality == .mobility { return "Mobility" }
+        if ["Base Ride", "Long Ride", "Base Run", "Long Run", "Easy Hike", "Long Hike", "Base Swim"].contains(title) {
+            return "Endurance"
+        }
+        if contains("endurance") || contains("aerobic") || contains("base") { return "Endurance" }
+        if contains("power") { return "Power" }
+        if contains("support") || contains("maintenance") { return "Support" }
+        return "Support"
+    }
+
+    private var estimatedDistanceKilometers: Double? {
+        let minutes = Double(source.durationMinutes)
+        guard minutes > 0 else { return nil }
+        let speed: Double?
+        switch modality {
+        case .ride:
+            speed = intensityText == "high" ? 28 : intensityText == "mid" ? 24 : 22
+        case .run:
+            speed = intensityText == "high" ? 11 : intensityText == "mid" ? 10 : 9
+        case .walk:
+            speed = 5
+        case .hike:
+            speed = 4.5
+        case .row:
+            speed = 8
+        case .swim:
+            speed = 2
+        default:
+            speed = nil
+        }
+        guard let speed else { return nil }
+        return max(1, (minutes / 60) * speed).rounded()
+    }
+
+    private var modality: Modality {
+        if contains("ride") || contains("cycl") || contains("bike") { return .ride }
+        if contains("run") { return .run }
+        if contains("swim") { return .swim }
+        if contains("row") { return .row }
+        if contains("hike") || contains("hik") { return .hike }
+        if contains("walk") { return .walk }
+        if contains("strength") || contains("gym") || contains("lift") || contains("weights") || contains("body") || contains("upper") || contains("lower") { return .strength }
+        if contains("mobility") || contains("yoga") || contains("pilates") || contains("stretch") || contains("core") || contains("prehab") { return .mobility }
+        if contains("recover") || contains("restorative") || contains("rest") { return .recovery }
+        return .other
+    }
+
+    private var isDistanceEligible: Bool {
+        [.ride, .run, .hike, .walk, .swim, .row].contains(modality)
+    }
+
+    private var isHealthKitOnlyDetected: Bool {
+        source.source == "healthkit_detected"
+    }
+
+    private var preservesCustomUserTitle: Bool {
+        guard source.source.contains("user") || source.source == "candidate" else { return false }
+        let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = title.lowercased()
+        guard !title.isEmpty else { return false }
+        if lower.range(of: #"day\s*\d+"#, options: .regularExpression) != nil { return true }
+        if lower.range(of: #"stage\s*\d+"#, options: .regularExpression) != nil { return true }
+        if contains("event") || contains("race") || contains("route") { return true }
+        if lower.contains("coronalacs") { return true }
+        return false
+    }
+
+    private var splitTitle: String? {
+        let letterPattern = #"\b([abcde])\b"#
+        let letter = normalized.range(of: letterPattern, options: .regularExpression).map {
+            String(normalized[$0]).uppercased()
+        }
+        if contains("upper") {
+            return "Upper Body \(letter ?? "A")"
+        }
+        if contains("lower") || contains("leg") {
+            return "Lower Body \(letter ?? "A")"
+        }
+        if contains("full") || contains("body") {
+            return "Full Body \(letter ?? "A")"
+        }
+        return nil
+    }
+
+    private var normalized: String {
+        "\(source.activityType) \(source.title) \(source.intensityLabel) \(source.purpose)"
+            .lowercased()
+    }
+
+    private func contains(_ value: String) -> Bool {
+        normalized.contains(value)
+    }
+
+    private func compactTitle(_ value: String, maxWords: Int) -> String {
+        let cleaned = value
+            .replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "Workout" }
+        return cleaned.split(separator: " ").prefix(maxWords).joined(separator: " ")
+    }
+}
+
+private extension JSONValue {
+    var planStringValue: String? {
+        if case let .string(value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var planNumberValue: Double? {
+        if case let .number(value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var planObjectValue: [String: JSONValue] {
+        if case let .object(value) = self {
+            return value
+        }
+        return [:]
     }
 }
 
@@ -2272,6 +2798,10 @@ private struct PlanLegendDot: View {
         case .adjusted:
             Circle()
                 .stroke(HAYFColor.orange, lineWidth: 2)
+                .frame(width: 12, height: 12)
+        case .missed:
+            Circle()
+                .stroke(HAYFColor.error, lineWidth: 2)
                 .frame(width: 12, height: 12)
         default:
             Circle()
@@ -2477,6 +3007,7 @@ private extension PlanningWeeklyPlanConstraintKind {
 private struct WorkoutPlanningSheet: View {
     let context: WorkoutPlanningContext
     let candidates: [PlanningWorkoutCandidate]
+    let fallbackLocationLabel: String?
     let isLoading: Bool
     let didFinishLoading: Bool
     let errorMessage: String?
@@ -2504,6 +3035,8 @@ private struct WorkoutPlanningSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 ManualWorkoutComposer(
+                    context: context,
+                    fallbackLocationLabel: fallbackLocationLabel,
                     interpret: interpretManualWorkout,
                     reviewCandidate: reviewCandidate
                 )
@@ -2545,6 +3078,8 @@ private struct WorkoutPlanningSheet: View {
                                 ForEach(candidates) { candidate in
                                     WorkoutCandidateCard(
                                         candidate: candidate,
+                                        scheduledDate: context.scheduledDate,
+                                        fallbackLocationLabel: fallbackLocationLabel,
                                         apply: { reviewCandidate(candidate) }
                                     )
                                 }
@@ -2564,6 +3099,8 @@ private struct WorkoutPlanningSheet: View {
 }
 
 private struct ManualWorkoutComposer: View {
+    let context: WorkoutPlanningContext
+    let fallbackLocationLabel: String?
     let interpret: (String) async throws -> PlanningWorkoutCandidate
     let reviewCandidate: (PlanningWorkoutCandidate) -> Void
 
@@ -2633,6 +3170,8 @@ private struct ManualWorkoutComposer: View {
             if let previewCandidate {
                 WorkoutCandidateCard(
                     candidate: previewCandidate,
+                    scheduledDate: context.scheduledDate,
+                    fallbackLocationLabel: fallbackLocationLabel,
                     apply: { reviewCandidate(previewCandidate) }
                 )
             }
@@ -2693,73 +3232,30 @@ private struct WorkoutPlanningLoadingView: View {
 
 private struct WorkoutCandidateCard: View {
     let candidate: PlanningWorkoutCandidate
+    let scheduledDate: String
+    let fallbackLocationLabel: String?
     let apply: () -> Void
+
+    private var display: WorkoutCardDisplayModel {
+        WorkoutCardDisplayModel(
+            candidate: candidate,
+            scheduledDate: scheduledDate,
+            fallbackLocationLabel: fallbackLocationLabel
+        )
+    }
 
     var body: some View {
         Button(action: apply) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(candidate.title)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.82)
-
-                        Text(metadata)
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundStyle(HAYFColor.muted)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(HAYFColor.primary)
-                        .clipShape(Circle())
-                }
-
-                Text(compact(candidate.rationale))
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(HAYFColor.secondary)
-                    .lineLimit(2)
-
-                Text(compact(candidate.weeklyImpact))
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
-                    .lineLimit(2)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+            WorkoutCardBody(
+                display: display,
+                minHeight: 130,
+                titleSize: 18,
+                titleWeight: .medium
+            ) {
+                PlanWorkoutStateMark(display: display, markSize: 18)
             }
         }
         .buttonStyle(.plain)
-    }
-
-    private var metadata: String {
-        "\(candidate.durationMinutes) min / \(candidate.intensityLabel) / \(compact(candidate.purpose, limit: 28))"
-    }
-
-    private func compact(_ value: String, limit: Int = 96) -> String {
-        let cleaned = value
-            .replacingOccurrences(of: "—", with: ",")
-            .replacingOccurrences(of: "–", with: ",")
-            .replacingOccurrences(of: #"\\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard cleaned.count > limit else { return cleaned }
-        let prefix = cleaned.prefix(limit)
-        let split = prefix.lastIndex(of: " ") ?? prefix.endIndex
-        return String(prefix[..<split]).trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)) + "."
     }
 }
 
@@ -2772,6 +3268,7 @@ private struct WorkoutChangeReview: Identifiable {
 private struct WorkoutChangeReviewSheet: View {
     let review: WorkoutChangeReview
     let workouts: [PlanWorkout]
+    let fallbackLocationLabel: String?
     let isApplying: Bool
     let accept: () -> Void
     let cancel: () -> Void
@@ -2809,7 +3306,11 @@ private struct WorkoutChangeReviewSheet: View {
                         }
 
                         WorkoutReviewSection(title: "Result") {
-                            WorkoutCandidatePreviewCard(candidate: review.candidate)
+                            WorkoutCandidatePreviewCard(
+                                candidate: review.candidate,
+                                scheduledDate: review.context.scheduledDate,
+                                fallbackLocationLabel: fallbackLocationLabel
+                            )
                         }
 
                         WorkoutReviewSection(title: "Resulting week") {
@@ -2954,52 +3455,31 @@ private struct WorkoutReviewSection<Content: View>: View {
 
 private struct WorkoutCandidatePreviewCard: View {
     let candidate: PlanningWorkoutCandidate
+    let scheduledDate: String
+    let fallbackLocationLabel: String?
+
+    private var display: WorkoutCardDisplayModel {
+        WorkoutCardDisplayModel(
+            candidate: candidate,
+            scheduledDate: scheduledDate,
+            fallbackLocationLabel: fallbackLocationLabel
+        )
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(candidate.title)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-
-                    Text("\(candidate.durationMinutes) min / \(candidate.intensityLabel) / \(candidate.purpose)")
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(HAYFColor.muted)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-
-                Spacer(minLength: 8)
-
+        WorkoutCardBody(
+            display: display,
+            minHeight: 130,
+            titleSize: 18,
+            titleWeight: .medium
+        ) {
                 Text("New")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .frame(height: 28)
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
                     .background(HAYFColor.orange)
                     .clipShape(Capsule())
-            }
-
-            Text(candidate.rationale)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(HAYFColor.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(candidate.weeklyImpact)
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(HAYFColor.borderStrong, lineWidth: 1)
         }
     }
 }
@@ -4506,6 +4986,123 @@ private extension Array {
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
     }
+}
+
+private enum PlanWorkoutCardPreviewFixtures {
+    static func workout(
+        title: String,
+        activityType: String,
+        durationMinutes: Int,
+        distance: Double?,
+        intensity: String,
+        purpose: String,
+        status: PlanWorkoutStatus,
+        source: String = "generated",
+        location: String = "Munich"
+    ) -> PlanWorkout {
+        PlanWorkout(
+            id: UUID(),
+            activeBlockID: nil,
+            weeklyRhythmID: nil,
+            weeklyPlanID: UUID(),
+            scheduledDate: "2026-06-01",
+            sequenceOrder: 1,
+            activityType: activityType,
+            title: title,
+            durationMinutes: durationMinutes,
+            estimatedDistanceKilometers: distance,
+            intensityLabel: intensity,
+            purpose: purpose,
+            status: status,
+            source: source,
+            fuelingSummary: nil,
+            plannedLocationLabel: location,
+            weatherForecast: .object([
+                "temperatureCelsius": .number(19),
+                "conditionEmoji": .string("🌤"),
+                "conditionLabel": .string("Partly cloudy")
+            ])
+        )
+    }
+}
+
+#Preview("Workout Cards") {
+    ScrollView {
+        VStack(spacing: 12) {
+            PlanWorkoutCard(
+                workout: PlanWorkoutCardPreviewFixtures.workout(
+                    title: "Intervals Ride",
+                    activityType: "cycling",
+                    durationMinutes: 75,
+                    distance: 35,
+                    intensity: "High",
+                    purpose: "VO2Max power",
+                    status: .current
+                ),
+                fallbackLocationLabel: "Munich",
+                isDisabled: false,
+                moveWorkout: {},
+                deleteWorkout: {},
+                replaceWorkout: {}
+            )
+
+            PlanWorkoutCard(
+                workout: PlanWorkoutCardPreviewFixtures.workout(
+                    title: "Base Ride",
+                    activityType: "cycling",
+                    durationMinutes: 60,
+                    distance: 22,
+                    intensity: "Zone 2",
+                    purpose: "Aerobic endurance base",
+                    status: .planned,
+                    location: "Lisbon"
+                ),
+                fallbackLocationLabel: "Munich",
+                isDisabled: false,
+                moveWorkout: {},
+                deleteWorkout: {},
+                replaceWorkout: {}
+            )
+
+            PlanWorkoutCard(
+                workout: PlanWorkoutCardPreviewFixtures.workout(
+                    title: "Upper Body C",
+                    activityType: "strength",
+                    durationMinutes: 75,
+                    distance: nil,
+                    intensity: "Moderate",
+                    purpose: "Strength",
+                    status: .missed
+                ),
+                fallbackLocationLabel: "Munich",
+                isDisabled: false,
+                moveWorkout: {},
+                deleteWorkout: {},
+                replaceWorkout: {}
+            )
+
+            PlanWorkoutCard(
+                workout: PlanWorkoutCardPreviewFixtures.workout(
+                    title: "Long Ride",
+                    activityType: "cycling",
+                    durationMinutes: 240,
+                    distance: 88,
+                    intensity: "Low",
+                    purpose: "Endurance",
+                    status: .done,
+                    source: "healthkit_detected"
+                ),
+                fallbackLocationLabel: "Munich",
+                isDisabled: false,
+                moveWorkout: {},
+                deleteWorkout: {},
+                replaceWorkout: {}
+            )
+        }
+        .padding(24)
+    }
+    .frame(width: 390)
+    .background(HAYFColor.neutral)
 }
 
 #Preview {

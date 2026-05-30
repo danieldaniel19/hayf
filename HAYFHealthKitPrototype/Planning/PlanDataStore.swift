@@ -12,6 +12,7 @@ final class PlanDataStore: ObservableObject {
     @Published private(set) var historyInsights: [FitnessHistoryInsight] = []
     @Published private(set) var debriefRequests: [WorkoutDebriefRequest] = []
     @Published private(set) var pendingReplanProposals: [PlanReplanProposal] = []
+    @Published private(set) var homeLocationLabel: String?
     @Published private(set) var isLoading = false
     @Published var errorMessage: String?
 
@@ -42,12 +43,14 @@ final class PlanDataStore: ObservableObject {
                 historyInsights = []
                 debriefRequests = []
                 pendingReplanProposals = []
+                homeLocationLabel = nil
                 return
             }
 
             async let phases = fetchPhases(for: block.id)
             async let weeklyRhythms = fetchWeeklyRhythms(for: block.id)
             async let workouts = fetchWorkouts(for: block.id)
+            async let homeLocationLabel = fetchHomeLocationLabel()
             async let goalEvaluations = fetchGoalEvaluations(for: block.id)
             async let historyInsights = fetchHistoryInsights(for: block.id)
             async let debriefRequests = fetchDebriefRequests(for: block.id)
@@ -63,6 +66,7 @@ final class PlanDataStore: ObservableObject {
             self.phases = try await phases
             self.weeklyRhythms = loadedWeeklyRhythms
             self.workouts = try await workouts
+            self.homeLocationLabel = try await homeLocationLabel
             self.goalTargets = loadedTargets
             self.goalEvaluations = try await goalEvaluations
             self.historyInsights = try await historyInsights
@@ -129,16 +133,18 @@ final class PlanDataStore: ObservableObject {
         let window = visibleWindow()
         let planIDs = try await fetchWeeklyPlanIDs(for: strategyID, window: window)
 
-        let workouts: [PlanWorkout] = try await supabase
-            .from("planned_workouts")
-            .select("id, active_block_id, weekly_rhythm_id, weekly_plan_id, scheduled_date, sequence_order, activity_type, title, duration_minutes, intensity_label, purpose, status, source, fueling_summary")
-            .gte("scheduled_date", value: PlanCalendar.dateFormatter.string(from: window.start))
-            .lte("scheduled_date", value: PlanCalendar.dateFormatter.string(from: window.end))
-            .not("status", operator: .in, value: "(deleted,superseded)")
-            .order("scheduled_date", ascending: true)
-            .order("sequence_order", ascending: true)
-            .execute()
-            .value
+        let workouts: [PlanWorkout]
+        do {
+            workouts = try await fetchWorkouts(
+                from: window,
+                selectColumns: PlanWorkout.enrichedSelectColumns
+            )
+        } catch let error as PostgrestError where error.isMissingWorkoutCardColumn {
+            workouts = try await fetchWorkouts(
+                from: window,
+                selectColumns: PlanWorkout.legacySelectColumns
+            )
+        }
 
         let visibleWorkouts = workouts.filter { workout in
             guard let weeklyPlanID = workout.weeklyPlanID else { return false }
@@ -146,6 +152,36 @@ final class PlanDataStore: ObservableObject {
         }
 
         return deduplicatedGeneratedWorkouts(visibleWorkouts)
+    }
+
+    private func fetchWorkouts(
+        from window: DateInterval,
+        selectColumns: String
+    ) async throws -> [PlanWorkout] {
+        try await supabase
+            .from("planned_workouts")
+            .select(selectColumns)
+            .gte("scheduled_date", value: PlanCalendar.dateFormatter.string(from: window.start))
+            .lte("scheduled_date", value: PlanCalendar.dateFormatter.string(from: window.end))
+            .not("status", operator: .in, value: "(deleted,superseded)")
+            .order("scheduled_date", ascending: true)
+            .order("sequence_order", ascending: true)
+            .execute()
+            .value
+    }
+
+    private func fetchHomeLocationLabel() async throws -> String? {
+        do {
+            let row: PlanProfileLocationRow = try await supabase
+                .from("profiles")
+                .select("main_city")
+                .single()
+                .execute()
+                .value
+            return row.mainCity.planNilIfEmpty
+        } catch let error as PostgrestError where error.code == "PGRST116" {
+            return nil
+        }
     }
 
     private func fetchPlanningTargets(for strategyID: UUID, weeklyPlanIDs: [UUID]) async throws -> [PlanGoalTarget] {
@@ -375,6 +411,14 @@ private struct PlanWeeklyPlanIDRow: Decodable {
     let status: String
 }
 
+private struct PlanProfileLocationRow: Decodable {
+    let mainCity: String
+
+    enum CodingKeys: String, CodingKey {
+        case mainCity = "main_city"
+    }
+}
+
 struct PlanActiveFitnessBlock: Identifiable {
     let id: UUID
     let kind: String
@@ -533,6 +577,9 @@ struct PlanDayConstraint: Equatable {
 }
 
 struct PlanWorkout: Decodable, Identifiable {
+    static let legacySelectColumns = "id, active_block_id, weekly_rhythm_id, weekly_plan_id, scheduled_date, sequence_order, activity_type, title, duration_minutes, intensity_label, purpose, status, source, fueling_summary"
+    static let enrichedSelectColumns = "\(legacySelectColumns), estimated_distance_kilometers, planned_location_label, weather_forecast_json"
+
     let id: UUID
     let activeBlockID: UUID?
     let weeklyRhythmID: UUID?
@@ -542,11 +589,14 @@ struct PlanWorkout: Decodable, Identifiable {
     let activityType: String
     let title: String
     let durationMinutes: Int
+    let estimatedDistanceKilometers: Double?
     let intensityLabel: String
     let purpose: String
     let status: PlanWorkoutStatus
     let source: String
     let fuelingSummary: String?
+    let plannedLocationLabel: String?
+    let weatherForecast: JSONValue?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -558,11 +608,14 @@ struct PlanWorkout: Decodable, Identifiable {
         case activityType = "activity_type"
         case title
         case durationMinutes = "duration_minutes"
+        case estimatedDistanceKilometers = "estimated_distance_kilometers"
         case intensityLabel = "intensity_label"
         case purpose
         case status
         case source
         case fuelingSummary = "fueling_summary"
+        case plannedLocationLabel = "planned_location_label"
+        case weatherForecast = "weather_forecast_json"
     }
 }
 
@@ -804,5 +857,15 @@ enum PlanWorkoutStatus: String, Decodable {
         case .superseded:
             return "Superseded"
         }
+    }
+}
+
+private extension PostgrestError {
+    var isMissingWorkoutCardColumn: Bool {
+        let text = "\(code ?? "") \(message) \(hint ?? "") \(localizedDescription) \(String(describing: self))"
+            .lowercased()
+        return text.contains("estimated_distance_kilometers")
+            || text.contains("planned_location_label")
+            || text.contains("weather_forecast_json")
     }
 }
