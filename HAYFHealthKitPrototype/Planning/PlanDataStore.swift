@@ -578,7 +578,7 @@ struct PlanDayConstraint: Equatable {
 
 struct PlanWorkout: Decodable, Identifiable {
     static let legacySelectColumns = "id, active_block_id, weekly_rhythm_id, weekly_plan_id, scheduled_date, sequence_order, activity_type, title, duration_minutes, intensity_label, purpose, status, source, fueling_summary"
-    static let enrichedSelectColumns = "\(legacySelectColumns), estimated_distance_kilometers, planned_location_label, weather_forecast_json"
+    static let enrichedSelectColumns = "\(legacySelectColumns), estimated_distance_kilometers, estimated_elevation_meters, planned_location_label, weather_forecast_json"
 
     let id: UUID
     let activeBlockID: UUID?
@@ -590,6 +590,7 @@ struct PlanWorkout: Decodable, Identifiable {
     let title: String
     let durationMinutes: Int
     let estimatedDistanceKilometers: Double?
+    let estimatedElevationMeters: Double?
     let intensityLabel: String
     let purpose: String
     let status: PlanWorkoutStatus
@@ -609,6 +610,7 @@ struct PlanWorkout: Decodable, Identifiable {
         case title
         case durationMinutes = "duration_minutes"
         case estimatedDistanceKilometers = "estimated_distance_kilometers"
+        case estimatedElevationMeters = "estimated_elevation_meters"
         case intensityLabel = "intensity_label"
         case purpose
         case status
@@ -865,6 +867,7 @@ private extension PostgrestError {
         let text = "\(code ?? "") \(message) \(hint ?? "") \(localizedDescription) \(String(describing: self))"
             .lowercased()
         return text.contains("estimated_distance_kilometers")
+            || text.contains("estimated_elevation_meters")
             || text.contains("planned_location_label")
             || text.contains("weather_forecast_json")
     }

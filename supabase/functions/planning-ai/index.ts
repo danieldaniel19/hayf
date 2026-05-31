@@ -216,6 +216,8 @@ type WorkoutCandidateInput = {
   title: string;
   activityType: string;
   durationMinutes: number;
+  estimatedDistanceKilometers?: number | null;
+  estimatedElevationMeters?: number | null;
   intensityLabel: string;
   purpose: string;
   prescription: Record<string, unknown>;
@@ -569,6 +571,8 @@ const replacementSchema: Record<string, unknown> = {
           "title",
           "activityType",
           "durationMinutes",
+          "estimatedDistanceKilometers",
+          "estimatedElevationMeters",
           "intensityLabel",
           "purpose",
           "prescription",
@@ -580,6 +584,8 @@ const replacementSchema: Record<string, unknown> = {
           title: { type: "string" },
           activityType: { type: "string" },
           durationMinutes: { type: "integer" },
+          estimatedDistanceKilometers: { type: ["number", "null"] },
+          estimatedElevationMeters: { type: ["number", "null"] },
           intensityLabel: { type: "string" },
           purpose: { type: "string" },
           prescription: {
@@ -614,6 +620,8 @@ const workoutCandidateSchema: Record<string, unknown> = {
         "title",
         "activityType",
         "durationMinutes",
+        "estimatedDistanceKilometers",
+        "estimatedElevationMeters",
         "intensityLabel",
         "purpose",
         "prescription",
@@ -625,6 +633,8 @@ const workoutCandidateSchema: Record<string, unknown> = {
         title: { type: "string" },
         activityType: { type: "string" },
         durationMinutes: { type: "integer" },
+        estimatedDistanceKilometers: { type: ["number", "null"] },
+        estimatedElevationMeters: { type: ["number", "null"] },
         intensityLabel: { type: "string" },
         purpose: { type: "string" },
         prescription: {
@@ -2688,6 +2698,8 @@ async function replaceWorkout(
           intensityLabel: candidate.intensityLabel || workout.intensity_label || "Moderate",
           purpose: candidate.purpose || workout.purpose || "Replacement workout",
           locationLabel: workout.planned_location_label ?? scope.homeLocationLabel,
+          distanceKilometers: candidate.estimatedDistanceKilometers ?? null,
+          elevationMeters: candidate.estimatedElevationMeters ?? null,
         }),
         status,
         source: "replanned",
@@ -2812,6 +2824,8 @@ async function addWorkout(
           intensityLabel: candidate.intensityLabel || "Moderate",
           purpose: candidate.purpose || "User-added workout",
           locationLabel: scope.homeLocationLabel,
+          distanceKilometers: candidate.estimatedDistanceKilometers ?? null,
+          elevationMeters: candidate.estimatedElevationMeters ?? null,
         }),
         status: "planned",
         source: "user_added",
@@ -3528,6 +3542,8 @@ function validateUpdateWorkoutMutation(
   if (inputFields.duration_minutes !== undefined && inputFields.duration_minutes !== null) fields.duration_minutes = boundedDuration(inputFields.duration_minutes);
   if (inputFields.intensity_label !== undefined && inputFields.intensity_label !== null) fields.intensity_label = requiredString(inputFields.intensity_label, "update_workout intensity_label");
   if (inputFields.purpose !== undefined && inputFields.purpose !== null) fields.purpose = requiredString(inputFields.purpose, "update_workout purpose");
+  if (inputFields.estimated_distance_kilometers !== undefined && inputFields.estimated_distance_kilometers !== null) fields.estimated_distance_kilometers = Number(inputFields.estimated_distance_kilometers);
+  if (inputFields.estimated_elevation_meters !== undefined && inputFields.estimated_elevation_meters !== null) fields.estimated_elevation_meters = Number(inputFields.estimated_elevation_meters);
   if (inputFields.prescription_json !== undefined && inputFields.prescription_json !== null) fields.prescription_json = plainObject(inputFields.prescription_json, "update_workout prescription_json");
   if (inputFields.fueling_summary !== undefined && inputFields.fueling_summary !== null) fields.fueling_summary = requiredString(inputFields.fueling_summary, "update_workout fueling_summary");
 
@@ -3538,6 +3554,8 @@ function validateUpdateWorkoutMutation(
     duration_minutes: fields.duration_minutes ?? workout.duration_minutes,
     intensity_label: fields.intensity_label ?? workout.intensity_label,
     purpose: fields.purpose ?? workout.purpose,
+    estimated_distance_kilometers: fields.estimated_distance_kilometers ?? workout.estimated_distance_kilometers ?? null,
+    estimated_elevation_meters: fields.estimated_elevation_meters ?? workout.estimated_elevation_meters ?? null,
     planned_location_label: workout.planned_location_label ?? null,
   };
   Object.assign(fields, workoutCardFields({
@@ -3548,6 +3566,8 @@ function validateUpdateWorkoutMutation(
     intensityLabel: String(mergedWorkout.intensity_label ?? ""),
     purpose: String(mergedWorkout.purpose ?? ""),
     locationLabel: mergedWorkout.planned_location_label,
+    distanceKilometers: Number(mergedWorkout.estimated_distance_kilometers) || null,
+    elevationMeters: Number(mergedWorkout.estimated_elevation_meters) || null,
   }));
   fields.title = normalizedWorkoutTitle(
     String(mergedWorkout.activity_type ?? ""),
@@ -4017,11 +4037,16 @@ function sanitizeWorkoutCandidate(
   const intensityLabel = compactWorkoutText(candidate?.intensityLabel || fallback.intensityLabel || "Moderate", 28);
   const title = compactWorkoutTitle(candidate?.title || fallback.title || titleCase(activityType), activityType);
   const purpose = compactWorkoutText(candidate?.purpose || fallback.purpose || "Useful workout", 48);
+  const text = `${activityType} ${title} ${intensityLabel} ${purpose} ${JSON.stringify(candidate?.prescription ?? fallback.prescription ?? {})}`.toLowerCase();
   return {
     id,
     title,
     activityType,
     durationMinutes: Math.max(10, candidate?.durationMinutes || fallback.durationMinutes || 30),
+    estimatedDistanceKilometers: candidate?.estimatedDistanceKilometers ?? fallback.estimatedDistanceKilometers ?? distanceKilometersFromText(text),
+    estimatedElevationMeters: elevationEligibleActivity(activityType, title, purpose)
+      ? candidate?.estimatedElevationMeters ?? fallback.estimatedElevationMeters ?? elevationMetersFromText(text)
+      : null,
     intensityLabel,
     purpose,
     prescription: candidate?.prescription ?? fallback.prescription ?? fallbackPrescription(title, activityType, intensityLabel),
@@ -4218,6 +4243,8 @@ function additionCandidate(
     title,
     activityType,
     durationMinutes,
+    estimatedDistanceKilometers: distanceKilometersFromText(`${activityType} ${title}`),
+    estimatedElevationMeters: null,
     intensityLabel,
     purpose,
     prescription: workoutPrescription(title, activityType, intensityLabel, title),
@@ -4232,6 +4259,8 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
   const title = manualWorkoutTitle(text, activityType);
   const intensityLabel = manualIntensity(text);
   const durationMinutes = manualDurationMinutes(text, activityType);
+  const estimatedDistanceKilometers = distanceKilometersFromText(text);
+  const estimatedElevationMeters = elevationEligibleActivity(activityType, title, text) ? elevationMetersFromText(text) : null;
   const sparse = isSparseWorkoutDescription(text);
 
   return {
@@ -4239,6 +4268,8 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
     title,
     activityType,
     durationMinutes,
+    estimatedDistanceKilometers,
+    estimatedElevationMeters,
     intensityLabel,
     purpose: manualPurpose(activityType, workout),
     prescription: workoutPrescription(title, activityType, intensityLabel, text),
@@ -4276,8 +4307,18 @@ function manualWorkoutTitle(text: string, activityType: string) {
 
 function manualIntensity(text: string) {
   const lower = text.toLowerCase();
-  if (/easy|low|recovery|gentle|light/.test(lower)) return "Low";
   if (/hard|high|heavy|interval|threshold|tempo|vo2|race|max/.test(lower)) return "High";
+  const distance = distanceKilometersFromText(lower) ?? 0;
+  const elevation = elevationMetersFromText(lower) ?? 0;
+  if (/hik/.test(lower)) {
+    if (distance >= 20 || elevation >= 1000 || (distance >= 15 && elevation >= 700)) return "High";
+    if (distance >= 10 || elevation >= 400 || (distance >= 8 && elevation >= 250)) return "Moderate";
+  }
+  if (/ride|cycl|bike/.test(lower)) {
+    if (distance >= 100 || elevation >= 1200 || (distance >= 80 && elevation >= 800)) return "High";
+    if (distance >= 60 || elevation >= 500 || (distance >= 45 && elevation >= 300)) return "Moderate";
+  }
+  if (/easy|low|recovery|gentle|light/.test(lower)) return "Low";
   if (/zone\s*2|z2/.test(lower)) return "Zone 2";
   if (/steady|long|moderate|elevation|vert/.test(lower)) return "Moderate";
   return "Moderate";
@@ -4306,10 +4347,38 @@ function manualDurationMinutes(text: string, activityType: string) {
 
 function distanceKilometersFromText(text: string) {
   const match = text.match(/(\d+(?:[.,]\d+)?)\s*(?:km|kilometer|kilometers|kilometre|kilometres)\b/);
-  if (match) return Number(match[1].replace(",", "."));
-  const shorthand = text.match(/(\d+(?:[.,]\d+)?)\s*k\b/);
-  if (shorthand) return Number(shorthand[1].replace(",", "."));
+  if (match) return parsedNumber(match[1]);
+  const shorthand = text.match(/(\d+(?:[.,]\d+)?)\s*k\b(?!\s*m)/);
+  if (shorthand) return parsedNumber(shorthand[1]);
   return null;
+}
+
+function elevationMetersFromText(text: string) {
+  const lower = text.toLowerCase();
+  const patterns = [
+    /(\d+(?:[.,]\d+)?)\s*k\s*m\s*(?:elev|elevation|gain|climb|climbing|vert|vertical|ascent)\b/,
+    /(\d+(?:[.,]\d+)?)\s*(?:m|meter|meters|metre|metres)\s*(?:elev|elevation|gain|climb|climbing|vert|vertical|ascent)\b/,
+    /(?:elev|elevation|gain|climb|climbing|vert|vertical|ascent)\s*(?:of\s*)?(\d+(?:[.,]\d+)?)\s*(k)?\s*m\b/,
+    /\b(\d{3,5})\s*m\b/,
+  ];
+  for (const pattern of patterns) {
+    const match = lower.match(pattern);
+    if (!match) continue;
+    const value = parsedNumber(match[1]);
+    if (!Number.isFinite(value)) continue;
+    const thousands = /\d+(?:[.,]\d+)?\s*k\s*m/.test(match[0]) || match[2] === "k";
+    return thousands ? Math.round(value * 1000) : Math.round(value);
+  }
+  return null;
+}
+
+function parsedNumber(value: string) {
+  const text = String(value ?? "");
+  const commaParts = text.split(",");
+  if (commaParts.length === 2 && commaParts[1].length === 3) {
+    return Number(commaParts.join(""));
+  }
+  return Number(text.replace(",", "."));
 }
 
 function manualPurpose(activityType: string, workout: Record<string, any> | undefined) {
@@ -4755,7 +4824,7 @@ function generatedWorkoutKey(workout: GeneratedWorkout) {
 }
 
 const workoutTaxonomyRules =
-  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery.";
+  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery. Always include estimatedDistanceKilometers and estimatedElevationMeters in workout candidate JSON, using null when unknown or not applicable. For user-authored hikes and rides, parse route distance/elevation when provided. Do not invent elevation for routine AI-planned rides such as 1h Base Ride, Recovery Ride, Tempo Ride, or Intervals Ride; only include ride elevation when the user supplied it or route context explicitly exists. Hike and ride intensity should account for objective route load: long distance or large elevation can upgrade Zone 2/easy work to mid/high.";
 
 function workoutCardFields(input: {
   scheduledDate: string;
@@ -4766,13 +4835,19 @@ function workoutCardFields(input: {
   purpose: string;
   locationLabel?: string | null;
   distanceKilometers?: number | null;
+  elevationMeters?: number | null;
 }) {
   const location = compactNullableText(input.locationLabel);
+  const text = `${input.activityType} ${input.title} ${input.intensityLabel} ${input.purpose}`.toLowerCase();
   const distance = distanceEligibleActivity(input.activityType, input.title, input.purpose)
-    ? input.distanceKilometers ?? estimatedDistanceKilometers(input.activityType, input.title, input.durationMinutes, input.intensityLabel, input.purpose)
+    ? input.distanceKilometers ?? distanceKilometersFromText(text) ?? estimatedDistanceKilometers(input.activityType, input.title, input.durationMinutes, input.intensityLabel, input.purpose)
+    : null;
+  const elevation = elevationEligibleActivity(input.activityType, input.title, input.purpose)
+    ? input.elevationMeters ?? elevationMetersFromText(text)
     : null;
   return {
     estimated_distance_kilometers: distance,
+    estimated_elevation_meters: elevation,
     planned_location_label: location,
     weather_forecast_json: mockedWeatherForecast(input.scheduledDate, location),
   };
@@ -4872,6 +4947,11 @@ function normalizedWorkoutTitle(
 function distanceEligibleActivity(activityType: string, title: string, purpose = "") {
   const activity = normalizeActivity(`${activityType} ${title} ${purpose}`);
   return ["ride", "run", "hike", "walk", "swim", "row"].includes(activity);
+}
+
+function elevationEligibleActivity(activityType: string, title: string, purpose = "") {
+  const activity = normalizeActivity(`${activityType} ${title} ${purpose}`);
+  return ["ride", "hike"].includes(activity);
 }
 
 function normalizedStrengthTitle(text: string) {

@@ -2367,6 +2367,7 @@ private struct WorkoutCardDisplayModel {
             status: workout.status,
             source: workout.source,
             estimatedDistanceKilometers: workout.estimatedDistanceKilometers,
+            estimatedElevationMeters: workout.estimatedElevationMeters,
             scheduledDate: workout.scheduledDate,
             plannedLocationLabel: workout.plannedLocationLabel,
             weatherForecast: workout.weatherForecast,
@@ -2384,7 +2385,8 @@ private struct WorkoutCardDisplayModel {
             purpose: candidate.purpose,
             status: nil,
             source: "candidate",
-            estimatedDistanceKilometers: nil,
+            estimatedDistanceKilometers: candidate.estimatedDistanceKilometers,
+            estimatedElevationMeters: candidate.estimatedElevationMeters,
             scheduledDate: scheduledDate,
             plannedLocationLabel: nil,
             weatherForecast: nil,
@@ -2430,6 +2432,9 @@ private struct WorkoutCardDisplayModel {
         ]
         if let distanceText = titleBuilder.distanceText {
             metrics.append(PlanWorkoutCardPillModel(emoji: "🛣️", text: distanceText))
+        }
+        if let elevationText = titleBuilder.elevationText {
+            metrics.append(PlanWorkoutCardPillModel(emoji: "⛰️", text: elevationText))
         }
         metrics.append(PlanWorkoutCardPillModel(emoji: "🔥", text: titleBuilder.intensityText))
         metrics.append(PlanWorkoutCardPillModel(emoji: "🎯", text: titleBuilder.targetText))
@@ -2482,6 +2487,7 @@ private struct WorkoutCardDisplaySource {
     let status: PlanWorkoutStatus?
     let source: String
     let estimatedDistanceKilometers: Double?
+    let estimatedElevationMeters: Double?
     let scheduledDate: String
     let plannedLocationLabel: String?
     let weatherForecast: JSONValue?
@@ -2605,16 +2611,30 @@ private struct WorkoutCardTaxonomy {
 
     var distanceText: String? {
         guard isDistanceEligible else { return nil }
-        let distance = source.estimatedDistanceKilometers ?? estimatedDistanceKilometers
+        let distance = distanceKilometers
         guard let distance else { return nil }
         return "\(max(1, Int(distance.rounded()))) km"
     }
 
+    var elevationText: String? {
+        guard isElevationEligible else { return nil }
+        let elevation = elevationMeters
+        guard let elevation, elevation > 0 else { return nil }
+        return "\(max(1, Int(elevation.rounded())))m"
+    }
+
     var intensityText: String {
-        if contains("high") || contains("hard") || contains("threshold") || contains("vo2") || contains("interval") || contains("zone 4") || contains("z4") || contains("zone 5") || contains("z5") || contains("race") {
+        let textualIntensity = textualIntensityText
+        if textualIntensity == "high" {
             return "high"
         }
-        if contains("moderate") || contains("mid") || contains("steady") || contains("tempo") || contains("zone 3") || contains("z3") {
+        if objectiveLoadIntensity == "high" {
+            return "high"
+        }
+        if textualIntensity == "mid" {
+            return "mid"
+        }
+        if objectiveLoadIntensity == "mid" {
             return "mid"
         }
         return "low"
@@ -2639,12 +2659,13 @@ private struct WorkoutCardTaxonomy {
     private var estimatedDistanceKilometers: Double? {
         let minutes = Double(source.durationMinutes)
         guard minutes > 0 else { return nil }
+        let textualIntensity = textualIntensityText
         let speed: Double?
         switch modality {
         case .ride:
-            speed = intensityText == "high" ? 28 : intensityText == "mid" ? 24 : 22
+            speed = textualIntensity == "high" ? 28 : textualIntensity == "mid" ? 24 : 22
         case .run:
-            speed = intensityText == "high" ? 11 : intensityText == "mid" ? 10 : 9
+            speed = textualIntensity == "high" ? 11 : textualIntensity == "mid" ? 10 : 9
         case .walk:
             speed = 5
         case .hike:
@@ -2658,6 +2679,52 @@ private struct WorkoutCardTaxonomy {
         }
         guard let speed else { return nil }
         return max(1, (minutes / 60) * speed).rounded()
+    }
+
+    private var distanceKilometers: Double? {
+        explicitRouteDistanceKilometers ?? estimatedDistanceKilometers
+    }
+
+    private var elevationMeters: Double? {
+        source.estimatedElevationMeters ?? parsedElevationMeters
+    }
+
+    private var objectiveLoadIntensity: String? {
+        let distance = explicitRouteDistanceKilometers ?? 0
+        let elevation = elevationMeters ?? 0
+        switch modality {
+        case .hike:
+            if distance >= 20 || elevation >= 1_000 || (distance >= 15 && elevation >= 700) {
+                return "high"
+            }
+            if distance >= 10 || elevation >= 400 || (distance >= 8 && elevation >= 250) {
+                return "mid"
+            }
+        case .ride:
+            if distance >= 100 || elevation >= 1_200 || (distance >= 80 && elevation >= 800) || source.durationMinutes >= 240 {
+                return "high"
+            }
+            if distance >= 60 || elevation >= 500 || (distance >= 45 && elevation >= 300) || source.durationMinutes >= 120 {
+                return "mid"
+            }
+        default:
+            break
+        }
+        return nil
+    }
+
+    private var explicitRouteDistanceKilometers: Double? {
+        source.estimatedDistanceKilometers ?? parsedDistanceKilometers
+    }
+
+    private var textualIntensityText: String {
+        if contains("high") || contains("hard") || contains("threshold") || contains("vo2") || contains("interval") || contains("zone 4") || contains("z4") || contains("zone 5") || contains("z5") || contains("race") {
+            return "high"
+        }
+        if contains("moderate") || contains("mid") || contains("steady") || contains("tempo") || contains("zone 3") || contains("z3") {
+            return "mid"
+        }
+        return "low"
     }
 
     private var modality: Modality {
@@ -2675,6 +2742,45 @@ private struct WorkoutCardTaxonomy {
 
     private var isDistanceEligible: Bool {
         [.ride, .run, .hike, .walk, .swim, .row].contains(modality)
+    }
+
+    private var isElevationEligible: Bool {
+        [.ride, .hike].contains(modality)
+    }
+
+    private var parsedDistanceKilometers: Double? {
+        let pattern = #"(\d+(?:[,.]\d+)?)\s*(?:km|kilometer|kilometers|kilometre|kilometres)\b"#
+        guard let range = normalized.range(of: pattern, options: .regularExpression) else { return nil }
+        let match = String(normalized[range])
+        let number = match.replacingOccurrences(of: #"[^0-9,.]"#, with: "", options: .regularExpression)
+        return parsedDecimal(number)
+    }
+
+    private var parsedElevationMeters: Double? {
+        let patterns = [
+            #"(\d+(?:[,.]\d+)?)\s*k\s*m\s*(?:elev|elevation|gain|climb|climbing|vert|vertical|ascent)\b"#,
+            #"(\d+(?:[,.]\d+)?)\s*(?:m|meter|meters|metre|metres)\s*(?:elev|elevation|gain|climb|climbing|vert|vertical|ascent)\b"#,
+            #"(?:elev|elevation|gain|climb|climbing|vert|vertical|ascent)\s*(?:of\s*)?(\d+(?:[,.]\d+)?)\s*k?\s*m\b"#,
+            #"\b(\d{3,5})\s*m\b"#
+        ]
+        for pattern in patterns {
+            guard let range = normalized.range(of: pattern, options: .regularExpression) else { continue }
+            let match = String(normalized[range])
+            let isThousands = match.range(of: #"\d+(?:[,.]\d+)?\s*k\s*m"#, options: .regularExpression) != nil
+            let number = match.replacingOccurrences(of: #"[^0-9,.]"#, with: "", options: .regularExpression)
+            guard let value = parsedDecimal(number) else { continue }
+            return isThousands ? value * 1_000 : value
+        }
+        return nil
+    }
+
+    private func parsedDecimal(_ value: String) -> Double? {
+        if value.contains(","),
+           let suffix = value.split(separator: ",").last,
+           suffix.count == 3 {
+            return Double(value.replacingOccurrences(of: ",", with: ""))
+        }
+        return Double(value.replacingOccurrences(of: ",", with: "."))
     }
 
     private var isHealthKitOnlyDetected: Bool {
@@ -4994,6 +5100,7 @@ private enum PlanWorkoutCardPreviewFixtures {
         activityType: String,
         durationMinutes: Int,
         distance: Double?,
+        elevation: Double? = nil,
         intensity: String,
         purpose: String,
         status: PlanWorkoutStatus,
@@ -5011,6 +5118,7 @@ private enum PlanWorkoutCardPreviewFixtures {
             title: title,
             durationMinutes: durationMinutes,
             estimatedDistanceKilometers: distance,
+            estimatedElevationMeters: elevation,
             intensityLabel: intensity,
             purpose: purpose,
             status: status,
