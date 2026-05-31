@@ -2388,7 +2388,7 @@ private struct WorkoutCardDisplayModel {
             estimatedDistanceKilometers: candidate.estimatedDistanceKilometers,
             estimatedElevationMeters: candidate.estimatedElevationMeters,
             scheduledDate: scheduledDate,
-            plannedLocationLabel: nil,
+            plannedLocationLabel: candidate.plannedLocationLabel,
             weatherForecast: nil,
             fallbackLocationLabel: fallbackLocationLabel
         )
@@ -2440,7 +2440,8 @@ private struct WorkoutCardDisplayModel {
         metrics.append(PlanWorkoutCardPillModel(emoji: "🎯", text: titleBuilder.targetText))
         metricPills = metrics
 
-        let location = Self.compactOptionalString(source.plannedLocationLabel) ?? Self.compactOptionalString(source.fallbackLocationLabel)
+        let plannedLocation = Self.resolvedPlannedLocationLabel(source: source)
+        let location = plannedLocation ?? Self.compactOptionalString(source.fallbackLocationLabel)
         let forecast = PlanWorkoutForecastDisplay(
             storedForecast: source.weatherForecast,
             scheduledDate: source.scheduledDate,
@@ -2448,7 +2449,7 @@ private struct WorkoutCardDisplayModel {
         )
         contextPills = [
             PlanWorkoutCardPillModel(emoji: forecast.emoji, text: forecast.temperatureText),
-            PlanWorkoutCardPillModel(emoji: Self.locationEmoji(for: location), text: Self.shortLocation(location))
+            PlanWorkoutCardPillModel(emoji: Self.locationEmoji(for: plannedLocation, fallbackLocationLabel: source.fallbackLocationLabel), text: Self.shortLocation(location))
         ]
     }
 
@@ -2459,12 +2460,13 @@ private struct WorkoutCardDisplayModel {
         return "\(minutes) min"
     }
 
-    private static func locationEmoji(for location: String?) -> String {
-        let value = location?.lowercased() ?? ""
-        if value.contains("lisbon") || value.contains("porto") || value.contains("airport") {
-            return "✈️"
+    private static func locationEmoji(for plannedLocationLabel: String?, fallbackLocationLabel: String?) -> String {
+        guard let plannedLocation = compactOptionalString(plannedLocationLabel),
+              let fallbackLocation = compactOptionalString(fallbackLocationLabel),
+              normalizedLocation(plannedLocation) != normalizedLocation(fallbackLocation) else {
+            return "🏠"
         }
-        return "🏠"
+        return "✈️"
     }
 
     private static func shortLocation(_ location: String?) -> String {
@@ -2475,6 +2477,36 @@ private struct WorkoutCardDisplayModel {
     private static func compactOptionalString(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func resolvedPlannedLocationLabel(source: WorkoutCardDisplaySource) -> String? {
+        let routeLocation = knownRouteLocationLabel([
+            source.plannedLocationLabel,
+            source.title,
+            source.activityType,
+            source.purpose,
+            source.intensityLabel
+        ].compactMap { $0 }.joined(separator: " "))
+        return routeLocation ?? compactOptionalString(source.plannedLocationLabel)
+    }
+
+    private static func knownRouteLocationLabel(_ value: String) -> String? {
+        let normalized = normalizedLocation(value)
+        guard normalized.contains("coronalacs") || normalized.contains("coronallacs") else {
+            return nil
+        }
+        if normalized.contains("day 1") || normalized.contains("stage 1") || normalized.contains("andorra") {
+            return "Escaldes-Engordany"
+        }
+        return nil
+    }
+
+    private static func normalizedLocation(_ value: String) -> String {
+        let primaryLabel = value.components(separatedBy: ",").first ?? value
+        return primaryLabel
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+            .lowercased()
     }
 }
 
@@ -2728,12 +2760,14 @@ private struct WorkoutCardTaxonomy {
     }
 
     private var modality: Modality {
+        if activityTypeContains("walk") { return .walk }
+        if activityTypeContains("hike") || activityTypeContains("hik") { return .hike }
         if contains("ride") || contains("cycl") || contains("bike") { return .ride }
         if contains("run") { return .run }
         if contains("swim") { return .swim }
         if contains("row") { return .row }
-        if contains("hike") || contains("hik") { return .hike }
         if contains("walk") { return .walk }
+        if contains("hike") || contains("hik") { return .hike }
         if contains("strength") || contains("gym") || contains("lift") || contains("weights") || contains("body") || contains("upper") || contains("lower") { return .strength }
         if contains("mobility") || contains("yoga") || contains("pilates") || contains("stretch") || contains("core") || contains("prehab") { return .mobility }
         if contains("recover") || contains("restorative") || contains("rest") { return .recovery }
@@ -2823,6 +2857,10 @@ private struct WorkoutCardTaxonomy {
 
     private func contains(_ value: String) -> Bool {
         normalized.contains(value)
+    }
+
+    private func activityTypeContains(_ value: String) -> Bool {
+        source.activityType.lowercased().contains(value)
     }
 
     private func compactTitle(_ value: String, maxWords: Int) -> String {

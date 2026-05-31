@@ -348,6 +348,7 @@ struct PlanningWorkoutCandidate: Codable, Identifiable {
     let durationMinutes: Int
     let estimatedDistanceKilometers: Double?
     let estimatedElevationMeters: Double?
+    let plannedLocationLabel: String?
     let intensityLabel: String
     let purpose: String
     let prescription: JSONValue
@@ -362,6 +363,7 @@ struct PlanningWorkoutCandidate: Codable, Identifiable {
         case durationMinutes
         case estimatedDistanceKilometers
         case estimatedElevationMeters
+        case plannedLocationLabel
         case intensityLabel
         case purpose
         case prescription

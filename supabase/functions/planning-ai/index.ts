@@ -218,6 +218,7 @@ type WorkoutCandidateInput = {
   durationMinutes: number;
   estimatedDistanceKilometers?: number | null;
   estimatedElevationMeters?: number | null;
+  plannedLocationLabel?: string | null;
   intensityLabel: string;
   purpose: string;
   prescription: Record<string, unknown>;
@@ -573,6 +574,7 @@ const replacementSchema: Record<string, unknown> = {
           "durationMinutes",
           "estimatedDistanceKilometers",
           "estimatedElevationMeters",
+          "plannedLocationLabel",
           "intensityLabel",
           "purpose",
           "prescription",
@@ -586,6 +588,7 @@ const replacementSchema: Record<string, unknown> = {
           durationMinutes: { type: "integer" },
           estimatedDistanceKilometers: { type: ["number", "null"] },
           estimatedElevationMeters: { type: ["number", "null"] },
+          plannedLocationLabel: { type: ["string", "null"] },
           intensityLabel: { type: "string" },
           purpose: { type: "string" },
           prescription: {
@@ -622,6 +625,7 @@ const workoutCandidateSchema: Record<string, unknown> = {
         "durationMinutes",
         "estimatedDistanceKilometers",
         "estimatedElevationMeters",
+        "plannedLocationLabel",
         "intensityLabel",
         "purpose",
         "prescription",
@@ -635,6 +639,7 @@ const workoutCandidateSchema: Record<string, unknown> = {
         durationMinutes: { type: "integer" },
         estimatedDistanceKilometers: { type: ["number", "null"] },
         estimatedElevationMeters: { type: ["number", "null"] },
+        plannedLocationLabel: { type: ["string", "null"] },
         intensityLabel: { type: "string" },
         purpose: { type: "string" },
         prescription: {
@@ -2630,6 +2635,7 @@ async function interpretWorkoutDescription(
       errorMessage: errorMessage(error),
     });
   }
+  candidate = withResolvedWorkoutIntent(candidate, textContext);
 
   return {
     userID,
@@ -2655,6 +2661,7 @@ async function replaceWorkout(
   const scope = await loadActivePlanningScope(admin, userID);
   const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
   const status = workout.status === "current" ? "current" : "planned";
+  const candidateLocationLabel = resolvedCandidateLocationLabel(candidate);
 
   await throwOnError(
     admin
@@ -2697,7 +2704,7 @@ async function replaceWorkout(
           durationMinutes: Math.max(10, candidate.durationMinutes || workout.duration_minutes || 30),
           intensityLabel: candidate.intensityLabel || workout.intensity_label || "Moderate",
           purpose: candidate.purpose || workout.purpose || "Replacement workout",
-          locationLabel: workout.planned_location_label ?? scope.homeLocationLabel,
+          locationLabel: candidateLocationLabel ?? workout.planned_location_label ?? scope.homeLocationLabel,
           distanceKilometers: candidate.estimatedDistanceKilometers ?? null,
           elevationMeters: candidate.estimatedElevationMeters ?? null,
         }),
@@ -2708,6 +2715,7 @@ async function replaceWorkout(
           replacementForWorkoutID: workout.id,
           rationale: candidate.rationale ?? null,
           weeklyImpact: candidate.weeklyImpact ?? null,
+          plannedLocationLabel: candidateLocationLabel,
         },
         fueling_summary: candidate.fuelingSummary || workout.fueling_summary,
         original_workout_id: workout.id,
@@ -2791,6 +2799,7 @@ async function addWorkout(
   throwIfPastPlanningDate(scheduledDate, scope.timezone || "UTC");
   const context = await loadWorkoutPlanningContext(admin, userID, scope, scheduledDate);
   const candidate = sanitizeWorkoutCandidate(rawCandidate, fallbackAdditionCandidates(context)[0], "candidate-1");
+  const candidateLocationLabel = resolvedCandidateLocationLabel(candidate);
   const sequenceOrder = requestBody.sequenceOrder ?? requestBody.sequence_order ??
     nextSequenceOrderForDate(context.surroundingWorkouts, scheduledDate);
 
@@ -2823,7 +2832,7 @@ async function addWorkout(
           durationMinutes: Math.max(10, candidate.durationMinutes || 30),
           intensityLabel: candidate.intensityLabel || "Moderate",
           purpose: candidate.purpose || "User-added workout",
-          locationLabel: scope.homeLocationLabel,
+          locationLabel: candidateLocationLabel ?? scope.homeLocationLabel,
           distanceKilometers: candidate.estimatedDistanceKilometers ?? null,
           elevationMeters: candidate.estimatedElevationMeters ?? null,
         }),
@@ -2834,6 +2843,7 @@ async function addWorkout(
           addedFrom: "plan_day_add",
           rationale: candidate.rationale ?? null,
           weeklyImpact: candidate.weeklyImpact ?? null,
+          plannedLocationLabel: candidateLocationLabel,
         },
         fueling_summary: candidate.fuelingSummary || fuelingSummary(candidate.activityType, candidate.intensityLabel),
         version: 1,
@@ -3875,7 +3885,7 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
             task: "recommend_workout_replacements",
             context,
             rules:
-              `Return 2-3 second-best options for the same date/slot. ${workoutTaxonomyRules} Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.`,
+              `Return 2-3 second-best options for the same date/slot. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.`,
           }),
         },
       ],
@@ -3925,7 +3935,7 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
             task: "recommend_workout_additions",
             context,
             rules:
-              `Return 2-3 useful options for the selected date. ${workoutTaxonomyRules} Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.`,
+              `Return 2-3 useful options for the selected date. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.`,
           }),
         },
       ],
@@ -3975,7 +3985,7 @@ async function runWorkoutDescriptionInterpretation(context: Record<string, unkno
             task: "interpret_workout_description",
             context,
             rules:
-              `Return one compact candidate in the same format as suggestion cards. ${workoutTaxonomyRules} Preserve concrete distance, elevation, duration, intensity, modality, and user-authored route/event names. Keep the title short, no em dashes; use commas or parentheses only for concrete user details. Rationale and weeklyImpact must each be one short sentence under 14 words.`,
+              `Return one compact candidate in the same format as suggestion cards. ${workoutTaxonomyRules} Preserve concrete distance, elevation, duration, intensity, modality, user-authored route/event names, and any explicit city/place/location. Set plannedLocationLabel to the explicit location when the user names one; otherwise set it to null. Do not copy the home location into plannedLocationLabel unless the user explicitly says it. Keep the title short, no em dashes; use commas or parentheses only for concrete user details. Rationale and weeklyImpact must each be one short sentence under 14 words.`,
           }),
         },
       ],
@@ -4047,6 +4057,7 @@ function sanitizeWorkoutCandidate(
     estimatedElevationMeters: elevationEligibleActivity(activityType, title, purpose)
       ? candidate?.estimatedElevationMeters ?? fallback.estimatedElevationMeters ?? elevationMetersFromText(text)
       : null,
+    plannedLocationLabel: compactNullableText(candidate?.plannedLocationLabel) ?? fallback.plannedLocationLabel ?? null,
     intensityLabel,
     purpose,
     prescription: candidate?.prescription ?? fallback.prescription ?? fallbackPrescription(title, activityType, intensityLabel),
@@ -4103,6 +4114,7 @@ function fallbackReplacementCandidates(workout: Record<string, any>, surrounding
       durationMinutes: duration,
       intensityLabel: "Low",
       purpose: workout.purpose || "Preserve the session intent with less load",
+      plannedLocationLabel: null,
       prescription: fallbackPrescription("Lower dose", originalType || "training", "Low"),
       fuelingSummary: fuelingSummary(originalType || "training", "Low"),
       rationale: "This keeps the original purpose but makes it easier to start today.",
@@ -4115,6 +4127,7 @@ function fallbackReplacementCandidates(workout: Record<string, any>, surrounding
       durationMinutes: hasStrengthNearby ? 30 : duration,
       intensityLabel: hasStrengthNearby ? "Zone 2" : "Moderate",
       purpose: hasStrengthNearby ? "Aerobic base" : "Strength anchor",
+      plannedLocationLabel: null,
       prescription: fallbackPrescription(hasStrengthNearby ? "Base Ride" : "Full Body A", hasStrengthNearby ? aerobicType : "strength", hasStrengthNearby ? "Zone 2" : "Moderate"),
       fuelingSummary: fuelingSummary(hasStrengthNearby ? aerobicType : "strength", hasStrengthNearby ? "Zone 2" : "Moderate"),
       rationale: "This is the next-best useful stimulus without overloading the plan.",
@@ -4133,6 +4146,7 @@ function fallbackReplacementCandidate(workout: Record<string, any>, index: numbe
     durationMinutes: Math.max(15, Math.round((workout.duration_minutes ?? 30) * 0.7)),
     intensityLabel: index === 0 ? "Low" : "Moderate",
     purpose: workout.purpose || "Preserve the session intent with less friction",
+    plannedLocationLabel: null,
     prescription: fallbackPrescription(fallbackReplacementTitle(workout, index), workout.activity_type ?? "training", index === 0 ? "Low" : "Moderate"),
     fuelingSummary: fuelingSummary(workout.activity_type ?? "training", index === 0 ? "Low" : "Moderate"),
     rationale: "This keeps the training intent while lowering friction for this slot.",
@@ -4245,6 +4259,7 @@ function additionCandidate(
     durationMinutes,
     estimatedDistanceKilometers: distanceKilometersFromText(`${activityType} ${title}`),
     estimatedElevationMeters: null,
+    plannedLocationLabel: null,
     intensityLabel,
     purpose,
     prescription: workoutPrescription(title, activityType, intensityLabel, title),
@@ -4261,6 +4276,7 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
   const durationMinutes = manualDurationMinutes(text, activityType);
   const estimatedDistanceKilometers = distanceKilometersFromText(text);
   const estimatedElevationMeters = elevationEligibleActivity(activityType, title, text) ? elevationMetersFromText(text) : null;
+  const plannedLocationLabel = locationLabelFromWorkoutText(text);
   const sparse = isSparseWorkoutDescription(text);
 
   return {
@@ -4270,6 +4286,7 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
     durationMinutes,
     estimatedDistanceKilometers,
     estimatedElevationMeters,
+    plannedLocationLabel,
     intensityLabel,
     purpose: manualPurpose(activityType, workout),
     prescription: workoutPrescription(title, activityType, intensityLabel, text),
@@ -4281,6 +4298,50 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
       ? "Replaces this slot; review can adjust around it."
       : `Adds load on ${scheduledDate}; review can adjust around it.`,
   };
+}
+
+function withResolvedWorkoutLocation(candidate: WorkoutCandidate, userText: string): WorkoutCandidate {
+  const resolvedLocation = resolvedWorkoutLocationLabel(userText, candidate.plannedLocationLabel);
+  if (!resolvedLocation || resolvedLocation === candidate.plannedLocationLabel) return candidate;
+  return { ...candidate, plannedLocationLabel: resolvedLocation };
+}
+
+function withResolvedWorkoutIntent(candidate: WorkoutCandidate, userText: string): WorkoutCandidate {
+  return withResolvedWorkoutLocation(withResolvedWorkoutModality(candidate, userText), userText);
+}
+
+function withResolvedWorkoutModality(candidate: WorkoutCandidate, userText: string): WorkoutCandidate {
+  if (explicitWalkIntent(userText)) {
+    const easy = /\b(easy|low|recovery|recover|gentle|light)\b/i.test(userText);
+    return {
+      ...candidate,
+      activityType: "walk",
+      title: easy ? "Recovery Walk" : "Walk",
+      estimatedElevationMeters: null,
+      purpose: candidate.purpose || (easy ? "Recovery support" : "Walking"),
+    };
+  }
+  return candidate;
+}
+
+function explicitWalkIntent(text: string) {
+  const lower = text.toLowerCase();
+  return /\bwalk(?:ing|s)?\b/.test(lower) && !/\bhik(?:e|ing|es)?\b/.test(lower);
+}
+
+function resolvedCandidateLocationLabel(candidate: WorkoutCandidateInput) {
+  const explicitLocation = compactNullableText(candidate.plannedLocationLabel);
+  const candidateText = [
+    explicitLocation,
+    candidate.title,
+    candidate.activityType,
+    candidate.purpose,
+    JSON.stringify(candidate.prescription ?? {}),
+  ].filter(Boolean).join(" ");
+  const knownRouteLocation = knownRouteLocationLabel(candidateText);
+  if (knownRouteLocation) return knownRouteLocation;
+  if (explicitLocation) return nearestCityLocationLabel(explicitLocation) ?? explicitLocation;
+  return locationLabelFromWorkoutText(candidateText);
 }
 
 function looksLikeWorkoutDescription(text: string) {
@@ -4351,6 +4412,61 @@ function distanceKilometersFromText(text: string) {
   const shorthand = text.match(/(\d+(?:[.,]\d+)?)\s*k\b(?!\s*m)/);
   if (shorthand) return parsedNumber(shorthand[1]);
   return null;
+}
+
+function locationLabelFromWorkoutText(text: string) {
+  const knownRouteLocation = knownRouteLocationLabel(text);
+  if (knownRouteLocation) return knownRouteLocation;
+
+  const normalized = text.replace(/[.,;]+$/g, "").replace(/\s+/g, " ").trim();
+  const explicitMatch = normalized.match(/\b(?:in|at|near|around)\s+([a-z][a-z\s.'-]{1,48})$/i);
+  const rawLocation = explicitMatch?.[1] ?? normalized.match(/\b(?:run|ride|bike|cycle|swim|row|hike|walk|strength|lift|gym|mobility|yoga|pilates|stretch|climb|boulder|workout|session)\b[\s\S]*?\b(?:zone\s*2|z2|easy|low|recovery|moderate|steady|tempo|threshold|hard|high|heavy|intervals?|vo2|max|\d+(?:[.,]\d+)?\s*(?:km|k|m|min|mins|minutes|h|hr|hrs|hour|hours))\s+([a-z][a-z\s.'-]{1,48})$/i)?.[1];
+  if (!rawLocation) return null;
+
+  const location = rawLocation
+    .replace(/\b(?:today|tomorrow|tonight|morning|afternoon|evening|zone|z2|easy|low|recovery|moderate|steady|tempo|threshold|hard|high|heavy|intervals?|vo2|max)\b.*$/i, "")
+    .replace(/\b(?:run|ride|bike|cycle|swim|row|hike|walk|strength|lift|gym|mobility|yoga|pilates|stretch|climb|boulder|workout|session)\b/gi, "")
+    .trim();
+  if (!location || location.split(/\s+/).length > 4) return null;
+  if (/^\d/.test(location)) return null;
+  return nearestCityLocationLabel(location) ?? titleCase(location);
+}
+
+function resolvedWorkoutLocationLabel(userText: string, candidateLocation: string | null | undefined) {
+  const knownRouteLocation = knownRouteLocationLabel(userText);
+  if (knownRouteLocation) return knownRouteLocation;
+  const parsedLocation = locationLabelFromWorkoutText(userText);
+  if (parsedLocation) return parsedLocation;
+  return compactNullableText(candidateLocation);
+}
+
+function knownRouteLocationLabel(text: string) {
+  const lower = normalizedLocationLookupText(text);
+  if (/\bcorona?l{1,2}acs?\b/.test(lower) && /\b(?:day|stage|etapa)?\s*1\b/.test(lower)) {
+    return "Escaldes-Engordany";
+  }
+  if (/\bcorona?l{1,2}acs?\b/.test(lower) && /\bandorra\b/.test(lower)) {
+    return "Escaldes-Engordany";
+  }
+  return null;
+}
+
+function nearestCityLocationLabel(location: string) {
+  const normalized = normalizedLocationLookupText(location);
+  if (normalized === "andorra" || normalized === "andorra la vella") {
+    return "Andorra la Vella";
+  }
+  return null;
+}
+
+function normalizedLocationLookupText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function elevationMetersFromText(text: string) {
@@ -4824,7 +4940,7 @@ function generatedWorkoutKey(workout: GeneratedWorkout) {
 }
 
 const workoutTaxonomyRules =
-  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery. Always include estimatedDistanceKilometers and estimatedElevationMeters in workout candidate JSON, using null when unknown or not applicable. For user-authored hikes and rides, parse route distance/elevation when provided. Do not invent elevation for routine AI-planned rides such as 1h Base Ride, Recovery Ride, Tempo Ride, or Intervals Ride; only include ride elevation when the user supplied it or route context explicitly exists. Hike and ride intensity should account for objective route load: long distance or large elevation can upgrade Zone 2/easy work to mid/high.";
+  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Walks use Walk or Recovery Walk; never convert an explicit walk request into a hike unless the user also says hike. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery. Always include estimatedDistanceKilometers and estimatedElevationMeters in workout candidate JSON, using null when unknown or not applicable. For user-authored hikes and rides, parse route distance/elevation when provided. Do not invent elevation for routine AI-planned rides such as 1h Base Ride, Recovery Ride, Tempo Ride, or Intervals Ride; only include ride elevation when the user supplied it or route context explicitly exists. Hike and ride intensity should account for objective route load: long distance or large elevation can upgrade Zone 2/easy work to mid/high.";
 
 function workoutCardFields(input: {
   scheduledDate: string;
@@ -4914,6 +5030,10 @@ function normalizedWorkoutTitle(
     if (duration >= 90 || /long/.test(text)) return "Long Ride";
     if (/tempo|threshold|steady/.test(text)) return "Tempo Ride";
     return "Base Ride";
+  }
+
+  if (activity === "walk" || /\bwalk/.test(text)) {
+    return /recover|easy|low|gentle|light/.test(text) ? "Recovery Walk" : "Walk";
   }
 
   if (activity === "hike" || /hik/.test(text)) {
@@ -8329,8 +8449,8 @@ function normalizeActivity(value: string) {
   if (lower.includes("run")) return "run";
   if (lower.includes("swim")) return "swim";
   if (lower.includes("row")) return "row";
-  if (lower.includes("hike") || lower.includes("hik")) return "hike";
   if (lower.includes("walk")) return "walk";
+  if (lower.includes("hike") || lower.includes("hik")) return "hike";
   if (lower.includes("climb") || lower.includes("boulder")) return "climb";
   if (lower.includes("strength") || lower.includes("traditional") || lower.includes("lift")) return "strength";
   if (lower.includes("mobility") || lower.includes("yoga") || lower.includes("stretch")) return "mobility";
