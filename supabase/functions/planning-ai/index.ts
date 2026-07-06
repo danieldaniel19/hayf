@@ -6,6 +6,7 @@ type PlanningTask =
   | "accept_strategy_and_create_initial_plan"
   | "sync_healthkit_and_reconcile"
   | "refresh_plan_window"
+  | "refresh_workout_weather_forecasts"
   | "generate_weekly_plan_targets"
   | "record_plan_edit"
   | "record_weekly_plan_constraint"
@@ -253,7 +254,34 @@ type PlanningScope = {
   strategy: Record<string, any>;
   timezone: string;
   homeLocationLabel: string | null;
+  weatherSensitive: boolean;
   block: Record<string, any>;
+};
+
+type OpenMeteoLocation = {
+  name: string;
+  country?: string;
+  admin1?: string;
+  latitude: number;
+  longitude: number;
+};
+
+type OpenMeteoDailyForecast = {
+  source: "open-meteo";
+  fetchedAt: string;
+  forecastDate: string;
+  locationLabel: string;
+  latitude: number;
+  longitude: number;
+  temperatureCelsius: number;
+  temperatureUnit: "C";
+  conditionCode: number;
+  conditionLabel: string;
+  conditionEmoji: string;
+  precipitationProbability: number | null;
+  precipitationMm: number | null;
+  windKph: number | null;
+  outdoorRisk: "ok" | "watch" | "miserable";
 };
 
 type EditRiskKind = "compressed_recovery" | "cumulative_load" | "goal_drift" | "weekly_imbalance";
@@ -754,6 +782,8 @@ async function handleTask(args: {
       return syncHealthKitAndReconcile(admin, userID!, requestBody, model);
     case "refresh_plan_window":
       return refreshPlanWindow(admin, userID!, requestBody, model, "user");
+    case "refresh_workout_weather_forecasts":
+      return refreshWorkoutWeatherForecasts(admin, userID!, requestBody);
     case "generate_weekly_plan_targets":
       return generateWeeklyPlanTargetsForVisiblePlan(admin, userID!, requestBody, model);
     case "record_plan_edit":
@@ -916,6 +946,7 @@ async function acceptStrategyAndCreateInitialPlan(
     strategy,
     timezone,
     homeLocationLabel: profile?.main_city ?? null,
+    weatherSensitive: onboardingHasWeatherBlocker(onboarding),
     block: {
       id: strategy.id,
       kind: goal.goal_kind,
@@ -1073,6 +1104,95 @@ async function refreshPlanWindow(
   return refreshPlanWindowForUser(admin, userID, requestBody.windowStart, model, trigger);
 }
 
+async function refreshWorkoutWeatherForecasts(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const scope = await loadActivePlanningScope(admin, userID);
+  const timezone = requestBody.deviceTimezone || scope.timezone || "UTC";
+  const start = parseDateOnly(requestBody.windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
+  const window = twoWeekWindow(start);
+  const today = isoDate(todayInTimezone(timezone));
+  const weeklyPlans = (await visibleWeeklyPlans(admin, userID, scope.strategy.id, window))
+    .filter((plan: Record<string, any>) => plan.status === "committed" || plan.status === "draft");
+  const weeklyPlanIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+
+  if (weeklyPlanIDs.length === 0) {
+    return {
+      userID,
+      model: "open-meteo",
+      fitnessStrategyID: scope.strategy.id,
+      window,
+      refreshed: 0,
+      skipped: 0,
+      failed: [],
+    };
+  }
+
+  const workouts = await list(
+    admin
+      .from("planned_workouts")
+      .select("id,scheduled_date,planned_location_label,weather_forecast_json,status")
+      .eq("user_id", userID)
+      .in("weekly_plan_id", weeklyPlanIDs)
+      .gte("scheduled_date", today)
+      .lte("scheduled_date", window.end)
+      .not("status", "in", "(deleted,superseded,missed,done)")
+      .order("scheduled_date", { ascending: true })
+      .order("sequence_order", { ascending: true }),
+  );
+
+  const geocodeCache = new Map<string, OpenMeteoLocation | null>();
+  const forecastCache = new Map<string, OpenMeteoDailyForecast | null>();
+  const refreshed: string[] = [];
+  const failed: Array<{ workoutID: string; locationLabel: string; error: string }> = [];
+  let skipped = 0;
+
+  for (const workout of workouts) {
+    const locationLabel = compactNullableText(workout.planned_location_label) ?? scope.homeLocationLabel;
+    if (!locationLabel) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const forecast = await fetchOpenMeteoWorkoutForecast(
+        locationLabel,
+        String(workout.scheduled_date ?? ""),
+        geocodeCache,
+        forecastCache,
+      );
+      if (!forecast) {
+        skipped += 1;
+        continue;
+      }
+
+      await throwOnError(
+        admin
+          .from("planned_workouts")
+          .update({ weather_forecast_json: forecast })
+          .eq("id", workout.id)
+          .eq("user_id", userID),
+      );
+      refreshed.push(workout.id);
+    } catch (error) {
+      failed.push({ workoutID: workout.id, locationLabel, error: errorMessage(error) });
+    }
+  }
+
+  return {
+    userID,
+    model: "open-meteo",
+    fitnessStrategyID: scope.strategy.id,
+    window,
+    refreshed: refreshed.length,
+    refreshedWorkoutIDs: refreshed,
+    skipped,
+    failed,
+  };
+}
+
 async function generateWeeklyPlanTargetsForVisiblePlan(
   admin: SupabaseAdminClient,
   userID: string,
@@ -1204,6 +1324,66 @@ async function pendingManualReviewState(
   };
 }
 
+async function reconcileVisibleWeeklyPlanLifecycle(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  window: { start: string; end: string },
+) {
+  const currentWeekStart = window.start;
+  const nextWeekStart = isoDate(addDays(parseDateOnly(window.start) ?? new Date(), 7));
+  const plans = (await visibleWeeklyPlans(admin, userID, strategyID, window))
+    .filter((plan: Record<string, any>) => plan.status === "committed" || plan.status === "draft");
+  const currentPlan = plans.find((plan: Record<string, any>) => plan.week_start_date === currentWeekStart) ?? null;
+  const nextPlan = plans.find((plan: Record<string, any>) => plan.week_start_date === nextWeekStart) ?? null;
+  const promotedAt = new Date().toISOString();
+
+  if (currentPlan && currentPlan.status !== "committed") {
+    await throwOnError(
+      admin
+        .from("weekly_plans")
+        .update({ status: "committed", promoted_at: currentPlan.promoted_at ?? promotedAt })
+        .eq("id", currentPlan.id)
+        .eq("user_id", userID),
+    );
+    currentPlan.status = "committed";
+    currentPlan.promoted_at = currentPlan.promoted_at ?? promotedAt;
+  }
+
+  if (currentPlan) {
+    await throwOnError(
+      admin
+        .from("weekly_plans")
+        .update({ status: "archived" })
+        .eq("user_id", userID)
+        .eq("fitness_strategy_id", strategyID)
+        .eq("status", "committed")
+        .neq("id", currentPlan.id),
+    );
+  }
+
+  if (nextPlan && nextPlan.status !== "draft" && nextPlan.id !== currentPlan?.id) {
+    await throwOnError(
+      admin
+        .from("weekly_plans")
+        .update({ status: "draft", promoted_at: null })
+        .eq("id", nextPlan.id)
+        .eq("user_id", userID),
+    );
+    nextPlan.status = "draft";
+    nextPlan.promoted_at = null;
+  }
+
+  return {
+    currentWeekStart,
+    nextWeekStart,
+    currentPlanID: currentPlan?.id ?? null,
+    nextPlanID: nextPlan?.id ?? null,
+    hasCurrentCommittedPlan: Boolean(currentPlan),
+    hasNextDraftPlan: Boolean(nextPlan),
+  };
+}
+
 async function refreshPlanWindowForUser(
   admin: SupabaseAdminClient,
   userID: string,
@@ -1216,16 +1396,20 @@ async function refreshPlanWindowForUser(
   const timezone = scope.timezone || "UTC";
   const start = parseDateOnly(windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
   const window = twoWeekWindow(start);
+  const lifecycle = await reconcileVisibleWeeklyPlanLifecycle(admin, userID, scope.strategy.id, window);
   const existingWeeklyPlans = (await visibleWeeklyPlans(admin, userID, scope.strategy.id, window))
     .filter((plan: Record<string, any>) => plan.status === "committed" || plan.status === "draft");
   const existingWeeklyPlanIDs = existingWeeklyPlans.map((plan: Record<string, any>) => plan.id);
+  const currentWeekPlan = existingWeeklyPlans.find((plan: Record<string, any>) => plan.week_start_date === lifecycle.currentWeekStart) ?? null;
+  const nextWeekPlan = existingWeeklyPlans.find((plan: Record<string, any>) => plan.week_start_date === lifecycle.nextWeekStart) ?? null;
+  const windowAlreadyExists = Boolean(currentWeekPlan && nextWeekPlan);
+  const shouldOnlyGenerateMissingDraft = Boolean(currentWeekPlan && !nextWeekPlan);
   const pendingManualReview = await pendingManualReviewState(
     admin,
     userID,
     scope.strategy.id,
     existingWeeklyPlanIDs,
   );
-  const windowAlreadyExists = existingWeeklyPlans.length >= 2;
 
   if (existingWeeklyPlanIDs.length > 0) {
     await ensureWeeklyTargetsForPlans(admin, {
@@ -1237,7 +1421,68 @@ async function refreshPlanWindowForUser(
     });
   }
 
-  if (pendingManualReview.hasPending) {
+  if (shouldOnlyGenerateMissingDraft) {
+    const latestSnapshot = await maybeSingle(
+      admin
+        .from("health_feature_snapshots")
+        .select()
+        .eq("user_id", userID)
+        .order("generated_at", { ascending: false })
+        .limit(1),
+    );
+    const generated = fallbackPlanFromBlock(scope.block, start);
+    const missingDraftPlan = {
+      ...generated,
+      rhythms: generated.rhythms.filter((rhythm) => rhythm.weekStartDate === lifecycle.nextWeekStart),
+    };
+    const refreshedWeeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
+      userID,
+      strategyID: scope.strategy.id,
+      rhythms: missingDraftPlan.rhythms,
+      source: "replanned",
+      committedWeekStart: isoDate(start),
+      ownerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
+      homeLocationLabel: scope.homeLocationLabel,
+    });
+    const duplicateGeneratedWorkouts = await cleanupDuplicateGeneratedPlanWorkouts(admin, userID, scope.strategy.id, window);
+    await generateAndPersistWeeklyTargets(admin, {
+      userID,
+      goal: scope.goal,
+      strategy: scope.strategy,
+      weeklyPlans: refreshedWeeklyPlans,
+      healthSnapshot: latestSnapshot?.snapshot_json ?? null,
+      acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+      model,
+    });
+    await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), timezone));
+
+    const event = await createPlanEvent(admin, {
+      userID,
+      fitnessStrategyID: scope.strategy.id,
+      eventType: "window_refreshed",
+      payload: {
+        trigger,
+        usedFallback: true,
+        reason: "missing_next_draft_created",
+        window,
+        currentWeekPlanID: currentWeekPlan.id,
+        nextWeekPlanIDs: refreshedWeeklyPlans.map((plan: Record<string, any>) => plan.id),
+        duplicateGeneratedWorkouts,
+      },
+    });
+
+    return {
+      userID,
+      model: "deterministic-fallback",
+      usedFallback: true,
+      reason: "missing_next_draft_created",
+      fitnessStrategyID: scope.strategy.id,
+      eventID: event.id,
+      plan: missingDraftPlan,
+    };
+  }
+
+  if (pendingManualReview.hasPending && windowAlreadyExists) {
     const event = await createPlanEvent(admin, {
       userID,
       fitnessStrategyID: scope.strategy.id,
@@ -1366,8 +1611,24 @@ async function refreshPlanWindowForUser(
     generated = fallbackPlanFromBlock(scope.block, start);
   }
   generated = alignGeneratedPlanToWeeklyTargets(generated, weeklyTargetConstraints);
+  if (shouldOnlyGenerateMissingDraft) {
+    generated = {
+      ...generated,
+      rhythms: generated.rhythms.filter((rhythm) => rhythm.weekStartDate === lifecycle.nextWeekStart),
+    };
+    if (generated.rhythms.length === 0) {
+      generated = {
+        ...fallbackPlanFromBlock(scope.block, start),
+        rhythms: fallbackPlanFromBlock(scope.block, start).rhythms.filter((rhythm) => rhythm.weekStartDate === lifecycle.nextWeekStart),
+      };
+      usedFallback = true;
+    }
+  }
 
-  const planIDs = weeklyPlans.map((plan: Record<string, any>) => plan.id);
+  const plansToReplace = shouldOnlyGenerateMissingDraft
+    ? weeklyPlans.filter((plan: Record<string, any>) => plan.week_start_date === lifecycle.nextWeekStart)
+    : weeklyPlans;
+  const planIDs = plansToReplace.map((plan: Record<string, any>) => plan.id);
   if (planIDs.length > 0) {
     await throwOnError(
       admin
@@ -1382,16 +1643,18 @@ async function refreshPlanWindowForUser(
     );
   }
 
-  await throwOnError(
-    admin
+  let weeklyPlanSupersedeQuery = admin
       .from("weekly_plans")
       .update({ status: "superseded" })
       .eq("user_id", userID)
       .eq("fitness_strategy_id", scope.strategy.id)
       .gte("week_start_date", window.start)
       .lte("week_start_date", window.end)
-      .in("status", ["committed", "draft"]),
-  );
+      .in("status", ["committed", "draft"]);
+  if (shouldOnlyGenerateMissingDraft && currentWeekPlan?.id) {
+    weeklyPlanSupersedeQuery = weeklyPlanSupersedeQuery.neq("id", currentWeekPlan.id);
+  }
+  await throwOnError(weeklyPlanSupersedeQuery);
 
   const refreshedWeeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
     userID,
@@ -2496,15 +2759,16 @@ async function recommendWorkoutReplacements(
     weeklyRhythms: weeklyPlans.map(weeklyPlanAsRhythm),
     userIntent: requestBody.textContext || "I do not want to do this workout in this slot.",
     window,
+    weatherContext: await planningWeatherContextForDate(scope, workout.scheduled_date, workout.planned_location_label, workout.weather_forecast_json),
   };
 
   let candidates: ReplacementCandidate[];
   let usedFallback = false;
   try {
-    candidates = sanitizeReplacementCandidates(await runReplacementGeneration(context, model), workout);
+    candidates = sanitizeReplacementCandidates(await runReplacementGeneration(context, model), workout, surroundingWorkouts, context.weatherContext);
   } catch (error) {
     usedFallback = true;
-    candidates = fallbackReplacementCandidates(workout, surroundingWorkouts);
+    candidates = fallbackReplacementCandidates(workout, surroundingWorkouts, context.weatherContext);
     await insertTrace(admin, {
       userID,
       task: "recommend_workout_replacements",
@@ -2538,17 +2802,17 @@ async function recommendWorkoutAdditions(
 
   const scope = await loadActivePlanningScope(admin, userID);
   throwIfPastPlanningDate(scheduledDate, scope.timezone || "UTC");
-  const context = await loadWorkoutPlanningContext(admin, userID, scope, scheduledDate);
+  const context = {
+    ...await loadWorkoutPlanningContext(admin, userID, scope, scheduledDate),
+    userIntent: requestBody.textContext || "I feel like working out on this day, but I want HAYF to pick something that fits the plan.",
+  };
 
   let candidates: WorkoutCandidate[];
   let usedFallback = false;
   try {
     candidates = sanitizeWorkoutCandidates(
       await runWorkoutAdditionGeneration(
-        {
-          ...context,
-          userIntent: requestBody.textContext || "I feel like working out on this day, but I want HAYF to pick something that fits the plan.",
-        },
+        context,
         model,
       ),
       fallbackAdditionCandidates(context),
@@ -2635,7 +2899,7 @@ async function interpretWorkoutDescription(
       errorMessage: errorMessage(error),
     });
   }
-  candidate = withResolvedWorkoutIntent(candidate, textContext);
+  candidate = withResolvedWorkoutIntent(candidate, textContext, scope.homeLocationLabel);
 
   return {
     userID,
@@ -3885,7 +4149,7 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
             task: "recommend_workout_replacements",
             context,
             rules:
-              `Return 2-3 second-best options for the same date/slot. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.`,
+              `Return 2-3 second-best options for the same date/slot. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. If context.weatherContext.shouldAvoidOutdoor is true, prefer indoor gym, strength, mobility, or recovery options unless userIntent explicitly asks for outdoor training. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.`,
           }),
         },
       ],
@@ -3935,7 +4199,7 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
             task: "recommend_workout_additions",
             context,
             rules:
-              `Return 2-3 useful options for the selected date. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.`,
+              `Return 2-3 useful options for the selected date. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. If context.weatherContext.shouldAvoidOutdoor is true, prefer indoor gym, strength, mobility, or recovery options unless userIntent explicitly asks for outdoor training. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.`,
           }),
         },
       ],
@@ -3985,7 +4249,7 @@ async function runWorkoutDescriptionInterpretation(context: Record<string, unkno
             task: "interpret_workout_description",
             context,
             rules:
-              `Return one compact candidate in the same format as suggestion cards. ${workoutTaxonomyRules} Preserve concrete distance, elevation, duration, intensity, modality, user-authored route/event names, and any explicit city/place/location. Set plannedLocationLabel to the explicit location when the user names one; otherwise set it to null. Do not copy the home location into plannedLocationLabel unless the user explicitly says it. Keep the title short, no em dashes; use commas or parentheses only for concrete user details. Rationale and weeklyImpact must each be one short sentence under 14 words.`,
+              `Return one compact candidate in the same format as suggestion cards. ${workoutTaxonomyRules} Preserve concrete distance, elevation, duration, intensity, modality, and user-authored route/event names. For route phrases like "from City A to City B and back" or "City A to City B", plannedLocationLabel should be the start city only; if that start city matches context.homeLocationLabel, set plannedLocationLabel to null. Set plannedLocationLabel to an explicit non-home city/place only when the workout starts away from home. If context.weatherContext.shouldAvoidOutdoor is true and the user's text does not explicitly request outdoor training, prefer an indoor interpretation. Keep the title short, no em dashes; use commas or parentheses only for concrete user details. Rationale and weeklyImpact must each be one short sentence under 14 words.`,
           }),
         },
       ],
@@ -4016,14 +4280,16 @@ async function runWorkoutDescriptionInterpretation(context: Record<string, unkno
 function sanitizeReplacementCandidates(
   generated: { candidates?: ReplacementCandidateInput[] },
   workout: Record<string, any>,
+  surroundingWorkouts: Record<string, any>[] = [],
+  weatherContext: Record<string, any> | null = null,
 ): ReplacementCandidate[] {
   const candidates = Array.isArray(generated.candidates) ? generated.candidates : [];
-  const fallbacks = fallbackReplacementCandidates(workout, []);
+  const fallbacks = fallbackReplacementCandidates(workout, surroundingWorkouts, weatherContext);
   const sanitized = candidates.slice(0, 3).map((candidate, index) =>
     sanitizeWorkoutCandidate(candidate, fallbacks[index] ?? fallbackReplacementCandidate(workout, index), `candidate-${index + 1}`)
   );
 
-  return sanitized.length > 0 ? sanitized : fallbackReplacementCandidates(workout, []);
+  return sanitized.length > 0 ? sanitized : fallbacks;
 }
 
 function sanitizeWorkoutCandidates(
@@ -4099,13 +4365,48 @@ function sentenceCase(value: string) {
   return trimmed.charAt(0).toLowerCase() + trimmed.slice(1);
 }
 
-function fallbackReplacementCandidates(workout: Record<string, any>, surroundingWorkouts: Record<string, any>[]): ReplacementCandidate[] {
+function fallbackReplacementCandidates(
+  workout: Record<string, any>,
+  surroundingWorkouts: Record<string, any>[],
+  weatherContext: Record<string, any> | null = null,
+): ReplacementCandidate[] {
   const duration = Math.max(15, Math.round((workout.duration_minutes ?? 30) * 0.7));
   const originalType = normalizeActivity(workout.activity_type ?? "");
+  const avoidOutdoor = weatherContext?.shouldAvoidOutdoor === true;
   const hasStrengthNearby = surroundingWorkouts.some((item) =>
     item.id !== workout.id && /strength|lift/.test(`${item.activity_type ?? ""} ${item.title ?? ""}`.toLowerCase())
   );
   const aerobicType = /run/.test(originalType) ? "run" : "ride";
+  if (avoidOutdoor && isOutdoorWorkoutActivity(originalType)) {
+    return [
+      {
+        id: "candidate-1",
+        title: "Full Body A",
+        activityType: "strength",
+        durationMinutes: duration,
+        intensityLabel: "Moderate",
+        purpose: "Indoor strength",
+        plannedLocationLabel: null,
+        prescription: fallbackPrescription("Full Body A", "strength", "Moderate"),
+        fuelingSummary: fuelingSummary("strength", "Moderate"),
+        rationale: "Weather makes indoor strength the safer second-best option.",
+        weeklyImpact: "Keeps useful load without forcing outdoor conditions.",
+      },
+      {
+        id: "candidate-2",
+        title: "Mobility reset",
+        activityType: "mobility",
+        durationMinutes: Math.min(duration, 30),
+        intensityLabel: "Low",
+        purpose: "Recovery support",
+        plannedLocationLabel: null,
+        prescription: fallbackPrescription("Mobility reset", "mobility", "Low"),
+        fuelingSummary: fuelingSummary("mobility", "Low"),
+        rationale: "This protects consistency without fighting the weather.",
+        weeklyImpact: "Low recovery load; the week can usually stay intact.",
+      },
+    ];
+  }
   const candidates: ReplacementCandidate[] = [
     {
       id: "candidate-1",
@@ -4195,10 +4496,14 @@ async function loadWorkoutPlanningContext(
   ]);
   const weeklyRhythms = weeklyPlans.map(weeklyPlanAsRhythm);
   const weeklyPlan = weeklyPlans.find((plan: Record<string, any>) => plan.week_start_date === weekStart) ?? null;
+  const dateForecastWorkout = surroundingWorkouts.find((workout: Record<string, any>) =>
+    workout.scheduled_date === scheduledDate && workout.weather_forecast_json && Object.keys(workout.weather_forecast_json).length > 0
+  );
 
   return {
     block: scope.block,
     strategy: scope.strategy,
+    homeLocationLabel: scope.homeLocationLabel,
     scheduledDate,
     weekStart,
     weeklyPlan,
@@ -4207,6 +4512,12 @@ async function loadWorkoutPlanningContext(
     phases,
     weeklyRhythms,
     window,
+    weatherContext: await planningWeatherContextForDate(
+      scope,
+      scheduledDate,
+      dateForecastWorkout?.planned_location_label ?? null,
+      dateForecastWorkout?.weather_forecast_json ?? null,
+    ),
   };
 }
 
@@ -4215,6 +4526,7 @@ function fallbackAdditionCandidates(context: Record<string, any>): WorkoutCandid
   const weekStart = startOfWeek(parseDateOnly(scheduledDate) ?? new Date());
   const weekWorkouts = workoutsForWeek(context.surroundingWorkouts ?? [], weekStart);
   const dateWorkouts = (context.surroundingWorkouts ?? []).filter((workout: Record<string, any>) => workout.scheduled_date === scheduledDate);
+  const avoidOutdoor = context.weatherContext?.shouldAvoidOutdoor === true && !explicitOutdoorIntent(String(context.userIntent ?? ""));
   const hasStrength = weekWorkouts.some((workout: Record<string, any>) => trainingProfile(workout).dimensions.includes("neuromuscular"));
   const hasEndurance = weekWorkouts.some((workout: Record<string, any>) => trainingProfile(workout).dimensions.includes("endurance"));
   const hasHardNearby = weekWorkouts.some((workout: Record<string, any>) => {
@@ -4223,6 +4535,14 @@ function fallbackAdditionCandidates(context: Record<string, any>): WorkoutCandid
   });
 
   const candidates: WorkoutCandidate[] = [];
+  if (avoidOutdoor) {
+    candidates.push(additionCandidate("Full Body A", "strength", 40, "Moderate", "Indoor strength", "Weather makes indoor strength the safer useful option.", "Adds manageable load without relying on outdoor conditions."));
+    candidates.push(additionCandidate("Mobility reset", "mobility", 25, "Low", "Recovery support", "This protects consistency without fighting the weather.", "Low recovery load; the rest of the week should usually stay intact."));
+    if (hasStrength) {
+      candidates.push(additionCandidate("Gym cardio", "indoor_cycling", 30, "Zone 2", "Aerobic base", "This keeps endurance indoors while conditions are poor.", "Adds controlled endurance load without changing the week much."));
+    }
+    return candidates.slice(0, 3).map((candidate, index) => ({ ...candidate, id: `candidate-${index + 1}` }));
+  }
   if (dateWorkouts.length > 0 || hasHardNearby) {
     candidates.push(additionCandidate("Mobility reset", "mobility", 25, "Low", "Recovery support", "This keeps the added day useful without crowding nearby load.", "Low recovery load; the rest of the week should usually stay intact."));
   }
@@ -4300,14 +4620,25 @@ function fallbackManualWorkoutCandidate(text: string, workout: Record<string, an
   };
 }
 
-function withResolvedWorkoutLocation(candidate: WorkoutCandidate, userText: string): WorkoutCandidate {
-  const resolvedLocation = resolvedWorkoutLocationLabel(userText, candidate.plannedLocationLabel);
-  if (!resolvedLocation || resolvedLocation === candidate.plannedLocationLabel) return candidate;
-  return { ...candidate, plannedLocationLabel: resolvedLocation };
+function withResolvedWorkoutLocation(candidate: WorkoutCandidate, userText: string, homeLocationLabel?: string | null): WorkoutCandidate {
+  const candidateLocation = compactNullableText(candidate.plannedLocationLabel);
+  if (candidateLocation) {
+    return {
+      ...candidate,
+      plannedLocationLabel: sameLocationLabel(candidateLocation, homeLocationLabel) ? null : candidateLocation,
+    };
+  }
+
+  const fallbackLocation = locationLabelFromWorkoutText(userText);
+  if (!fallbackLocation) return candidate;
+  return {
+    ...candidate,
+    plannedLocationLabel: sameLocationLabel(fallbackLocation, homeLocationLabel) ? null : fallbackLocation,
+  };
 }
 
-function withResolvedWorkoutIntent(candidate: WorkoutCandidate, userText: string): WorkoutCandidate {
-  return withResolvedWorkoutLocation(withResolvedWorkoutModality(candidate, userText), userText);
+function withResolvedWorkoutIntent(candidate: WorkoutCandidate, userText: string, homeLocationLabel?: string | null): WorkoutCandidate {
+  return withResolvedWorkoutLocation(withResolvedWorkoutModality(candidate, userText), userText, homeLocationLabel);
 }
 
 function withResolvedWorkoutModality(candidate: WorkoutCandidate, userText: string): WorkoutCandidate {
@@ -4338,9 +4669,7 @@ function resolvedCandidateLocationLabel(candidate: WorkoutCandidateInput) {
     candidate.purpose,
     JSON.stringify(candidate.prescription ?? {}),
   ].filter(Boolean).join(" ");
-  const knownRouteLocation = knownRouteLocationLabel(candidateText);
-  if (knownRouteLocation) return knownRouteLocation;
-  if (explicitLocation) return nearestCityLocationLabel(explicitLocation) ?? explicitLocation;
+  if (explicitLocation) return explicitLocation;
   return locationLabelFromWorkoutText(candidateText);
 }
 
@@ -4415,9 +4744,6 @@ function distanceKilometersFromText(text: string) {
 }
 
 function locationLabelFromWorkoutText(text: string) {
-  const knownRouteLocation = knownRouteLocationLabel(text);
-  if (knownRouteLocation) return knownRouteLocation;
-
   const normalized = text.replace(/[.,;]+$/g, "").replace(/\s+/g, " ").trim();
   const explicitMatch = normalized.match(/\b(?:in|at|near|around)\s+([a-z][a-z\s.'-]{1,48})$/i);
   const rawLocation = explicitMatch?.[1] ?? normalized.match(/\b(?:run|ride|bike|cycle|swim|row|hike|walk|strength|lift|gym|mobility|yoga|pilates|stretch|climb|boulder|workout|session)\b[\s\S]*?\b(?:zone\s*2|z2|easy|low|recovery|moderate|steady|tempo|threshold|hard|high|heavy|intervals?|vo2|max|\d+(?:[.,]\d+)?\s*(?:km|k|m|min|mins|minutes|h|hr|hrs|hour|hours))\s+([a-z][a-z\s.'-]{1,48})$/i)?.[1];
@@ -4429,34 +4755,26 @@ function locationLabelFromWorkoutText(text: string) {
     .trim();
   if (!location || location.split(/\s+/).length > 4) return null;
   if (/^\d/.test(location)) return null;
-  return nearestCityLocationLabel(location) ?? titleCase(location);
+  return titleCase(location);
 }
 
-function resolvedWorkoutLocationLabel(userText: string, candidateLocation: string | null | undefined) {
-  const knownRouteLocation = knownRouteLocationLabel(userText);
-  if (knownRouteLocation) return knownRouteLocation;
-  const parsedLocation = locationLabelFromWorkoutText(userText);
-  if (parsedLocation) return parsedLocation;
-  return compactNullableText(candidateLocation);
+function sameLocationLabel(left: string | null | undefined, right: string | null | undefined) {
+  const normalizedLeft = normalizedPrimaryLocationLabel(left);
+  const normalizedRight = normalizedPrimaryLocationLabel(right);
+  return Boolean(
+    normalizedLeft &&
+    normalizedRight &&
+    (
+      normalizedLeft === normalizedRight ||
+      normalizedLeft.startsWith(`${normalizedRight} `) ||
+      normalizedRight.startsWith(`${normalizedLeft} `)
+    ),
+  );
 }
 
-function knownRouteLocationLabel(text: string) {
-  const lower = normalizedLocationLookupText(text);
-  if (/\bcorona?l{1,2}acs?\b/.test(lower) && /\b(?:day|stage|etapa)?\s*1\b/.test(lower)) {
-    return "Escaldes-Engordany";
-  }
-  if (/\bcorona?l{1,2}acs?\b/.test(lower) && /\bandorra\b/.test(lower)) {
-    return "Escaldes-Engordany";
-  }
-  return null;
-}
-
-function nearestCityLocationLabel(location: string) {
-  const normalized = normalizedLocationLookupText(location);
-  if (normalized === "andorra" || normalized === "andorra la vella") {
-    return "Andorra la Vella";
-  }
-  return null;
+function normalizedPrimaryLocationLabel(value: string | null | undefined) {
+  const primary = compactNullableText(value)?.split(",")[0];
+  return primary ? normalizedLocationLookupText(primary) : null;
 }
 
 function normalizedLocationLookupText(value: string) {
@@ -4965,7 +5283,7 @@ function workoutCardFields(input: {
     estimated_distance_kilometers: distance,
     estimated_elevation_meters: elevation,
     planned_location_label: location,
-    weather_forecast_json: mockedWeatherForecast(input.scheduledDate, location),
+    weather_forecast_json: {},
   };
 }
 
@@ -5074,6 +5392,15 @@ function elevationEligibleActivity(activityType: string, title: string, purpose 
   return ["ride", "hike"].includes(activity);
 }
 
+function isOutdoorWorkoutActivity(activityType: string) {
+  const activity = normalizeActivity(activityType);
+  return ["ride", "run", "hike", "walk"].includes(activity);
+}
+
+function explicitOutdoorIntent(text: string) {
+  return /\b(run|ride|bike|cycle|hike|walk|outdoor|outside)\b/i.test(text);
+}
+
 function normalizedStrengthTitle(text: string) {
   const letter = (text.match(/\b([a-e])\b/i)?.[1] ?? "A").toUpperCase();
   if (/upper/.test(text)) return `Upper Body ${letter}`;
@@ -5092,25 +5419,308 @@ function compactCardWorkoutTitle(value: string) {
   return titleCase(words);
 }
 
-function mockedWeatherForecast(scheduledDate: string, locationLabel: string | null) {
-  const seed = Array.from(`${scheduledDate}|${locationLabel ?? "home"}`).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const conditions = [
-    { conditionEmoji: "☀️", conditionLabel: "Sunny" },
-    { conditionEmoji: "🌤", conditionLabel: "Partly cloudy" },
-    { conditionEmoji: "⛅", conditionLabel: "Cloudy" },
-    { conditionEmoji: "🌧", conditionLabel: "Rain" },
-  ];
-  const condition = conditions[seed % conditions.length];
+async function fetchOpenMeteoWorkoutForecast(
+  locationLabel: string,
+  scheduledDate: string,
+  geocodeCache: Map<string, OpenMeteoLocation | null>,
+  forecastCache: Map<string, OpenMeteoDailyForecast | null>,
+): Promise<OpenMeteoDailyForecast | null> {
+  const location = await geocodeOpenMeteoLocation(locationLabel, geocodeCache);
+  if (!location) return null;
+
+  const cacheKey = `${location.latitude.toFixed(4)},${location.longitude.toFixed(4)}|${scheduledDate}`;
+  if (forecastCache.has(cacheKey)) return forecastCache.get(cacheKey) ?? null;
+
+  const params = new URLSearchParams({
+    latitude: String(location.latitude),
+    longitude: String(location.longitude),
+    daily: [
+      "weather_code",
+      "temperature_2m_max",
+      "precipitation_probability_max",
+      "precipitation_sum",
+      "wind_speed_10m_max",
+    ].join(","),
+    timezone: "auto",
+    forecast_days: "16",
+    temperature_unit: "celsius",
+    wind_speed_unit: "kmh",
+    precipitation_unit: "mm",
+  });
+  const response = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
+  if (!response.ok) {
+    forecastCache.set(cacheKey, null);
+    return null;
+  }
+
+  const payload = await response.json();
+  const daily = payload?.daily ?? {};
+  const index = Array.isArray(daily.time) ? daily.time.indexOf(scheduledDate) : -1;
+  if (index < 0) {
+    forecastCache.set(cacheKey, null);
+    return null;
+  }
+
+  const conditionCode = finiteNumber(daily.weather_code?.[index]);
+  const temperature = finiteNumber(daily.temperature_2m_max?.[index]);
+  if (conditionCode == null || temperature == null) {
+    forecastCache.set(cacheKey, null);
+    return null;
+  }
+
+  const precipitationProbability = finiteNumber(daily.precipitation_probability_max?.[index]);
+  const precipitationMm = finiteNumber(daily.precipitation_sum?.[index]);
+  const windKph = finiteNumber(daily.wind_speed_10m_max?.[index]);
+  const condition = openMeteoCondition(Number(conditionCode));
+  const forecast: OpenMeteoDailyForecast = {
+    source: "open-meteo",
+    fetchedAt: new Date().toISOString(),
+    forecastDate: scheduledDate,
+    locationLabel: formattedOpenMeteoLocationLabel(location, locationLabel),
+    latitude: roundedCoordinate(location.latitude),
+    longitude: roundedCoordinate(location.longitude),
+    temperatureCelsius: Math.round(temperature),
+    temperatureUnit: "C",
+    conditionCode: Number(conditionCode),
+    conditionLabel: condition.label,
+    conditionEmoji: condition.emoji,
+    precipitationProbability,
+    precipitationMm,
+    windKph,
+    outdoorRisk: outdoorRiskForForecast(Number(conditionCode), temperature, precipitationProbability, precipitationMm, windKph),
+  };
+  forecastCache.set(cacheKey, forecast);
+  return forecast;
+}
+
+async function geocodeOpenMeteoLocation(
+  locationLabel: string,
+  geocodeCache: Map<string, OpenMeteoLocation | null>,
+): Promise<OpenMeteoLocation | null> {
+  const cacheKey = normalizedLocationLookupText(locationLabel);
+  if (!cacheKey) return null;
+  if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey) ?? null;
+
+  let best: { location: OpenMeteoLocation; score: number } | null = null;
+  for (const query of geocodeSearchQueries(locationLabel)) {
+    const results = await searchOpenMeteoLocations(query);
+    for (const result of results) {
+      const latitude = finiteNumber(result?.latitude);
+      const longitude = finiteNumber(result?.longitude);
+      if (latitude == null || longitude == null) continue;
+
+      const location: OpenMeteoLocation = {
+        name: compactNullableText(result.name) ?? query,
+        country: compactNullableText(result.country) ?? undefined,
+        admin1: compactNullableText(result.admin1) ?? undefined,
+        latitude,
+        longitude,
+      };
+      const score = geocodeResultScore(locationLabel, query, location);
+      if (!best || score > best.score) {
+        best = { location, score };
+      }
+    }
+
+    if (best && best.score >= 90) break;
+  }
+
+  const resolved = best && best.score >= 35 ? best.location : null;
+  geocodeCache.set(cacheKey, resolved);
+  return resolved;
+}
+
+async function searchOpenMeteoLocations(query: string) {
+  const params = new URLSearchParams({
+    name: query,
+    count: "5",
+    language: "en",
+    format: "json",
+  });
+  const response = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params.toString()}`);
+  if (!response.ok) return [];
+  const payload = await response.json();
+  return Array.isArray(payload?.results) ? payload.results : [];
+}
+
+function geocodeSearchQueries(locationLabel: string) {
+  const raw = compactNullableText(locationLabel);
+  if (!raw) return [];
+
+  const primary = compactNullableText(raw.split(",")[0]);
+  const cleaned = compactNullableText(normalizedLocationLookupText(raw).replace(/-/g, " "));
+  const cleanedPrimary = primary ? compactNullableText(normalizedLocationLookupText(primary).replace(/-/g, " ")) : null;
+  const repeatedLettersCollapsed = cleaned ? compactNullableText(cleaned.replace(/([a-z])\1+/g, "$1")) : null;
+  const tokenQueries = cleaned
+    ?.split(/\s+/)
+    .filter((token) => token.length >= 4 && !["city", "town", "near"].includes(token))
+    .slice(0, 2);
+
+  return uniqueCompactStrings([
+    raw,
+    primary,
+    cleaned,
+    cleanedPrimary,
+    repeatedLettersCollapsed,
+    ...(tokenQueries ?? []),
+  ]);
+}
+
+function geocodeResultScore(originalLabel: string, query: string, location: OpenMeteoLocation) {
+  const original = normalizedLocationLookupText(originalLabel).replace(/-/g, " ");
+  const normalizedQuery = normalizedLocationLookupText(query).replace(/-/g, " ");
+  const name = normalizedLocationLookupText(location.name).replace(/-/g, " ");
+  const admin = normalizedLocationLookupText(location.admin1 ?? "").replace(/-/g, " ");
+  const country = normalizedLocationLookupText(location.country ?? "").replace(/-/g, " ");
+  const haystack = [name, admin, country].filter(Boolean).join(" ");
+
+  let score = 0;
+  if (name === original || name === normalizedQuery) score += 100;
+  if (haystack.includes(original)) score += 70;
+  if (haystack.includes(normalizedQuery)) score += 60;
+  if (tokenOverlapScore(original, haystack) >= 0.8) score += 45;
+  if (tokenOverlapScore(normalizedQuery, haystack) >= 0.8) score += 35;
+  if (country && original.includes(country)) score += 15;
+  if (admin && original.includes(admin)) score += 10;
+  return score;
+}
+
+function tokenOverlapScore(needle: string, haystack: string) {
+  const tokens = needle.split(/\s+/).filter((token) => token.length > 1);
+  if (tokens.length === 0) return 0;
+  const matches = tokens.filter((token) => haystack.includes(token)).length;
+  return matches / tokens.length;
+}
+
+function uniqueCompactStrings(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const compact = compactNullableText(value);
+    if (!compact) continue;
+    const key = normalizedLocationLookupText(compact);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(compact);
+  }
+  return output;
+}
+
+function formattedOpenMeteoLocationLabel(location: OpenMeteoLocation, fallback: string) {
+  return [location.name, location.admin1, location.country]
+    .filter(Boolean)
+    .join(", ") || fallback;
+}
+
+function roundedCoordinate(value: number) {
+  return Math.round(value * 10_000) / 10_000;
+}
+
+function openMeteoCondition(code: number) {
+  if (code === 0) return { label: "Sunny", emoji: "☀️" };
+  if ([1, 2].includes(code)) return { label: "Partly cloudy", emoji: "🌤" };
+  if (code === 3) return { label: "Cloudy", emoji: "☁️" };
+  if ([45, 48].includes(code)) return { label: "Fog", emoji: "🌫" };
+  if ([51, 53, 55, 56, 57].includes(code)) return { label: "Drizzle", emoji: "🌦" };
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { label: "Rain", emoji: "🌧" };
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { label: "Snow", emoji: "🌨" };
+  if ([95, 96, 99].includes(code)) return { label: "Thunderstorm", emoji: "⛈" };
+  return { label: "Weather", emoji: "🌡" };
+}
+
+function outdoorRiskForForecast(
+  conditionCode: number,
+  temperatureCelsius: number,
+  precipitationProbability: number | null,
+  precipitationMm: number | null,
+  windKph: number | null,
+): "ok" | "watch" | "miserable" {
+  const heavyWeather = [65, 66, 67, 71, 73, 75, 77, 82, 85, 86, 95, 96, 99].includes(conditionCode);
+  if (
+    heavyWeather ||
+    (precipitationProbability ?? 0) >= 70 ||
+    (precipitationMm ?? 0) >= 5 ||
+    (windKph ?? 0) >= 35 ||
+    temperatureCelsius <= 0 ||
+    temperatureCelsius >= 32
+  ) {
+    return "miserable";
+  }
+  if ((precipitationProbability ?? 0) >= 40 || (precipitationMm ?? 0) >= 2 || (windKph ?? 0) >= 25) {
+    return "watch";
+  }
+  return "ok";
+}
+
+async function planningWeatherContextForDate(
+  scope: PlanningScope,
+  scheduledDate: string,
+  locationLabel: string | null | undefined,
+  storedForecast: unknown,
+) {
+  if (!scope.weatherSensitive) return null;
+
+  const location = compactNullableText(locationLabel) ?? scope.homeLocationLabel;
+  let forecast = storedOpenMeteoForecastForDate(storedForecast, scheduledDate);
+  if (!forecast && location) {
+    try {
+      forecast = await fetchOpenMeteoWorkoutForecast(
+        location,
+        scheduledDate,
+        new Map<string, OpenMeteoLocation | null>(),
+        new Map<string, OpenMeteoDailyForecast | null>(),
+      );
+    } catch {
+      forecast = null;
+    }
+  }
+
   return {
-    temperatureCelsius: 16 + (seed % 11),
-    ...condition,
-    source: "mock",
+    selectedBlocker: "Weather",
+    locationLabel: location,
+    forecast,
+    shouldAvoidOutdoor: forecast?.outdoorRisk === "miserable",
+    guidance:
+      "If shouldAvoidOutdoor is true, prefer indoor gym, strength, mobility, or recovery options unless the user explicitly asks for an outdoor workout.",
+  };
+}
+
+function storedOpenMeteoForecastForDate(value: unknown, scheduledDate: string): OpenMeteoDailyForecast | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const forecast = value as Record<string, unknown>;
+  if (forecast.source !== "open-meteo" || forecast.forecastDate !== scheduledDate) return null;
+  if (typeof forecast.conditionEmoji !== "string" || typeof forecast.conditionLabel !== "string") return null;
+  const temperature = finiteNumber(forecast.temperatureCelsius);
+  const conditionCode = finiteNumber(forecast.conditionCode);
+  if (temperature == null || conditionCode == null) return null;
+  return {
+    source: "open-meteo",
+    fetchedAt: String(forecast.fetchedAt ?? ""),
+    forecastDate: scheduledDate,
+    locationLabel: String(forecast.locationLabel ?? ""),
+    latitude: finiteNumber(forecast.latitude) ?? 0,
+    longitude: finiteNumber(forecast.longitude) ?? 0,
+    temperatureCelsius: temperature,
+    temperatureUnit: "C",
+    conditionCode,
+    conditionLabel: String(forecast.conditionLabel),
+    conditionEmoji: String(forecast.conditionEmoji),
+    precipitationProbability: finiteNumber(forecast.precipitationProbability),
+    precipitationMm: finiteNumber(forecast.precipitationMm),
+    windKph: finiteNumber(forecast.windKph),
+    outdoorRisk: forecast.outdoorRisk === "miserable" || forecast.outdoorRisk === "watch" ? forecast.outdoorRisk : "ok",
   };
 }
 
 function compactNullableText(value: unknown) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   return text.length > 0 ? text : null;
+}
+
+function onboardingHasWeatherBlocker(onboarding: Record<string, any> | null | undefined) {
+  const blockers = onboarding?.selected_answers?.blockers;
+  if (!Array.isArray(blockers)) return false;
+  return blockers.some((blocker) => String(blocker ?? "").trim().toLowerCase() === "weather");
 }
 
 function applyWeeklyConstraintsToGeneratedWorkouts(workouts: GeneratedWorkout[], constraints: Record<string, any>) {
@@ -6792,12 +7402,14 @@ async function loadActivePlanningScope(admin: SupabaseAdminClient, userID: strin
     "Active user goal not found",
   );
   const profile = await maybeSingle(admin.from("profiles").select("main_city").eq("id", userID));
+  const onboarding = await maybeSingle(admin.from("onboarding_profiles").select("selected_answers").eq("id", userID));
   const timezone = strategy.context_json?.timezone || "UTC";
   return {
     goal,
     strategy,
     timezone,
     homeLocationLabel: profile?.main_city ?? null,
+    weatherSensitive: onboardingHasWeatherBlocker(onboarding),
     block: {
       id: strategy.id,
       kind: goal.goal_kind,
@@ -8575,7 +9187,7 @@ function isSundayEveningInTimezone(timezone: string) {
   }).formatToParts(new Date());
   const weekday = parts.find((part) => part.type === "weekday")?.value;
   const hour = Number(parts.find((part) => part.type === "hour")?.value);
-  return weekday === "Sun" && hour === 21;
+  return weekday === "Sun" && hour >= 21;
 }
 
 async function maybeSingle(builder: any) {

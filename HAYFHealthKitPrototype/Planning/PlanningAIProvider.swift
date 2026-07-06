@@ -48,6 +48,17 @@ struct PlanningAIProvider {
         try await invoke(
             PlanningFunctionRequest(
                 task: .refreshPlanWindow,
+                deviceTimezone: TimeZone.current.identifier,
+                windowStart: windowStart.map(Self.dateOnlyFormatter.string(from:))
+            )
+        )
+    }
+
+    func refreshWorkoutWeatherForecasts(windowStart: Date? = nil) async throws -> PlanningFunctionResponse {
+        try await invoke(
+            PlanningFunctionRequest(
+                task: .refreshWorkoutWeatherForecasts,
+                deviceTimezone: TimeZone.current.identifier,
                 windowStart: windowStart.map(Self.dateOnlyFormatter.string(from:))
             )
         )
@@ -541,6 +552,7 @@ enum PlanningAITask: String, Codable {
     case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"
     case refreshPlanWindow = "refresh_plan_window"
+    case refreshWorkoutWeatherForecasts = "refresh_workout_weather_forecasts"
     case generateWeeklyPlanTargets = "generate_weekly_plan_targets"
     case recordPlanEdit = "record_plan_edit"
     case recordWeeklyPlanConstraint = "record_weekly_plan_constraint"

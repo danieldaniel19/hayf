@@ -223,7 +223,19 @@ struct PlanScreenView: View {
         allowWeeklyTargetBackfill: Bool,
         forceWeeklyTargetBackfill: Bool = false
     ) async {
-        await store.loadVisiblePlan()
+        if didLoad {
+            await store.loadVisiblePlan()
+            if store.activeBlock != nil {
+                await refreshPlanWindowIfPossible()
+                await store.loadVisiblePlan()
+                await refreshWorkoutWeatherForecastsIfPossible()
+                await store.loadVisiblePlan()
+            }
+        } else {
+            await refreshPlanWindowIfPossible()
+            await refreshWorkoutWeatherForecastsIfPossible()
+            await store.loadVisiblePlan()
+        }
         didLoad = true
 
         guard allowWeeklyTargetBackfill,
@@ -240,6 +252,30 @@ struct PlanScreenView: View {
         } catch {
             #if DEBUG
             print("Weekly target backfill failed: \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func refreshWorkoutWeatherForecastsIfPossible() async {
+        do {
+            _ = try await planningAIProvider.refreshWorkoutWeatherForecasts()
+        } catch is CancellationError {
+            return
+        } catch {
+            #if DEBUG
+            print("Weather forecast refresh failed: \(error.localizedDescription)")
+            #endif
+        }
+    }
+
+    private func refreshPlanWindowIfPossible() async {
+        do {
+            _ = try await planningAIProvider.refreshPlanWindow()
+        } catch is CancellationError {
+            return
+        } catch {
+            #if DEBUG
+            print("Plan window refresh failed: \(error.localizedDescription)")
             #endif
         }
     }
@@ -281,7 +317,7 @@ struct PlanScreenView: View {
                 ),
                 repairPolicy: .deferred
             )
-            await store.loadVisiblePlan()
+            await loadPlan(allowWeeklyTargetBackfill: false)
             movingWorkout = nil
             activeEditAnalysis = nil
             _ = outcome
@@ -310,7 +346,7 @@ struct PlanScreenView: View {
                 .deleteWorkout(plannedWorkoutID: workout.id),
                 repairPolicy: .deferred
             )
-            await store.loadVisiblePlan()
+            await loadPlan(allowWeeklyTargetBackfill: false)
             activeEditAnalysis = nil
             if movingWorkout?.id == workout.id {
                 movingWorkout = nil
@@ -425,7 +461,7 @@ struct PlanScreenView: View {
                     candidate: candidate,
                     repairPolicy: .deferred
                 )
-                await store.loadVisiblePlan()
+                await loadPlan(allowWeeklyTargetBackfill: false)
                 activeEditAnalysis = nil
                 if movingWorkout?.id == workout.id {
                     movingWorkout = nil
@@ -452,7 +488,7 @@ struct PlanScreenView: View {
                     candidate: candidate,
                     repairPolicy: .deferred
                 )
-                await store.loadVisiblePlan()
+                await loadPlan(allowWeeklyTargetBackfill: false)
                 activeEditAnalysis = nil
                 _ = outcome
                 markPlanReviewPending()
@@ -478,7 +514,7 @@ struct PlanScreenView: View {
 
         do {
             let outcome = try await planningAIProvider.createRepairProposalForPendingEdits()
-            await store.loadVisiblePlan()
+            await loadPlan(allowWeeklyTargetBackfill: false)
             if let proposal = outcome.proposal, proposal.mutationCount > 0 {
                 selectedReplanProposal = proposal
             } else if let proposal = store.pendingReplanProposals.first {
@@ -514,7 +550,7 @@ struct PlanScreenView: View {
             selectedReplanProposal = nil
             pendingPlanReview = nil
             planReviewConfirmationMessage = nil
-            await store.loadVisiblePlan()
+            await loadPlan(allowWeeklyTargetBackfill: false)
         } catch {
             store.errorMessage = error.localizedDescription
         }
@@ -555,7 +591,7 @@ struct PlanScreenView: View {
                 note: note
             )
             selectedConstraintDay = nil
-            await store.loadVisiblePlan()
+            await loadPlan(allowWeeklyTargetBackfill: false)
             markPlanReviewPending()
         } catch {
             store.errorMessage = error.localizedDescription
@@ -903,6 +939,12 @@ private struct PlanContentView: View {
                     replaceWorkout: replaceWorkout,
                     showDayActions: showDayActions
                 )
+                if showsOpenMeteoAttribution {
+                    Link("Weather by Open-Meteo", destination: URL(string: "https://open-meteo.com/")!)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(HAYFColor.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.top, 18)
@@ -919,6 +961,12 @@ private struct PlanContentView: View {
                     .padding(.top, 10)
                     .padding(.horizontal, 24)
             }
+        }
+    }
+
+    private var showsOpenMeteoAttribution: Bool {
+        workouts.contains { workout in
+            workout.weatherForecast?.planObjectValue["source"]?.planStringValue == "open-meteo"
         }
     }
 }
@@ -1795,7 +1843,7 @@ private struct PlanWorkoutDayRow: View {
                     }
 
                     if group.workouts.isEmpty {
-                        if !canShowDayActions {
+                        if !canShowDayActions && PlanDate.isPast(group.date) {
                             PlanHistoryEmptyRow()
                         }
                     } else {
@@ -2217,6 +2265,10 @@ private struct WorkoutCardBody<Accessory: View>: View {
     let minHeight: CGFloat
     let titleSize: CGFloat
     let titleWeight: Font.Weight
+    var borderColor: Color? = nil
+    var borderWidth: CGFloat? = nil
+    var backgroundTintColor: Color? = nil
+    var backgroundTintOpacity: Double? = nil
     @ViewBuilder let accessory: Accessory
 
     var body: some View {
@@ -2262,16 +2314,17 @@ private struct WorkoutCardBody<Accessory: View>: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(display.borderColor, lineWidth: display.borderWidth)
+                .stroke(borderColor ?? display.borderColor, lineWidth: borderWidth ?? display.borderWidth)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
     private var cardBackground: some View {
         HAYFColor.surface
 
-        if display.backgroundTintOpacity > 0 {
-            display.stateColor.opacity(display.backgroundTintOpacity)
+        if (backgroundTintOpacity ?? display.backgroundTintOpacity) > 0 {
+            (backgroundTintColor ?? display.stateColor).opacity(backgroundTintOpacity ?? display.backgroundTintOpacity)
         }
     }
 }
@@ -2305,9 +2358,10 @@ private struct PlanWorkoutCardPill: View {
 private struct WorkoutPillFlow: Layout {
     var spacing: CGFloat = 8
     var rowSpacing: CGFloat = 8
+    var fallbackWidth: CGFloat = 240
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        layout(in: proposal.width ?? .infinity, subviews: subviews).size
+        layout(in: proposedWidth(proposal.width), subviews: subviews).size
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -2321,7 +2375,7 @@ private struct WorkoutPillFlow: Layout {
     }
 
     private func layout(in availableWidth: CGFloat, subviews: Subviews) -> (size: CGSize, items: [(index: Int, origin: CGPoint, size: CGSize)]) {
-        let maxWidth = availableWidth.isFinite ? max(availableWidth, 1) : CGFloat.greatestFiniteMagnitude
+        let maxWidth = availableWidth.isFinite ? max(availableWidth, 1) : fallbackWidth
         var items: [(index: Int, origin: CGPoint, size: CGSize)] = []
         var x: CGFloat = 0
         var y: CGFloat = 0
@@ -2343,6 +2397,13 @@ private struct WorkoutPillFlow: Layout {
         }
 
         return (CGSize(width: usedWidth, height: y + rowHeight), items)
+    }
+
+    private func proposedWidth(_ width: CGFloat?) -> CGFloat {
+        guard let width, width.isFinite, width > 0 else {
+            return fallbackWidth
+        }
+        return width
     }
 }
 
@@ -2444,8 +2505,7 @@ private struct WorkoutCardDisplayModel {
         let location = plannedLocation ?? Self.compactOptionalString(source.fallbackLocationLabel)
         let forecast = PlanWorkoutForecastDisplay(
             storedForecast: source.weatherForecast,
-            scheduledDate: source.scheduledDate,
-            locationLabel: location
+            scheduledDate: source.scheduledDate
         )
         contextPills = [
             PlanWorkoutCardPillModel(emoji: forecast.emoji, text: forecast.temperatureText),
@@ -2480,25 +2540,7 @@ private struct WorkoutCardDisplayModel {
     }
 
     private static func resolvedPlannedLocationLabel(source: WorkoutCardDisplaySource) -> String? {
-        let routeLocation = knownRouteLocationLabel([
-            source.plannedLocationLabel,
-            source.title,
-            source.activityType,
-            source.purpose,
-            source.intensityLabel
-        ].compactMap { $0 }.joined(separator: " "))
-        return routeLocation ?? compactOptionalString(source.plannedLocationLabel)
-    }
-
-    private static func knownRouteLocationLabel(_ value: String) -> String? {
-        let normalized = normalizedLocation(value)
-        guard normalized.contains("coronalacs") || normalized.contains("coronallacs") else {
-            return nil
-        }
-        if normalized.contains("day 1") || normalized.contains("stage 1") || normalized.contains("andorra") {
-            return "Escaldes-Engordany"
-        }
-        return nil
+        compactOptionalString(source.plannedLocationLabel)
     }
 
     private static func normalizedLocation(_ value: String) -> String {
@@ -2536,18 +2578,20 @@ private struct PlanWorkoutForecastDisplay {
     let emoji: String
     let temperatureText: String
 
-    init(storedForecast: JSONValue?, scheduledDate: String, locationLabel: String?) {
+    init(storedForecast: JSONValue?, scheduledDate: String) {
         let object = storedForecast?.planObjectValue ?? [:]
-        let fallback = Self.mockForecast(scheduledDate: scheduledDate, locationLabel: locationLabel)
-        emoji = object["conditionEmoji"]?.planStringValue ?? fallback.emoji
-        let temperature = object["temperatureCelsius"]?.planNumberValue ?? fallback.temperature
-        temperatureText = "\(Int(temperature.rounded()))C"
-    }
+        guard
+            object["forecastDate"]?.planStringValue == scheduledDate,
+            let storedEmoji = object["conditionEmoji"]?.planStringValue,
+            let temperature = object["temperatureCelsius"]?.planNumberValue
+        else {
+            emoji = "🌡"
+            temperatureText = "—"
+            return
+        }
 
-    private static func mockForecast(scheduledDate: String, locationLabel: String?) -> (emoji: String, temperature: Double) {
-        let seed = "\(scheduledDate)|\(locationLabel ?? "home")".unicodeScalars.reduce(0) { $0 + Int($1.value) }
-        let emojis = ["☀️", "🌤", "⛅", "🌧"]
-        return (emojis[seed % emojis.count], Double(16 + (seed % 11)))
+        emoji = storedEmoji
+        temperatureText = "\(Int(temperature.rounded()))C"
     }
 }
 
@@ -2829,7 +2873,6 @@ private struct WorkoutCardTaxonomy {
         if lower.range(of: #"day\s*\d+"#, options: .regularExpression) != nil { return true }
         if lower.range(of: #"stage\s*\d+"#, options: .regularExpression) != nil { return true }
         if contains("event") || contains("race") || contains("route") { return true }
-        if lower.contains("coronalacs") { return true }
         return false
     }
 
@@ -3316,6 +3359,7 @@ private struct ManualWorkoutComposer: View {
                     candidate: previewCandidate,
                     scheduledDate: context.scheduledDate,
                     fallbackLocationLabel: fallbackLocationLabel,
+                    style: .manualPreview,
                     apply: { reviewCandidate(previewCandidate) }
                 )
             }
@@ -3375,9 +3419,15 @@ private struct WorkoutPlanningLoadingView: View {
 }
 
 private struct WorkoutCandidateCard: View {
+    enum Style {
+        case suggestion
+        case manualPreview
+    }
+
     let candidate: PlanningWorkoutCandidate
     let scheduledDate: String
     let fallbackLocationLabel: String?
+    var style: Style = .suggestion
     let apply: () -> Void
 
     private var display: WorkoutCardDisplayModel {
@@ -3394,12 +3444,27 @@ private struct WorkoutCandidateCard: View {
                 display: display,
                 minHeight: 130,
                 titleSize: 18,
-                titleWeight: .medium
+                titleWeight: .medium,
+                borderColor: style == .manualPreview ? HAYFColor.orange : display.borderColor,
+                borderWidth: style == .manualPreview ? 1.4 : display.borderWidth,
+                backgroundTintColor: style == .manualPreview ? HAYFColor.orange : nil,
+                backgroundTintOpacity: style == .manualPreview ? 0.055 : display.backgroundTintOpacity
             ) {
-                PlanWorkoutStateMark(display: display, markSize: 18)
+                if style == .manualPreview {
+                    Text("Yours")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .frame(height: 26)
+                        .background(HAYFColor.orange)
+                        .clipShape(Capsule())
+                } else {
+                    PlanWorkoutStateMark(display: display, markSize: 18)
+                }
             }
         }
         .buttonStyle(.plain)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -5123,6 +5188,13 @@ private enum PlanDate {
         let calendar = PlanCalendar.iso
         let today = calendar.startOfDay(for: Date())
         return date >= today
+    }
+
+    static func isPast(_ dateString: String) -> Bool {
+        guard let date = date(from: dateString) else { return false }
+        let calendar = PlanCalendar.iso
+        let today = calendar.startOfDay(for: Date())
+        return date < today
     }
 }
 
