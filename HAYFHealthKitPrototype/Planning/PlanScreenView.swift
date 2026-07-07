@@ -1671,8 +1671,7 @@ private struct PlanWeekSection: View {
             if !targets.isEmpty {
                 PlanWeeklyTargetsView(
                     targets: targets,
-                    evaluations: evaluations,
-                    showTargetDetail: showTargetDetail
+                    evaluations: evaluations
                 )
             }
 
@@ -1723,7 +1722,6 @@ private struct PlanWorkoutDayDivider: View {
 private struct PlanWeeklyTargetsView: View {
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
-    let showTargetDetail: (PlanGoalTarget) -> Void
 
     var body: some View {
         LazyVGrid(
@@ -1733,8 +1731,7 @@ private struct PlanWeeklyTargetsView: View {
             ForEach(targets.prefix(3)) { target in
                 PlanWeeklyTargetCard(
                     target: target,
-                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
-                    openDetail: { showTargetDetail(target) }
+                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations)
                 )
             }
         }
@@ -1744,45 +1741,32 @@ private struct PlanWeeklyTargetsView: View {
 private struct PlanWeeklyTargetCard: View {
     let target: PlanGoalTarget
     let evaluation: PlanGoalEvaluation?
-    let openDetail: () -> Void
 
     var body: some View {
-        Button(action: openDetail) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: PlanTargetDisplay.weeklyCardIconName(for: target, evaluation: evaluation))
-                        .font(.system(size: 18, weight: .regular))
-                        .foregroundStyle(HAYFColor.primary)
-                        .frame(width: 26, height: 24, alignment: .leading)
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: PlanTargetDisplay.weeklyCardIconName(for: target, evaluation: evaluation))
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(HAYFColor.primary)
+                .frame(width: 26, height: 24, alignment: .leading)
 
-                    Spacer(minLength: 2)
+            Text(PlanTargetDisplay.weeklyCardValue(for: target, evaluation: evaluation))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(HAYFColor.muted)
-                        .frame(width: 16, height: 20, alignment: .topTrailing)
-                }
-
-                Text(PlanTargetDisplay.weeklyCardValue(for: target, evaluation: evaluation))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.68)
-
-                PlanTargetProgressBar(progress: PlanTargetDisplay.progress(for: target, evaluation: evaluation))
-                    .frame(height: 4)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
-            }
+            PlanTargetProgressBar(progress: PlanTargetDisplay.progress(for: target, evaluation: evaluation))
+                .frame(height: 4)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open \(target.title) target details")
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

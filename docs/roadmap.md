@@ -111,7 +111,7 @@ The coaching layer should eventually support:
 - a future domain-agent shape where fitness, nutrition, and mind assistants can share relevant context and advice
 - an action layer for bounded user-approved tasks, such as adding a workout to the user's calendar
 
-Current status: the first AI orchestration layer exists for onboarding only. It uses Supabase Edge Function `onboarding-ai`, OpenAI Structured Outputs, compact context packets, and local deterministic fallback. The next AI work is prompt refinement and output QA before expanding to post-onboarding recommendations.
+Current status: onboarding AI exists for structured summaries and goal shaping, and planning AI now owns the first visible plan instead of relying on deterministic workout templates. The next major AI architecture step is the hidden Training Architecture layer defined in `docs/post-blueprint-planning-architecture.md`: an orchestrated coaching-structure pass before Fitness Strategy and Plan generation.
 
 ## Stage 7: Learning loop
 

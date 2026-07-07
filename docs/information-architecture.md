@@ -115,12 +115,13 @@ The target post-blueprint model is:
 
 1. **Athlete Blueprint** keeps the evolving athlete read that guides all downstream planning.
 2. **User goal** carries the one active goal HAYF is serving.
-3. **Fitness strategy** carries the current overall approach for that goal and may change while the goal remains active.
-4. **Strategy phases** exist for time-bound concrete goals and are absent for consistency goals.
-5. **Weekly plans** translate the active strategy into one week of execution, with the current week committed and the next week draft.
-6. **Workouts** turn the weekly plan into concrete sessions.
-7. **Targets** attach wherever meaningful: goal, strategy, phase, week, or session.
-8. **Actual workouts and feedback** evaluate upward into the week, strategy, and goal.
+3. **Training Architecture** is the hidden AI coaching-structure layer that resolves modality priorities, specialist coach recommendations, weekly budget, interference, and tradeoffs.
+4. **Fitness strategy** carries the user-facing overall approach for that goal and may change while the goal remains active.
+5. **Strategy phases** exist for time-bound concrete goals and are absent for consistency goals.
+6. **Weekly plans** translate the active strategy into one week of execution, with the current week committed and the next week draft.
+7. **Workouts** turn the weekly plan into concrete sessions.
+8. **Targets** attach wherever meaningful: goal, strategy, phase, week, or session.
+9. **Actual workouts and feedback** evaluate upward into the week, strategy, and goal.
 
 This means goals appear in two places for different reasons:
 

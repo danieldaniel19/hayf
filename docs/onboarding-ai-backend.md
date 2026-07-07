@@ -37,7 +37,7 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 6. The function inserts one `onboarding_ai_generations` trace row.
 7. The app decodes the structured output and renders it.
 8. If anything fails, the app uses `MockOnboardingAIProvider` fallback output.
-9. At the final screen, the app wraps the first rhythm in a local setup preview: rolling rhythm for consistency, starter program/phases for goal paths.
+9. At the final screen, the app finishes onboarding and hands the accepted inputs to post-onboarding planning.
 10. The app upserts `onboarding_profiles`.
 
 ## Supported Tasks
@@ -130,7 +130,7 @@ Primary context:
 - blockers
 - support style
 - bad-day floor
-- optional deterministic HealthKit feature snapshot for first rhythm
+- optional deterministic HealthKit feature snapshot for later planning context
 
 ## Compact Context Shape
 
@@ -162,7 +162,7 @@ The iOS app sends this shape as `context`:
 }
 ```
 
-For first rhythm only, `healthSnapshot` may look like:
+When attached, `healthSnapshot` may look like:
 
 ```json
 {
@@ -236,13 +236,10 @@ Return only JSON matching the expected output shape. No Markdown.
 For branch QA, pull example `compact_request` values from successful trace rows:
 
 - consistency summary
-- consistency first rhythm
 - concrete goal summary
-- concrete goal first rhythm
 - goal discovery candidates
 - blended candidate
 - goal discovery summary
-- goal discovery first rhythm
 
 ## What To Look For During Prompt QA
 

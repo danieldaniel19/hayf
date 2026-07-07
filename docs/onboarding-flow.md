@@ -289,7 +289,7 @@ Current frontend flow:
 8. Bad-day floor.
 9. AI summary, backed by deterministic fallback.
 10. Apple Health.
-11. Active block preview: show the starter program, high-level phases, first weekly rhythm, and what HAYF will watch. The first rhythm is AI-backed with deterministic fallback; the program/phases are derived locally from the chosen goal, timeline, and draft answers.
+11. Post-onboarding planning reveal: Athlete Blueprint, hidden Training Architecture, Fitness Strategy, then the first two-week Plan.
 
 Typical scenario:
 
@@ -389,7 +389,7 @@ Current frontend flow:
 10. Bad-day floor.
 11. AI summary, backed by deterministic fallback.
 12. Apple Health.
-13. Active block preview: show the starter program, high-level phases, first weekly rhythm, and what HAYF will watch. The first rhythm is AI-backed with deterministic fallback; the program/phases are derived locally from the chosen, edited, or blended goal.
+13. Post-onboarding planning reveal: Athlete Blueprint, hidden Training Architecture, Fitness Strategy, then the first two-week Plan.
 
 Typical scenario:
 
@@ -478,7 +478,7 @@ The backend function receives a compact onboarding context:
 - baseline, timeline, priority tradeoff, and marker text
 - desired change, challenge style, and avoids
 - rhythm, blockers, support style, and bad-day floor
-- deterministic Apple Health feature snapshot fields for first rhythm, when available
+- deterministic Apple Health feature snapshot fields, when available
 
 The backend should return structured content only:
 
@@ -489,14 +489,15 @@ The backend should return structured content only:
 The final post-onboarding sequence should separate concepts cleanly:
 
 - Athlete Blueprint: who HAYF believes it is coaching
-- Fitness Strategy: how HAYF will coach this athlete toward the active goal
-- Plan: the first two visible weeks, with the current week committed and the next week draft
+- Training Architecture: hidden deep coaching structure, including modality roles, specialist recommendations, budget, interference, and tradeoffs
+- Fitness Strategy: the user-facing expression of that architecture
+- Plan: the first two visible AI-authored weeks, with the current week committed and the next week draft
 
 The Fitness Strategy should not repeat the whole goal summary. It should show the strategy read, strategy pillars, phases for time-bound goals or operating rhythm for consistency goals, and the targets HAYF will watch. See `docs/fitness-strategy-spec.md`.
 
 This sequence should not require the model to generate a full long-term calendar. HAYF should show the arc, then keep the first visible planning window concrete.
 
-The model should not invent screens, controls, navigation, permissions, or arbitrary UI copy. If the backend fails or returns malformed content, the app should silently use deterministic fallback content and let the user continue.
+The onboarding model should not invent screens, controls, navigation, permissions, or arbitrary UI copy. If onboarding copy or candidate generation fails, the app may still use deterministic fallback content and let the user continue. Post-onboarding planning is different: if AI plan generation fails, HAYF should surface a retryable failure instead of silently substituting deterministic workout templates.
 
 ## Profile outputs
 

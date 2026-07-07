@@ -14,7 +14,9 @@ The Fitness Strategy answers:
 
 > Given this athlete and this goal, how will HAYF coach them toward it?
 
-The strategy is not the goal repeated back to the user, and it is not yet the week-by-week plan. It is the coach's plan of attack: the approach, the structure that supports it, and the targets that will tell HAYF whether it is working.
+The strategy is not the goal repeated back to the user, and it is not yet the week-by-week plan. It is the user-facing expression of the hidden Training Architecture defined in `docs/post-blueprint-planning-architecture.md`: the approach, the structure that supports it, and the targets that will tell HAYF whether it is working.
+
+The Fitness Strategy should not be the deepest reasoning engine. The deepest coaching reasoning lives one layer earlier in the Training Architecture, where HAYF resolves modality priority, specialist coach input, weekly budget, interference, body-composition tradeoffs, and conflicts between goals.
 
 ## Product Placement
 
@@ -23,13 +25,15 @@ The first post-onboarding sequence should be:
 1. onboarding summary
 2. Apple Health
 3. Athlete Blueprint
-4. Fitness Strategy
-5. Plan
+4. Training Architecture, hidden
+5. Fitness Strategy
+6. Plan
 
 Mental model:
 
 ```text
 Blueprint = this is who you are
+Training Architecture = how the coach thinks the structure should work
 Strategy = this is how HAYF will coach you
 Plan = this is what you do next
 ```
@@ -59,6 +63,8 @@ The same strategy artifact should be persisted for later review elsewhere in the
    - why this strategy
    - why these phases
    - why these targets
+11. Treat the Training Architecture as the source of truth for modality roles, priority order, weekly budget, and tradeoffs.
+12. Do not let the strategy prompt independently turn a cycling-first athlete into a pure cycling plan, dilute an explicit strength/aesthetic goal, or add running volume just because weight loss is mentioned. Those decisions belong in the Training Architecture.
 
 ## User-Facing Sections
 
@@ -326,6 +332,8 @@ The first user-facing Strategy artifact should be able to serialize to:
 
 Contract rules:
 
+- the Fitness Strategy is downstream of the Training Architecture. It explains and packages the coaching structure; it does not re-decide the structure.
+- once implemented, `generate_fitness_strategy_targets` and `generate_fitness_strategy` should receive the validated Training Architecture or a bounded summary of it as required input.
 - target generation is a separate AI pass: `generate_fitness_strategy_targets` receives `targetBrief` and ID-only `targetSlots`, never prebuilt deterministic capstone titles or metric contracts.
 - strategy copy is a second AI pass: `generate_fitness_strategy` receives only the validated target artifact in `sectionSeeds` and must not redesign targets.
 - `phaseOutline` is required when the active goal requires phases.
@@ -337,6 +345,7 @@ Contract rules:
 - `goalTargetContext` is shown as quiet context and is not counted as a strategy target.
 - week and session targets are omitted from this reveal.
 - onboarding intent, chosen training options, access, and avoidances define the strategy's modality path.
+- modality priority, support roles, and interference rules should come from the Training Architecture, including any specialist-coach recommendations it contains.
 - history can size or explain matching targets, but it cannot introduce a modality, dependency, capstone, or anchor the user did not choose.
 - target rows must show a human-readable numeric target value such as a range, cadence, percentage, time delta, distance, count, or frequency; raw metric keys and anonymous numeric chips are not user-facing copy.
 - non-target labels such as review, signal, decision, check-in, stable, before skip, and next move are not valid targets.

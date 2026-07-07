@@ -254,9 +254,6 @@ struct OnboardingFlowView: View {
                 }
             }
 
-            Text("The number shows priority. Tap again to remove an option.")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
         }
     }
 
@@ -280,7 +277,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "How long have\nyou trained?",
-                copy: "HAYF will read your workout history from Apple Health later. Your own answer still matters when tracked history is patchy."
+                copy: "HAYF will read your workout history from Apple Health later, but your own input helps when tracked history is patchy."
             )
 
             OptionGroup(title: "How experienced are you with training?") {
@@ -298,10 +295,6 @@ struct OnboardingFlowView: View {
                 }
             }
 
-            Text("Apple Health can show what was tracked. This tells HAYF how much lived experience may sit outside the import.")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -337,7 +330,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "When tradeoffs show up,\nwhat should win?",
-                copy: "This gives HAYF a clear rule for tight weeks before it starts making plan decisions."
+                copy: "This gives HAYF a clear rule for busy weeks."
             )
 
             OptionGroup(title: "If the week gets tight, protect...") {
@@ -1041,33 +1034,26 @@ struct OnboardingFlowView: View {
                 copy: "A quick read on your training history, current baseline, and how your goal fits."
             )
 
-            Button {
-                selectedBlueprintDetail = blueprint.coachRead.detail
-            } label: {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("COACH'S READ")
-                        .font(.system(size: 10, weight: .medium))
-                        .kerning(1.2)
-                        .foregroundStyle(HAYFColor.secondary)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("COACH'S READ")
+                    .font(.system(size: 10, weight: .medium))
+                    .kerning(1.2)
+                    .foregroundStyle(HAYFColor.secondary)
 
-                    Text(blueprint.coachRead.preview)
-                        .font(.system(size: 18, weight: .regular))
-                        .lineSpacing(5)
-                        .foregroundStyle(HAYFColor.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    BlueprintEvidenceHint()
-                }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(HAYFColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
-                }
+                Text(blueprint.coachRead.preview)
+                    .font(.system(size: 18, weight: .regular))
+                    .lineSpacing(5)
+                    .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.plain)
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(HAYFColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+            }
 
             VStack(spacing: 12) {
                 AthleteBlueprintSummaryRow(
@@ -1075,43 +1061,33 @@ struct OnboardingFlowView: View {
                     eyebrow: "ATHLETE TYPE",
                     title: blueprint.archetype.label,
                     summary: blueprint.archetype.explanation
-                ) {
-                    selectedBlueprintDetail = blueprint.archetype.detail
-                }
+                )
 
                 AthleteBlueprintSummaryRow(
                     systemImage: "waveform.path.ecg",
                     eyebrow: "CURRENT STATE",
                     title: blueprint.currentTrainingState.label,
                     summary: blueprint.currentTrainingState.summary
-                ) {
-                    selectedBlueprintDetail = blueprint.currentTrainingState.detail
-                }
+                )
 
                 AthleteBlueprintSummaryRow(
                     systemImage: "figure",
                     eyebrow: "PHYSICAL BASELINE",
                     title: blueprint.physicalBaseline.label,
                     summary: blueprint.physicalBaseline.summary
-                ) {
-                    selectedBlueprintDetail = blueprint.physicalBaseline.detail
-                }
+                )
             }
 
             SummarySection(title: "What your history shows") {
                 VStack(spacing: 10) {
                     ForEach(blueprint.historyFindings) { finding in
-                        AthleteBlueprintFindingRow(finding: finding) {
-                            selectedBlueprintDetail = finding.detail
-                        }
+                        AthleteBlueprintFindingRow(finding: finding)
                     }
                 }
             }
 
             SummarySection(title: "Goal fit") {
-                AthleteBlueprintGoalFitCard(goalFit: blueprint.goalFit) {
-                    selectedBlueprintDetail = blueprint.goalFit.detail
-                }
+                AthleteBlueprintGoalFitCard(goalFit: blueprint.goalFit)
             }
         }
     }
@@ -1855,7 +1831,7 @@ struct OnboardingFlowView: View {
             } catch {
                 completionLogger.error("Onboarding completion failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
-                    completionErrorMessage = "Could not finish onboarding yet: \(error.localizedDescription)"
+                    completionErrorMessage = "HAYF could not generate your AI plan yet. Try again in a moment."
                 }
             }
         }
@@ -8171,47 +8147,38 @@ private struct AthleteBlueprintSummaryRow: View {
     let eyebrow: String
     let title: String
     let summary: String
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 14) {
-                HAYFIcon(systemImage: systemImage, isSelected: true, size: 36, iconSize: 18)
+        HStack(alignment: .top, spacing: 14) {
+            HAYFIcon(systemImage: systemImage, isSelected: true, size: 36, iconSize: 18)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(eyebrow)
-                        .font(.system(size: 10, weight: .medium))
-                        .kerning(1.2)
-                        .foregroundStyle(HAYFColor.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(eyebrow)
+                    .font(.system(size: 10, weight: .medium))
+                    .kerning(1.2)
+                    .foregroundStyle(HAYFColor.secondary)
 
-                    Text(title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
 
-                    Text(summary)
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 10)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(HAYFColor.muted)
-                    .padding(.top, 20)
+                Text(summary)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
+
+            Spacer(minLength: 10)
         }
-        .buttonStyle(.plain)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
     }
 }
 
@@ -8590,98 +8557,62 @@ private extension FitnessStrategyTarget {
 
 private struct AthleteBlueprintFindingRow: View {
     let finding: AthleteBlueprintFinding
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(alignment: .top, spacing: 14) {
-                Circle()
-                    .fill(HAYFColor.orange)
-                    .frame(width: 8, height: 8)
-                    .padding(.top, 8)
+        HStack(alignment: .top, spacing: 14) {
+            Circle()
+                .fill(HAYFColor.orange)
+                .frame(width: 8, height: 8)
+                .padding(.top, 8)
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(finding.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(finding.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
 
-                    Text(finding.summary)
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 10)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(HAYFColor.muted)
-                    .padding(.top, 8)
+                Text(finding.summary)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
+
+            Spacer(minLength: 10)
         }
-        .buttonStyle(.plain)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
     }
 }
 
 private struct AthleteBlueprintGoalFitCard: View {
     let goalFit: AthleteBlueprintGoalFit
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text(goalFit.headline)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
+        VStack(alignment: .leading, spacing: 14) {
+            Text(goalFit.headline)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
 
-                    Spacer()
-
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(HAYFColor.muted)
-                }
-
-                Text(goalFit.summary)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(4)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                BlueprintEvidenceHint()
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
-            }
+            Text(goalFit.summary)
+                .font(.system(size: 14, weight: .regular))
+                .lineSpacing(4)
+                .foregroundStyle(HAYFColor.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct BlueprintEvidenceHint: View {
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("Why HAYF thinks this")
-                .font(.system(size: 12, weight: .medium))
-
-            Image(systemName: "arrow.up.right")
-                .font(.system(size: 11, weight: .semibold))
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
         }
-        .foregroundStyle(HAYFColor.muted)
     }
 }
 
@@ -8808,18 +8739,11 @@ private struct HAYFIcon: View {
     var iconSize: CGFloat = 22
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Image(systemName: systemImage)
-                .font(.system(size: iconSize, weight: .regular))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(HAYFColor.primary)
-                .frame(width: size, height: size)
-
-            Circle()
-                .fill(isSelected ? HAYFColor.orange : HAYFColor.borderStrong)
-                .frame(width: size * 0.18, height: size * 0.18)
-                .offset(x: -size * 0.08, y: -size * 0.08)
-        }
+        Image(systemName: systemImage)
+            .font(.system(size: iconSize, weight: .regular))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
+            .frame(width: size, height: size)
     }
 }
 

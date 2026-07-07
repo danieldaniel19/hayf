@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HAYF AI Touchpoint Lab</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">H</div>
+          <div>
+            <h1>AI Touchpoints</h1>
+            <p id="statusLine">Loading catalog</p>
+          </div>
+        </div>
+        <nav
+          id="touchpointList"
+          class="touchpoint-list"
+          aria-label="AI touchpoints"
+        >
+        </nav>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p id="groupLabel" class="eyebrow">Touchpoint</p>
+            <h2 id="touchpointTitle">Select a touchpoint</h2>
+          </div>
+          <div class="actions">
+            <button id="showDiffButton" type="button">Diff</button>
+            <button id="saveButton" type="button" class="primary">Save</button>
+          </div>
+        </header>
+
+        <section class="editor-grid">
+          <form id="editorForm" class="panel editor-panel">
+            <div class="field-row">
+              <label>
+                Label
+                <input
+                  id="labelInput"
+                  name="label"
+                  type="text"
+                  autocomplete="off"
+                >
+              </label>
+              <label>
+                Model
+                <input
+                  id="modelInput"
+                  name="model"
+                  type="text"
+                  autocomplete="off"
+                >
+              </label>
+            </div>
+
+            <div class="field-row compact">
+              <label>
+                Reasoning
+                <select id="reasoningInput" name="reasoning">
+                  <option value="">Default</option>
+                  <option value="minimal">minimal</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </label>
+              <label>
+                Verbosity
+                <select id="verbosityInput" name="verbosity">
+                  <option value="">Default</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                </select>
+              </label>
+            </div>
+
+            <label>
+              Parameters JSON
+              <textarea
+                id="parametersInput"
+                class="json-field"
+                spellcheck="false"
+              ></textarea>
+            </label>
+            <label>
+              System prompt
+              <textarea
+                id="systemPromptInput"
+                class="prompt-field"
+                spellcheck="true"
+              ></textarea>
+            </label>
+            <label>
+              User rules
+              <textarea
+                id="userRulesInput"
+                class="prompt-field"
+                spellcheck="true"
+              ></textarea>
+            </label>
+          </form>
+
+          <section class="panel test-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Test Run</h3>
+                <p>Fixture JSON is sent as the user context.</p>
+              </div>
+              <button id="runButton" type="button">Run</button>
+            </div>
+
+            <label>
+              Mock fixture
+              <select id="mockFixtureInput"></select>
+            </label>
+
+            <label>
+              Fixture name
+              <input id="fixtureNameInput" type="text" placeholder="happy-path">
+            </label>
+            <label>
+              Fixture JSON
+              <textarea
+                id="fixtureInput"
+                class="json-field tall"
+                spellcheck="false"
+              ></textarea>
+            </label>
+            <div class="actions left">
+              <button id="saveFixtureButton" type="button">Save Fixture</button>
+            </div>
+
+            <pre id="resultOutput" class="output" aria-live="polite"></pre>
+          </section>
+        </section>
+
+        <section class="panel diff-panel">
+          <div class="panel-heading">
+            <h3>Current Diff</h3>
+            <button id="refreshDiffButton" type="button">Refresh</button>
+          </div>
+          <pre id="diffOutput" class="output diff-output"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

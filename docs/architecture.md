@@ -98,7 +98,6 @@ Implemented backend tasks:
 - summarize setup
 - generate goal candidates
 - generate blended candidate preview
-- generate first rhythm
 
 The first backend scaffold lives under `supabase/`. It adds `public.onboarding_profiles` as the completed onboarding source of truth and `public.onboarding_ai_generations` as server-side trace storage for AI calls. HealthKit data sent to the function is limited to locally derived feature snapshots, not raw samples.
 
@@ -183,7 +182,7 @@ So design around `context packets` and `derived features`, not bulk storage.
 
 For the personal-first v1, the HealthKit read scope should be broad: workouts, routes, sleep, daily movement, recovery signals, heart/cardio signals, body metrics, mindful sessions, relevant event categories, and available nutrition logs. The app should turn these into compact derived features before recommendation, rather than sending raw HealthKit samples to the AI layer.
 
-The current implementation has a deterministic feature builder in `HealthKitManager.fetchFeatureSnapshot()`. It builds workout-ledger windows, activity baselines, recovery/body summaries, nutrition summaries, and notes about missing data. Onboarding uses that feature snapshot when generating the first rhythm, and the authenticated home screen exposes `HealthDebugView` for requesting access, rebuilding features, inspecting the JSON payload, and copying it while debugging in Xcode.
+The current implementation has a deterministic feature builder in `HealthKitManager.fetchFeatureSnapshot()`. It builds workout-ledger windows, activity baselines, recovery/body summaries, nutrition summaries, and notes about missing data. Onboarding and post-onboarding planning can use that feature snapshot as compact context, and the authenticated home screen exposes `HealthDebugView` for requesting access, rebuilding features, inspecting the JSON payload, and copying it while debugging in Xcode.
 
 The feature builder now also produces a `fitnessHistory` profile for longer-term context: training identity, modality mix, consistency, seasonality, load windows, generic performance proxies, strength continuity, recovery/body context, activity floor, and insight candidates.
 

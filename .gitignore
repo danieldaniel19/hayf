@@ -4,3 +4,10 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 supabase/.temp/
+.env
+.env.*
+*.env
+supabase/.env
+supabase/.env.*
+tools/ai-touchpoint-lab/.env
+tools/ai-touchpoint-lab/.env.*

@@ -1,4 +1,9 @@
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import {
+  defaultAIModel,
+  planningAITouchpoint,
+  type AITouchpointConfig,
+} from "../_shared/ai-touchpoints.ts";
 
 type SupabaseAdminClient = any;
 
@@ -699,7 +704,7 @@ Deno.serve(async (req) => {
   const serviceRoleKey = mustGetEnv("SUPABASE_SERVICE_ROLE_KEY");
   const anonKey = mustGetEnv("SUPABASE_ANON_KEY");
   const admin: SupabaseAdminClient = createClient(supabaseUrl, serviceRoleKey);
-  const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
+  const model = defaultAIModel();
 
   let requestBody: PlanningAIRequest | null = null;
   let userID: string | null = null;
@@ -773,43 +778,44 @@ async function handleTask(args: {
   model: string;
   startedAt: number;
 }) {
-  const { admin, requestBody, userID, model } = args;
+  const { admin, requestBody, userID } = args;
+  const touchpointModel = (id: string) => planningAITouchpoint(id).model;
 
   switch (requestBody.task) {
     case "accept_strategy_and_create_initial_plan":
-      return acceptStrategyAndCreateInitialPlan(admin, userID!, requestBody, model);
+      return acceptStrategyAndCreateInitialPlan(admin, userID!, requestBody, touchpointModel("plan_generation"));
     case "sync_healthkit_and_reconcile":
-      return syncHealthKitAndReconcile(admin, userID!, requestBody, model);
+      return syncHealthKitAndReconcile(admin, userID!, requestBody, touchpointModel("plan_generation"));
     case "refresh_plan_window":
-      return refreshPlanWindow(admin, userID!, requestBody, model, "user");
+      return refreshPlanWindow(admin, userID!, requestBody, touchpointModel("plan_generation"), "user");
     case "refresh_workout_weather_forecasts":
       return refreshWorkoutWeatherForecasts(admin, userID!, requestBody);
     case "generate_weekly_plan_targets":
-      return generateWeeklyPlanTargetsForVisiblePlan(admin, userID!, requestBody, model);
+      return generateWeeklyPlanTargetsForVisiblePlan(admin, userID!, requestBody, touchpointModel("weekly_targets"));
     case "record_plan_edit":
-      return recordPlanEdit(admin, userID!, requestBody, model);
+      return recordPlanEdit(admin, userID!, requestBody, touchpointModel("plan_edit_repair"));
     case "record_weekly_plan_constraint":
       return recordWeeklyPlanConstraint(admin, userID!, requestBody);
     case "recommend_workout_replacements":
-      return recommendWorkoutReplacements(admin, userID!, requestBody, model);
+      return recommendWorkoutReplacements(admin, userID!, requestBody, touchpointModel("workout_replacements"));
     case "recommend_workout_additions":
-      return recommendWorkoutAdditions(admin, userID!, requestBody, model);
+      return recommendWorkoutAdditions(admin, userID!, requestBody, touchpointModel("workout_additions"));
     case "interpret_workout_description":
-      return interpretWorkoutDescription(admin, userID!, requestBody, model);
+      return interpretWorkoutDescription(admin, userID!, requestBody, touchpointModel("workout_interpretation"));
     case "replace_workout":
-      return replaceWorkout(admin, userID!, requestBody, model);
+      return replaceWorkout(admin, userID!, requestBody, touchpointModel("plan_edit_repair"));
     case "add_workout":
-      return addWorkout(admin, userID!, requestBody, model);
+      return addWorkout(admin, userID!, requestBody, touchpointModel("plan_edit_repair"));
     case "create_repair_proposal_for_recent_edit":
-      return createRepairProposalForRecentEdit(admin, userID!, requestBody, model);
+      return createRepairProposalForRecentEdit(admin, userID!, requestBody, touchpointModel("plan_edit_repair"));
     case "create_repair_proposal_for_pending_edits":
-      return createRepairProposalForPendingEdits(admin, userID!, requestBody, model);
+      return createRepairProposalForPendingEdits(admin, userID!, requestBody, touchpointModel("pending_plan_review"));
     case "apply_replan_proposal":
       return applyReplanProposal(admin, userID!, requestBody);
     case "check_in_to_workout":
       return checkInToWorkout(admin, userID!, requestBody);
     case "scheduled_refresh_due_windows":
-      return scheduledRefreshDueWindows(admin, model);
+      return scheduledRefreshDueWindows(admin, touchpointModel("plan_generation"));
     default:
       throw new Error(`Unsupported planning AI task: ${requestBody.task}`);
   }
@@ -914,6 +920,7 @@ async function acceptStrategyAndCreateInitialPlan(
     ],
   };
 
+  const aiGenerated = await runPlanGeneration("accept_strategy_and_create_initial_plan", context, model);
   const initialActuals = actualWorkoutsForInitialWeek(
     requestBody.actualWorkouts ?? [],
     isoDate(committedWeekStart),
@@ -923,7 +930,7 @@ async function acceptStrategyAndCreateInitialPlan(
   );
   const generated = sanitizeGeneratedPlan(
     applyInitialWeekActualWorkoutContext(
-      initialPlanFromAcceptedStrategy(onboarding, acceptedStrategy, acceptedBlueprint, committedWeekStart, timezone),
+      aiGenerated,
       initialActuals,
       ownerStartDate,
     ),
@@ -985,7 +992,8 @@ async function acceptStrategyAndCreateInitialPlan(
     userGoalID: goal.id,
     eventType: "strategy_accepted",
     payload: {
-      usedDeterministicInitialPlan: true,
+      usedAIInitialPlan: true,
+      usedFallback: false,
       goalKind,
       committedWeekStart: isoDate(committedWeekStart),
       draftWeekStart: isoDate(draftWeekStart),
@@ -996,8 +1004,8 @@ async function acceptStrategyAndCreateInitialPlan(
 
   return {
     userID,
-    model: "deterministic-initial",
-    usedFallback: true,
+    model,
+    usedFallback: false,
     userGoalID: goal.id,
     fitnessStrategyID: strategy.id,
     blueprintRevisionID: blueprintRevision.id,
@@ -1421,67 +1429,6 @@ async function refreshPlanWindowForUser(
     });
   }
 
-  if (shouldOnlyGenerateMissingDraft) {
-    const latestSnapshot = await maybeSingle(
-      admin
-        .from("health_feature_snapshots")
-        .select()
-        .eq("user_id", userID)
-        .order("generated_at", { ascending: false })
-        .limit(1),
-    );
-    const generated = fallbackPlanFromBlock(scope.block, start);
-    const missingDraftPlan = {
-      ...generated,
-      rhythms: generated.rhythms.filter((rhythm) => rhythm.weekStartDate === lifecycle.nextWeekStart),
-    };
-    const refreshedWeeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
-      userID,
-      strategyID: scope.strategy.id,
-      rhythms: missingDraftPlan.rhythms,
-      source: "replanned",
-      committedWeekStart: isoDate(start),
-      ownerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
-      homeLocationLabel: scope.homeLocationLabel,
-    });
-    const duplicateGeneratedWorkouts = await cleanupDuplicateGeneratedPlanWorkouts(admin, userID, scope.strategy.id, window);
-    await generateAndPersistWeeklyTargets(admin, {
-      userID,
-      goal: scope.goal,
-      strategy: scope.strategy,
-      weeklyPlans: refreshedWeeklyPlans,
-      healthSnapshot: latestSnapshot?.snapshot_json ?? null,
-      acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
-      model,
-    });
-    await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), timezone));
-
-    const event = await createPlanEvent(admin, {
-      userID,
-      fitnessStrategyID: scope.strategy.id,
-      eventType: "window_refreshed",
-      payload: {
-        trigger,
-        usedFallback: true,
-        reason: "missing_next_draft_created",
-        window,
-        currentWeekPlanID: currentWeekPlan.id,
-        nextWeekPlanIDs: refreshedWeeklyPlans.map((plan: Record<string, any>) => plan.id),
-        duplicateGeneratedWorkouts,
-      },
-    });
-
-    return {
-      userID,
-      model: "deterministic-fallback",
-      usedFallback: true,
-      reason: "missing_next_draft_created",
-      fitnessStrategyID: scope.strategy.id,
-      eventID: event.id,
-      plan: missingDraftPlan,
-    };
-  }
-
   if (pendingManualReview.hasPending && windowAlreadyExists) {
     const event = await createPlanEvent(admin, {
       userID,
@@ -1592,24 +1539,7 @@ async function refreshPlanWindowForUser(
   };
   const healthDataFreshness = healthFreshness(latestSnapshot);
 
-  let generated: GeneratedPlan;
-  let usedFallback = false;
-  try {
-    generated = sanitizeGeneratedPlan(await runPlanGeneration("refresh_plan_window", context, model), null, start, timezone);
-  } catch (error) {
-    usedFallback = true;
-    await insertTrace(admin, {
-      userID,
-      task: "refresh_plan_window",
-      model,
-      compactRequest: { task: "refresh_plan_window", context },
-      structuredResponse: null,
-      status: "failure",
-      latencyMS: 0,
-      errorMessage: errorMessage(error),
-    });
-    generated = fallbackPlanFromBlock(scope.block, start);
-  }
+  let generated = sanitizeGeneratedPlan(await runPlanGeneration("refresh_plan_window", context, model), null, start, timezone);
   generated = alignGeneratedPlanToWeeklyTargets(generated, weeklyTargetConstraints);
   if (shouldOnlyGenerateMissingDraft) {
     generated = {
@@ -1617,11 +1547,7 @@ async function refreshPlanWindowForUser(
       rhythms: generated.rhythms.filter((rhythm) => rhythm.weekStartDate === lifecycle.nextWeekStart),
     };
     if (generated.rhythms.length === 0) {
-      generated = {
-        ...fallbackPlanFromBlock(scope.block, start),
-        rhythms: fallbackPlanFromBlock(scope.block, start).rhythms.filter((rhythm) => rhythm.weekStartDate === lifecycle.nextWeekStart),
-      };
-      usedFallback = true;
+      throw new Error("AI plan generation did not return the missing draft week.");
     }
   }
 
@@ -1682,7 +1608,7 @@ async function refreshPlanWindowForUser(
     eventType: "window_refreshed",
     payload: {
       trigger,
-      usedFallback,
+      usedFallback: false,
       window,
       healthDataFreshness,
       duplicateGeneratedWorkouts: duplicateGeneratedWorkouts + duplicateGeneratedWorkoutsAfterInsert,
@@ -1691,8 +1617,8 @@ async function refreshPlanWindowForUser(
 
   return {
     userID,
-    model: usedFallback ? "deterministic-fallback" : model,
-    usedFallback,
+    model,
+    usedFallback: false,
     fitnessStrategyID: scope.strategy.id,
     eventID: event.id,
     plan: generated,
@@ -2671,39 +2597,28 @@ function supportTitle(dimension: TrainingDimension, sourceWorkout: Record<string
 
 async function runEditRepairDraft(context: Record<string, unknown>, model: string): Promise<PlanEditRepairDraft> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("plan_edit_repair");
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's plan-edit coach. Explain why a user's already-applied plan edit may affect recovery, load balance, or training targets. Be matter-of-fact, specific, and concise. Do not shame the user. Return strict JSON only.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "draft_plan_edit_repair",
-            context,
-            rules:
-              "Return one reason sentence and one summary sentence for the proposed repair. The user edit has already been applied; frame the repair as a recommendation, not a command.",
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "plan_edit_repair",
-          strict: true,
-          schema: editRepairSchema,
-        },
+      touchpointConfig,
+      {
+        task: "draft_plan_edit_repair",
+        context,
+        rules: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "plan_edit_repair",
+        strict: true,
+        schema: editRepairSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -2762,28 +2677,11 @@ async function recommendWorkoutReplacements(
     weatherContext: await planningWeatherContextForDate(scope, workout.scheduled_date, workout.planned_location_label, workout.weather_forecast_json),
   };
 
-  let candidates: ReplacementCandidate[];
-  let usedFallback = false;
-  try {
-    candidates = sanitizeReplacementCandidates(await runReplacementGeneration(context, model), workout, surroundingWorkouts, context.weatherContext);
-  } catch (error) {
-    usedFallback = true;
-    candidates = fallbackReplacementCandidates(workout, surroundingWorkouts, context.weatherContext);
-    await insertTrace(admin, {
-      userID,
-      task: "recommend_workout_replacements",
-      model,
-      compactRequest: { task: "recommend_workout_replacements", context },
-      structuredResponse: null,
-      status: "failure",
-      latencyMS: 0,
-      errorMessage: errorMessage(error),
-    });
-  }
+  const candidates = sanitizeReplacementCandidates(await runReplacementGeneration(context, model), workout, surroundingWorkouts, context.weatherContext);
 
   return {
     userID,
-    model: usedFallback ? "deterministic-fallback" : model,
+    model,
     workoutID: plannedWorkoutID,
     candidates,
   };
@@ -2807,34 +2705,17 @@ async function recommendWorkoutAdditions(
     userIntent: requestBody.textContext || "I feel like working out on this day, but I want HAYF to pick something that fits the plan.",
   };
 
-  let candidates: WorkoutCandidate[];
-  let usedFallback = false;
-  try {
-    candidates = sanitizeWorkoutCandidates(
-      await runWorkoutAdditionGeneration(
-        context,
-        model,
-      ),
-      fallbackAdditionCandidates(context),
-    );
-  } catch (error) {
-    usedFallback = true;
-    candidates = fallbackAdditionCandidates(context);
-    await insertTrace(admin, {
-      userID,
-      task: "recommend_workout_additions",
+  const candidates = sanitizeWorkoutCandidates(
+    await runWorkoutAdditionGeneration(
+      context,
       model,
-      compactRequest: { task: "recommend_workout_additions", context },
-      structuredResponse: null,
-      status: "failure",
-      latencyMS: 0,
-      errorMessage: errorMessage(error),
-    });
-  }
+    ),
+    fallbackAdditionCandidates(context),
+  );
 
   return {
     userID,
-    model: usedFallback ? "deterministic-fallback" : model,
+    model,
     scheduledDate,
     candidates,
   };
@@ -2877,33 +2758,16 @@ async function interpretWorkoutDescription(
     userIntent: textContext,
   };
 
-  let candidate: WorkoutCandidate;
-  let usedFallback = false;
-  try {
-    candidate = sanitizeWorkoutCandidate(
-      (await runWorkoutDescriptionInterpretation(context, model)).candidate,
-      fallbackManualWorkoutCandidate(textContext, workout ?? undefined, contextDate),
-      "candidate-1",
-    );
-  } catch (error) {
-    usedFallback = true;
-    candidate = fallbackManualWorkoutCandidate(textContext, workout ?? undefined, contextDate);
-    await insertTrace(admin, {
-      userID,
-      task: "interpret_workout_description",
-      model,
-      compactRequest: { task: "interpret_workout_description", context },
-      structuredResponse: null,
-      status: "failure",
-      latencyMS: 0,
-      errorMessage: errorMessage(error),
-    });
-  }
+  let candidate = sanitizeWorkoutCandidate(
+    (await runWorkoutDescriptionInterpretation(context, model)).candidate,
+    fallbackManualWorkoutCandidate(textContext, workout ?? undefined, contextDate),
+    "candidate-1",
+  );
   candidate = withResolvedWorkoutIntent(candidate, textContext, scope.homeLocationLabel);
 
   return {
     userID,
-    model: usedFallback ? "deterministic-fallback" : model,
+    model,
     scheduledDate: contextDate,
     workoutID: plannedWorkoutID ?? null,
     candidate,
@@ -3652,39 +3516,28 @@ function protectedWorkoutIDsFromEvents(events: Record<string, any>[]) {
 
 async function runPendingPlanReview(context: Record<string, unknown>, model: string): Promise<PendingPlanReviewDraft> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("pending_plan_review");
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's plan review coach. Review user-edited committed and draft weeks against the active fitness strategy. The user's edits are accepted facts. Propose only small surrounding workout adjustments when needed. Return strict JSON only.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "review_pending_plan_edits",
-            context,
-            mutation_contract:
-              "Allowed mutations: create_workout with workout_id null and complete fields; update_workout with workout_id and fields, using null for unchanged fields; delete_workout with workout_id and fields null. Do not mutate workouts touched by the user's pending edits. Do not schedule, update, move, or delete workouts before context.today. Return reviewNeeded false and no mutations when no valid today/future adjustment is needed.",
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "pending_plan_review",
-          strict: true,
-          schema: pendingPlanReviewSchema,
-        },
+      touchpointConfig,
+      {
+        task: "review_pending_plan_edits",
+        context,
+        mutation_contract: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "pending_plan_review",
+        strict: true,
+        schema: pendingPlanReviewSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -4079,39 +3932,28 @@ async function scheduledRefreshDueWindows(admin: SupabaseAdminClient, model: str
 
 async function runPlanGeneration(task: PlanningTask, context: Record<string, unknown>, model: string): Promise<GeneratedPlan> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("plan_generation", { workoutTaxonomyRules });
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's fitness planning engine. Return strict JSON for an accepted strategy, optional phases, and a two-week plan window. HAYF uses one active fitness strategy, committed/draft weekly plans, and daily adaptation. Do not create fake phases for consistency goals. Do not ask follow-up questions. Use compact HealthKit-derived summaries only; never request raw samples.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task,
-            context,
-            rules:
-              `Generate the committed week and draft week. ${workoutTaxonomyRules} If context.weeklyTargetConstraints contains targets for a week, the workouts for that week must satisfy them: modality session counts need that many workouts of that modality, modality minutes need enough minutes in that modality, and active-day/minimum-day targets need enough distinct workout days. If context.planOwnerStartDate is present, the committed week must include planned workouts only on or after that date; earlier committed-week dates are HealthKit history ledger days, not missed planned sessions. Include full workout prescriptions for every returned workout and a one-line fuelingSummary. Keep distant strategy context directional; make only the next two weeks concrete. Strategy title is a compact product label for a small mobile card, not a schedule summary: keep it under 32 characters, use Title Case, and prefer names like 'Aerobic Base + Strength', 'Run Base + Strength', 'Strength Consistency', or 'Cycling Build'. Put detailed reasoning in strategy context, not in the title.`,
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "planning_plan",
-          strict: true,
-          schema: planSchema,
-        },
+      touchpointConfig,
+      {
+        task,
+        context,
+        rules: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "planning_plan",
+        strict: true,
+        schema: planSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -4129,39 +3971,28 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
 
 async function runReplacementGeneration(context: Record<string, unknown>, model: string): Promise<{ candidates: ReplacementCandidateInput[] }> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("workout_replacements", { workoutTaxonomyRules });
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's fitness planning engine. Recommend replacement workouts when a user does not want to do a planned session. Preserve the active strategy intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "recommend_workout_replacements",
-            context,
-            rules:
-              `Return 2-3 second-best options for the same date/slot. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. If context.weatherContext.shouldAvoidOutdoor is true, prefer indoor gym, strength, mobility, or recovery options unless userIntent explicitly asks for outdoor training. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move other workouts directly.`,
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "replacement_candidates",
-          strict: true,
-          schema: replacementSchema,
-        },
+      touchpointConfig,
+      {
+        task: "recommend_workout_replacements",
+        context,
+        rules: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "replacement_candidates",
+        strict: true,
+        schema: replacementSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -4179,39 +4010,28 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
 
 async function runWorkoutAdditionGeneration(context: Record<string, unknown>, model: string): Promise<{ candidates: WorkoutCandidateInput[] }> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("workout_additions", { workoutTaxonomyRules });
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's fitness planning engine. Recommend workouts a user can add to a selected day. Preserve the active strategy intent, respect fixed/completed workouts, avoid crowding hard sessions, and return strict JSON only.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "recommend_workout_additions",
-            context,
-            rules:
-              `Return 2-3 useful options for the selected date. ${workoutTaxonomyRules} Set plannedLocationLabel to null unless the option explicitly changes location. If context.weatherContext.shouldAvoidOutdoor is true, prefer indoor gym, strength, mobility, or recovery options unless userIntent explicitly asks for outdoor training. Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words. Do not move or delete other workouts directly.`,
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "workout_addition_candidates",
-          strict: true,
-          schema: replacementSchema,
-        },
+      touchpointConfig,
+      {
+        task: "recommend_workout_additions",
+        context,
+        rules: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "workout_addition_candidates",
+        strict: true,
+        schema: replacementSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -4229,39 +4049,28 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
 
 async function runWorkoutDescriptionInterpretation(context: Record<string, unknown>, model: string): Promise<{ candidate: WorkoutCandidateInput }> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("workout_interpretation", { workoutTaxonomyRules });
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's fitness planning engine. Interpret a user's natural-language workout description into one workout candidate that can be inserted into a plan. Preserve concrete details like distance, elevation, duration, intensity, and modality. Return strict JSON only.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "interpret_workout_description",
-            context,
-            rules:
-              `Return one compact candidate in the same format as suggestion cards. ${workoutTaxonomyRules} Preserve concrete distance, elevation, duration, intensity, modality, and user-authored route/event names. For route phrases like "from City A to City B and back" or "City A to City B", plannedLocationLabel should be the start city only; if that start city matches context.homeLocationLabel, set plannedLocationLabel to null. Set plannedLocationLabel to an explicit non-home city/place only when the workout starts away from home. If context.weatherContext.shouldAvoidOutdoor is true and the user's text does not explicitly request outdoor training, prefer an indoor interpretation. Keep the title short, no em dashes; use commas or parentheses only for concrete user details. Rationale and weeklyImpact must each be one short sentence under 14 words.`,
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "workout_candidate",
-          strict: true,
-          schema: workoutCandidateSchema,
-        },
+      touchpointConfig,
+      {
+        task: "interpret_workout_description",
+        context,
+        rules: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "workout_candidate",
+        strict: true,
+        schema: workoutCandidateSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -5785,7 +5594,7 @@ async function generateAndPersistWeeklyTargets(
     healthSnapshot: args.healthSnapshot,
   });
 
-  let generated: WeeklyTargetGenerationOutput | null = null;
+  let generated: WeeklyTargetGenerationOutput;
   try {
     generated = await runWeeklyTargetGeneration(context, args.model);
     await insertTrace(admin, {
@@ -5808,13 +5617,14 @@ async function generateAndPersistWeeklyTargets(
       latencyMS: 0,
       errorMessage: errorMessage(error),
     });
+    throw error;
   }
 
   const rows = validatedWeeklyTargetRows({
     userID: args.userID,
     weeklyPlans: visiblePlans,
     workouts,
-    generated: generated ?? fallbackWeeklyTargetOutput(visiblePlans, workouts),
+    generated,
   });
 
   await throwOnError(
@@ -5951,39 +5761,28 @@ function compactAcceptedTarget(target: Record<string, unknown>) {
 
 async function runWeeklyTargetGeneration(context: Record<string, unknown>, model: string): Promise<WeeklyTargetGenerationOutput> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("weekly_targets");
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
+    body: JSON.stringify(responsesRequestPayload(
       model,
-      input: [
-        {
-          role: "system",
-          content:
-            "You are HAYF's weekly target engine. Return strict JSON only. Create measurable weekly targets that a mobile fitness app can compute from planned workouts, completed workouts, matched HealthKit workouts, body entries, or performance entries. Trust coaching judgement, but never create subjective, reflective, or operational targets.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            task: "generate_weekly_plan_targets",
-            context,
-            rules:
-              "For each supplied week, return 1-3 targets. Preserve weeklyPlanID exactly and use only the provided slot IDs. Targets must be achievable by doing that week's workouts. Prefer specific measurable outcomes over generic copy. Do not invent unavailable modalities. Do not use snake_case or metric keys in user-facing title/summary/display values.",
-          }),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "weekly_plan_targets",
-          strict: true,
-          schema: weeklyTargetSchema,
-        },
+      touchpointConfig,
+      {
+        task: "generate_weekly_plan_targets",
+        context,
+        rules: touchpointConfig.userRules,
       },
-    }),
+      {
+        type: "json_schema",
+        name: "weekly_plan_targets",
+        strict: true,
+        schema: weeklyTargetSchema,
+      },
+    )),
   });
 
   const payload = await response.json();
@@ -5997,59 +5796,6 @@ async function runWeeklyTargetGeneration(context: Record<string, unknown>, model
   }
 
   return JSON.parse(outputText) as WeeklyTargetGenerationOutput;
-}
-
-function fallbackWeeklyTargetOutput(weeklyPlans: Record<string, any>[], workouts: Record<string, any>[]): WeeklyTargetGenerationOutput {
-  return {
-    weeks: weeklyPlans.map((plan) => {
-      const planWorkouts = workouts.filter((workout) => workout.weekly_plan_id === plan.id);
-      const activeDays = new Set(planWorkouts.map((workout) => workout.scheduled_date)).size;
-      const primaryModality = primaryWeeklyModality(planWorkouts);
-      const targets: WeeklyTargetProposal[] = [
-        {
-          slotID: `${plan.id}:target:1`,
-          family: "planned_session_completion",
-          modality: null,
-          title: "Planned sessions",
-          summary: "Complete the planned sessions that define this week.",
-          proposedDisplayValue: `${planWorkouts.length}/${planWorkouts.length}`,
-          targetValue: planWorkouts.length,
-          unit: "sessions",
-          comparator: "at_least",
-          rationale: "Session completion is the most direct weekly proof.",
-        },
-      ];
-      if (primaryModality) {
-        targets.push({
-          slotID: `${plan.id}:target:2`,
-          family: "modality_minutes",
-          modality: primaryModality,
-          title: `${titleCase(primaryModality)} minutes`,
-          summary: "Complete the planned weekly minutes for the main training modality.",
-          proposedDisplayValue: `${plannedMinutes(planWorkouts, primaryModality)} min`,
-          targetValue: plannedMinutes(planWorkouts, primaryModality),
-          unit: "min",
-          comparator: "at_least",
-          rationale: "Minutes keep the weekly dose measurable.",
-        });
-      }
-      if (activeDays > 1) {
-        targets.push({
-          slotID: `${plan.id}:target:3`,
-          family: "active_days",
-          modality: null,
-          title: "Active days",
-          summary: "Spread completed workouts across the planned training days.",
-          proposedDisplayValue: `${activeDays} days`,
-          targetValue: activeDays,
-          unit: "days",
-          comparator: "at_least",
-          rationale: "Active days protect the weekly rhythm.",
-        });
-      }
-      return { weeklyPlanID: plan.id, targets: targets.slice(0, 3) };
-    }),
-  };
 }
 
 function validatedWeeklyTargetRows(args: {
@@ -6070,9 +5816,10 @@ function validatedWeeklyTargetRows(args: {
       .filter(Boolean) as Record<string, unknown>[];
     const finalRows = accepted.length > 0
       ? accepted.slice(0, 3)
-      : (fallbackWeeklyTargetOutput([plan], args.workouts).weeks[0]?.targets ?? [])
-        .map((proposal) => weeklyTargetRowFromProposal(args.userID, plan, planWorkouts, proposal))
-        .filter(Boolean) as Record<string, unknown>[];
+      : [];
+    if (finalRows.length === 0) {
+      throw new Error(`AI weekly target generation returned no valid targets for week ${plan.week_start_date}.`);
+    }
     rows.push(...finalRows.map((row, index) => ({ ...row, target_kind: index === 0 ? "primary" : "supporting" })));
   }
   return rows;
@@ -6826,77 +6573,6 @@ function weeklyPlanAsRhythm(plan: Record<string, any>) {
   };
 }
 
-function fallbackPlan(onboarding: Record<string, any>, start: Date, timezone: string): GeneratedPlan {
-  const selected = onboarding.selected_answers ?? {};
-  const intent = onboarding.intent as string;
-  const kind = blockKind(intent);
-  const goalText = selected.chosenGoal?.title || selected.goalBrief || "";
-  const title = blockTitle(kind, goalText);
-  const targetDate = targetDateFor(selected.goalTimeline, start, kind);
-  const reviewCadenceDays = kind === "consistency" ? 28 : daysBetween(start, parseDateOnly(targetDate) ?? addDays(start, 84));
-  const phases = kind === "consistency" ? [] : fallbackPhases(start, targetDate);
-  const rhythms = fallbackRhythms(start, selected, kind);
-
-  return {
-    block: {
-      kind,
-      title,
-      goalText,
-      startDate: isoDate(start),
-      targetDate,
-      reviewCadenceDays,
-      context: { selectedAnswers: selected, timezone },
-    },
-    phases,
-    rhythms,
-  };
-}
-
-function initialPlanFromAcceptedStrategy(
-  onboarding: Record<string, any>,
-  acceptedStrategy: Record<string, unknown>,
-  acceptedBlueprint: Record<string, unknown>,
-  start: Date,
-  timezone: string,
-): GeneratedPlan {
-  const plan = fallbackPlan(onboarding, start, timezone);
-  const strategyTitle = acceptedStrategyTitle(acceptedStrategy, plan.block.kind);
-  const goalTargetContext = objectAt(acceptedStrategy, "goalTargetContext");
-  const goalText = stringAt(goalTargetContext, "title") ||
-    stringAt(goalTargetContext, "summary") ||
-    plan.block.goalText;
-  const strategyPhases = acceptedStrategyPhases(acceptedStrategy);
-
-  return {
-    ...plan,
-    block: {
-      ...plan.block,
-      title: strategyTitle,
-      goalText,
-      context: {
-        onboardingIntent: String(onboarding.intent ?? ""),
-        planningRationale: stringAt(acceptedStrategy, "read") ||
-          stringAt(objectAt(acceptedBlueprint, "coachRead"), "text") ||
-          "Initial plan created from the accepted strategy.",
-        dataFreshness: "Created at strategy acceptance from onboarding and HealthKit summary context.",
-      },
-    },
-    phases: plan.block.kind === "consistency"
-      ? []
-      : strategyPhases.map((phase: Record<string, unknown>, index: number) => {
-        const fallback = plan.phases[index];
-        return {
-          name: stringAt(phase, "name") || fallback?.name || `Phase ${index + 1}`,
-          startDate: fallback?.startDate ?? isoDate(addDays(start, index * 28)),
-          endDate: fallback?.endDate ?? isoDate(addDays(start, index * 28 + 27)),
-          objective: stringAt(phase, "objective") || fallback?.objective || "Move the accepted strategy forward.",
-          focus: arrayAt(phase, "targets").map((target) => stringAt(target, "summary") || stringAt(target, "title") || "").filter(Boolean).slice(0, 3),
-          risk: ["Adjust load if recovery, knee comfort, or schedule constraints change."],
-        };
-      }),
-  };
-}
-
 type InitialWeekActualWorkout = {
   localDate: string;
   modality: string;
@@ -7047,13 +6723,15 @@ function countActualsByDateAndModality(actuals: InitialWeekActualWorkout[]) {
 
 function sanitizeGeneratedPlan(
   generated: GeneratedPlan,
-  onboarding: Record<string, any> | null,
+  _onboarding: Record<string, any> | null,
   start: Date,
   timezone: string,
 ): GeneratedPlan {
-  const fallback = onboarding ? fallbackPlan(onboarding, start, timezone) : null;
   const kind = generated.block.kind;
-  const rhythms = generated.rhythms.length > 0 ? generated.rhythms : fallback?.rhythms ?? fallbackRhythms(start, {}, kind);
+  if (!Array.isArray(generated.rhythms) || generated.rhythms.length === 0) {
+    throw new Error("AI plan generation returned no weekly rhythms.");
+  }
+  const rhythms = generated.rhythms;
   const sanitizedTitle = compactBlockTitle(generated.block.title, generated.block.goalText, rhythms, kind);
   return {
     block: {
@@ -7110,152 +6788,6 @@ function normalizeGeneratedWorkoutTaxonomy(workouts: GeneratedWorkout[]) {
 
 function strengthLetter(index: number) {
   return ["A", "B", "C", "D", "E"][Math.max(0, Math.min(4, index - 1))] ?? "A";
-}
-
-function fallbackPlanFromBlock(block: Record<string, any>, start: Date): GeneratedPlan {
-  return {
-    block: {
-      kind: block.kind,
-      title: block.title,
-      goalText: block.goal_text ?? "",
-      startDate: block.start_date,
-      targetDate: block.target_date,
-      reviewCadenceDays: block.review_cadence_days,
-      context: block.context_json ?? {},
-    },
-    phases: [],
-    rhythms: fallbackRhythms(start, block.context_json?.selectedAnswers ?? {}, block.kind),
-  };
-}
-
-function fallbackRhythms(start: Date, selected: Record<string, any>, kind: string): GeneratedRhythm[] {
-  const weekStart = startOfWeek(start);
-  return [0, 7].map((offset) => {
-    const base = addDays(weekStart, offset);
-    const workouts = fallbackWorkoutsForWeek(base, selected, kind);
-    return {
-      weekStartDate: isoDate(base),
-      weekEndDate: isoDate(addDays(base, 6)),
-      objective: kind === "consistency" ? "Keep a balanced rhythm repeatable." : "Move the strategy forward without crowding recovery.",
-      priorityOrder: workouts.map((workout) => workout.title),
-      hardEasyDistribution: { hard: 1, moderate: 2, easy: Math.max(1, workouts.length - 3) },
-      badDayFloor: selected.badDayFloor || "20-minute easy session",
-      swapRules: ["Preserve the highest-priority session first.", "Use the bad-day floor before skipping completely."],
-      workouts,
-    };
-  });
-}
-
-function fallbackWorkoutsForWeek(base: Date, selected: Record<string, any>, kind: string): GeneratedWorkout[] {
-  const duration = durationMinutes(selected.sessionLength);
-  const daysPerWeek = trainingDaysPerWeek(selected.frequency);
-  const goalText = `${selected.goalBrief ?? ""} ${selected.chosenGoal?.title ?? ""}`.toLowerCase();
-  const runningGoal = /run|half|marathon|5k|10k/.test(goalText);
-  const priorities = Array.isArray(selected.trainingOptions)
-    ? selected.trainingOptions.map((option: Record<string, unknown>) => String(option.activity ?? option.title ?? "").toLowerCase())
-    : [];
-  const cyclingPreferred = priorities.some((activity: string) => /cycl|bike|ride/.test(activity));
-  const cyclingPrimary = /cycl|bike|ride/.test(priorities[0] ?? "") || /cycl|bike|ride/.test(goalText);
-  const strengthPreferred = priorities.some((activity: string) => /strength|gym|lift/.test(activity));
-  const runningPreferred = priorities.some((activity: string) => /run/.test(activity));
-  const cyclingFocusedTemplate = [
-    { day: 0, type: "ride", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base", minutes: Math.max(45, duration) },
-    { day: 1, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength anchor", minutes: Math.max(40, Math.min(50, duration)) },
-    { day: 3, type: "ride", title: "Intervals Ride", intensity: "Hard", purpose: "VO2Max", minutes: Math.max(50, duration) },
-    { day: 5, type: "ride", title: "Long Ride", intensity: "Moderate", purpose: "Endurance", minutes: Math.max(75, duration + 30) },
-    { day: 6, type: "strength", title: "Full Body B", intensity: "Moderate", purpose: "Strength", minutes: Math.max(40, Math.min(50, duration)) },
-    { day: 2, type: "run", title: "Base Run", intensity: "Easy", purpose: "Endurance", minutes: Math.min(35, duration) },
-  ].filter((item) => {
-    if (item.type === "run") return runningPreferred && daysPerWeek >= 6;
-    if (item.day === 6) return strengthPreferred && daysPerWeek >= 5;
-    return true;
-  }).slice(0, Math.max(3, daysPerWeek));
-  const template = kind === "consistency"
-    ? [
-        { day: 0, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength anchor" },
-        { day: 1, type: "cycling", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base" },
-        { day: 4, type: "mobility", title: "Mobility", intensity: "Low", purpose: "Movement quality" },
-        { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
-      ]
-    : cyclingPreferred && cyclingPrimary
-      ? cyclingFocusedTemplate
-    : cyclingPreferred && strengthPreferred
-      ? [
-          { day: 0, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength" },
-          { day: 1, type: "cycling", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base" },
-          { day: 2, type: runningPreferred ? "running" : "cycling", title: runningPreferred ? "Intervals Run" : "Intervals Ride", intensity: "Hard", purpose: "VO2Max" },
-          { day: 3, type: "strength", title: "Full Body B", intensity: "Moderate", purpose: "Strength maintenance" },
-          { day: 5, type: "cycling", title: "Long Ride", intensity: "Moderate", purpose: "Endurance" },
-          { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
-        ]
-      : runningGoal || runningPreferred
-      ? [
-          { day: 0, type: "running", title: "Base Run", intensity: "Zone 2", purpose: "Aerobic base" },
-          { day: 2, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength maintenance" },
-          { day: 4, type: "running", title: "Tempo Run", intensity: "Moderate", purpose: "Threshold" },
-          { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
-        ]
-      : [
-          { day: 0, type: "strength", title: "Full Body A", intensity: "Moderate", purpose: "Strength anchor" },
-          { day: 1, type: "cycling", title: "Base Ride", intensity: "Zone 2", purpose: "Aerobic base" },
-          { day: 3, type: "strength", title: "Full Body B", intensity: "Moderate", purpose: "Strength progression" },
-          { day: 5, type: cyclingPreferred ? "cycling" : "conditioning", title: cyclingPreferred ? "Long Ride" : "Conditioning", intensity: "Moderate", purpose: "Endurance" },
-          { day: 6, type: "recovery", title: "Recovery", intensity: "Low", purpose: "Recovery" },
-        ];
-
-  return template.map((item, index) => ({
-    scheduledDate: isoDate(addDays(base, item.day)),
-    sequenceOrder: index + 1,
-    activityType: item.type,
-    title: item.title,
-    durationMinutes: "minutes" in item ? item.minutes : item.type === "recovery" || item.type === "mobility" ? 30 : duration,
-    intensityLabel: item.intensity,
-    purpose: item.purpose,
-    prescription: fallbackPrescription(item.title, item.type, item.intensity),
-    fuelingSummary: fuelingSummary(item.type, item.intensity),
-  }));
-}
-
-function trainingDaysPerWeek(frequency: string | undefined) {
-  const value = String(frequency ?? "").toLowerCase();
-  if (value.includes("2")) return 2;
-  if (value.includes("3")) return 3;
-  if (value.includes("4")) return 4;
-  if (value.includes("5")) return 5;
-  return 5;
-}
-
-function fallbackPhases(start: Date, targetDate: string | null): GeneratedPhase[] {
-  const end = parseDateOnly(targetDate) ?? addDays(start, 84);
-  const total = Math.max(21, daysBetween(start, end));
-  const firstEnd = addDays(start, Math.floor(total / 3));
-  const secondEnd = addDays(start, Math.floor((total * 2) / 3));
-  return [
-    {
-      name: "Base",
-      startDate: isoDate(start),
-      endDate: isoDate(firstEnd),
-      objective: "Make the goal work repeatable around the user's schedule.",
-      focus: ["Repeatable weekly rhythm", "Support strength and aerobic base"],
-      risk: ["Doing too much too early"],
-    },
-    {
-      name: "Build",
-      startDate: isoDate(addDays(firstEnd, 1)),
-      endDate: isoDate(secondEnd),
-      objective: "Increase goal-specific work while preserving recovery.",
-      focus: ["Goal-specific progression", "Recovery-aware volume"],
-      risk: ["Crowding the week with too much intensity"],
-    },
-    {
-      name: "Review",
-      startDate: isoDate(addDays(secondEnd, 1)),
-      endDate: isoDate(end),
-      objective: "Sharpen the block and review what should happen next.",
-      focus: ["Quality execution", "Next-block decision"],
-      risk: ["Chasing extra work instead of useful work"],
-    },
-  ];
 }
 
 async function markMissedWorkouts(
@@ -8673,12 +8205,6 @@ function blockKind(intent: string) {
   return "specific_goal";
 }
 
-function blockTitle(kind: string, goalText: string) {
-  if (kind === "consistency") return "Consistency Rhythm";
-  if (goalText.trim()) return compactBlockTitle(goalText.trim(), goalText, [], kind);
-  return "Active fitness block";
-}
-
 function compactBlockTitle(
   title: string | undefined,
   goalText: string | undefined,
@@ -8713,23 +8239,6 @@ function compactBlockTitle(
   if (kind === "consistency") return "Consistency Rhythm";
   if (kind === "goal_discovery_chosen") return "Goal Build";
   return "Active Fitness Block";
-}
-
-function targetDateFor(goalTimeline: string | undefined, start: Date, kind: string) {
-  if (kind === "consistency") return null;
-  if (!goalTimeline) return isoDate(addDays(start, kind === "goal_discovery_chosen" ? 56 : 84));
-  const lower = goalTimeline.toLowerCase();
-  if (lower.includes("4")) return isoDate(addDays(start, 28));
-  if (lower.includes("8")) return isoDate(addDays(start, 56));
-  if (lower.includes("12")) return isoDate(addDays(start, 84));
-  const parsed = parseDateOnly(goalTimeline);
-  return parsed ? isoDate(parsed) : isoDate(addDays(start, 84));
-}
-
-function durationMinutes(sessionLength: string | undefined) {
-  if (!sessionLength) return 45;
-  const match = sessionLength.match(/\d+/);
-  return match ? Number(match[0]) : 45;
 }
 
 function fallbackPrescription(title: string, activityType: string, intensity: string) {
@@ -9244,6 +8753,36 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function responsesRequestPayload(
+  model: string,
+  touchpointConfig: AITouchpointConfig,
+  userContent: Record<string, unknown>,
+  format: Record<string, unknown>,
+) {
+  const payload: Record<string, unknown> = {
+    ...(touchpointConfig.parameters ?? {}),
+    model,
+    input: [
+      {
+        role: "system",
+        content: touchpointConfig.systemPrompt,
+      },
+      {
+        role: "user",
+        content: JSON.stringify(userContent),
+      },
+    ],
+    text: {
+      ...(touchpointConfig.text ?? {}),
+      format,
+    },
+  };
+  if (touchpointConfig.reasoning) {
+    payload.reasoning = touchpointConfig.reasoning;
+  }
+  return payload;
 }
 
 function mustGetEnv(name: string) {

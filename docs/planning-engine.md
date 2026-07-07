@@ -93,11 +93,11 @@ The function is authenticated for app tasks. The scheduled task requires service
 - generates current week plus next week
 - creates full workout prescriptions and one-line fueling summaries
 - writes block, phases, weekly rhythms, planned workouts, event log, and AI trace
-- falls back deterministically if OpenAI fails
+- fails with a retryable error if AI plan generation fails
 
 Important QA fix:
 
-- The onboarding row must be fetched as a single object, not an array. Otherwise fallback cannot read `onboarding.intent` and may default incorrectly.
+- The onboarding row must be fetched as a single object, not an array. Otherwise planning cannot reliably read `onboarding.intent`.
 
 ### HealthKit Sync
 
