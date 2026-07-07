@@ -9,6 +9,9 @@ type SupabaseAdminClient = any;
 
 type PlanningTask =
   | "accept_strategy_and_create_initial_plan"
+  | "prepare_initial_strategy_after_blueprint"
+  | "accept_prepared_strategy_and_create_initial_plan"
+  | "get_planning_graph_run_status"
   | "sync_healthkit_and_reconcile"
   | "refresh_plan_window"
   | "refresh_workout_weather_forecasts"
@@ -33,6 +36,12 @@ type PlanningAIRequest = {
   accepted_blueprint?: Record<string, unknown> | null;
   acceptedStrategy?: Record<string, unknown> | null;
   accepted_strategy?: Record<string, unknown> | null;
+  onboardingContext?: Record<string, unknown> | null;
+  onboarding_context?: Record<string, unknown> | null;
+  preparedStrategyID?: string;
+  prepared_strategy_id?: string;
+  graphRunID?: string;
+  graph_run_id?: string;
   acceptedAt?: string;
   accepted_at?: string;
   weeklyPlanConstraint?: WeeklyPlanConstraintInput | null;
@@ -216,6 +225,36 @@ type WeeklyTargetGenerationOutput = {
     weeklyPlanID: string;
     targets: WeeklyTargetProposal[];
   }>;
+};
+
+type GraphNodeTraceInput = {
+  nodeName: string;
+  subgraphName?: string | null;
+  inputSummary?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+  validation?: Record<string, unknown>;
+  status?: "succeeded" | "failed" | "skipped";
+  retryCount?: number;
+  errorMessage?: string | null;
+};
+
+type GraphToolCallInput = {
+  toolName: string;
+  toolVersion?: string;
+  input?: Record<string, unknown>;
+  output?: Record<string, unknown> | null;
+  status?: "succeeded" | "failed" | "skipped";
+  errorMessage?: string | null;
+  latencyMS?: number | null;
+};
+
+type InitialStrategyOrchestrationOutput = {
+  trainingArchitecture: Record<string, any>;
+  fitnessStrategy: Record<string, any>;
+  validation: Record<string, unknown>;
+  nodes: GraphNodeTraceInput[];
+  toolCalls: GraphToolCallInput[];
+  model: Record<string, unknown>;
 };
 
 type WorkoutCandidateInput = {
@@ -784,6 +823,12 @@ async function handleTask(args: {
   switch (requestBody.task) {
     case "accept_strategy_and_create_initial_plan":
       return acceptStrategyAndCreateInitialPlan(admin, userID!, requestBody, touchpointModel("plan_generation"));
+    case "prepare_initial_strategy_after_blueprint":
+      return prepareInitialStrategyAfterBlueprint(admin, userID!, requestBody);
+    case "accept_prepared_strategy_and_create_initial_plan":
+      return acceptPreparedStrategyAndCreateInitialPlan(admin, userID!, requestBody, touchpointModel("plan_generation"));
+    case "get_planning_graph_run_status":
+      return getPlanningGraphRunStatus(admin, userID!, requestBody);
     case "sync_healthkit_and_reconcile":
       return syncHealthKitAndReconcile(admin, userID!, requestBody, touchpointModel("plan_generation"));
     case "refresh_plan_window":
@@ -828,10 +873,7 @@ async function acceptStrategyAndCreateInitialPlan(
   model: string,
 ) {
   const profile = await maybeSingle(admin.from("profiles").select().eq("id", userID));
-  const onboarding = await single(
-    admin.from("onboarding_profiles").select().eq("id", userID).single(),
-    "Completed onboarding profile not found",
-  );
+  const onboarding = await loadPlanningOnboardingContext(admin, userID, requestBody);
 
   const timezone = requestBody.deviceTimezone || "UTC";
   const acceptedAt = parseTimestamp(requestBody.acceptedAt ?? requestBody.accepted_at) ?? new Date();
@@ -857,7 +899,7 @@ async function acceptStrategyAndCreateInitialPlan(
       .from("user_goals")
       .insert({
         user_id: userID,
-        source_onboarding_profile_id: onboarding.id,
+        source_onboarding_profile_id: onboarding.id ?? null,
         source_blueprint_revision_id: blueprintRevision.id,
         goal_kind: goalKind,
         title: acceptedStrategyGoalTitle(acceptedStrategy, onboarding),
@@ -910,6 +952,7 @@ async function acceptStrategyAndCreateInitialPlan(
     onboarding,
     acceptedBlueprint,
     acceptedStrategy,
+    planGenerationPolicy: planGenerationPolicy(onboarding, null),
     healthSnapshot: requestBody.healthSnapshot ?? null,
     deviceTimezone: timezone,
     startDate: isoDate(committedWeekStart),
@@ -1012,6 +1055,466 @@ async function acceptStrategyAndCreateInitialPlan(
     weeklyPlanIDs: weeklyPlans.map((plan) => plan.id),
     eventID: event.id,
     plan: generated,
+  };
+}
+
+async function prepareInitialStrategyAfterBlueprint(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const onboarding = await loadPlanningOnboardingContext(admin, userID, requestBody);
+
+  const timezone = requestBody.deviceTimezone || "UTC";
+  const acceptedAt = parseTimestamp(requestBody.acceptedAt ?? requestBody.accepted_at) ?? new Date();
+  const committedWeekStart = firstCommittedWeekStart(acceptedAt, timezone);
+  const acceptedBlueprint = requestBody.acceptedBlueprint ?? requestBody.accepted_blueprint ?? {};
+  const goalKind = blockKind(String(onboarding.intent ?? ""));
+  const timeframeWeeks = acceptedStrategyTimeframeWeeks({}, onboarding);
+  const requiresPhases = goalKind !== "consistency";
+  const targetDate = goalKind === "consistency" || !timeframeWeeks
+    ? null
+    : isoDate(addDays(committedWeekStart, Math.max(1, timeframeWeeks) * 7 - 1));
+
+  const athleteProfile = await ensureAthleteProfile(admin, userID);
+  const blueprintRevision = await createAcceptedBlueprintRevision(
+    admin,
+    userID,
+    athleteProfile,
+    acceptedBlueprint,
+    requestBody.healthSnapshot,
+    acceptedAt,
+  );
+
+  const goal = await single(
+    admin
+      .from("user_goals")
+      .insert({
+        user_id: userID,
+        source_onboarding_profile_id: onboarding.id ?? null,
+        source_blueprint_revision_id: blueprintRevision.id,
+        goal_kind: goalKind,
+        title: preparedGoalTitle(onboarding),
+        normalized_goal_json: normalizedGoalPayload({}, onboarding, timeframeWeeks),
+        timeframe_weeks: timeframeWeeks,
+        status: "prepared",
+        start_date: isoDate(committedWeekStart),
+        target_date: targetDate,
+        requires_phases: requiresPhases,
+      })
+      .select()
+      .single(),
+    "Could not prepare user goal",
+  );
+
+  const planningPacket = buildCompactPlanningPacket({
+    blueprintRevision,
+    acceptedBlueprint,
+    onboarding,
+    goal,
+    healthSnapshot: requestBody.healthSnapshot ?? null,
+    timezone,
+    startDate: isoDate(committedWeekStart),
+  });
+
+  const graphRun = await createAIGraphRun(admin, {
+    userID,
+    graphName: "training_architecture",
+    triggeringTask: "prepare_initial_strategy_after_blueprint",
+    blueprintRevisionID: blueprintRevision.id,
+    userGoalID: goal.id,
+    input: planningPacket,
+  });
+
+  let orchestration: InitialStrategyOrchestrationOutput;
+  try {
+    orchestration = await runInitialStrategyOrchestration(planningPacket);
+    await completeAIGraphRun(admin, graphRun.id, {
+      status: "succeeded",
+      output: {
+        trainingArchitecture: orchestration.trainingArchitecture,
+        fitnessStrategy: orchestration.fitnessStrategy,
+      },
+      model: orchestration.model,
+    });
+  } catch (error) {
+    await completeAIGraphRun(admin, graphRun.id, {
+      status: "failed",
+      errorSummary: errorMessage(error),
+    });
+    throw error;
+  }
+
+  await insertAIGraphNodeOutputs(admin, graphRun.id, userID, orchestration.nodes);
+  await insertAIToolCalls(admin, graphRun.id, userID, orchestration.toolCalls);
+
+  const trainingArchitecture = await single(
+    admin
+      .from("training_architectures")
+      .insert({
+        user_id: userID,
+        user_goal_id: goal.id,
+        source_blueprint_revision_id: blueprintRevision.id,
+        ai_graph_run_id: graphRun.id,
+        version: 1,
+        status: "prepared",
+        input_packet_json: planningPacket,
+        architecture_json: orchestration.trainingArchitecture,
+        conflict_assessment_json: objectAt(orchestration.trainingArchitecture, "conflict_assessment") ?? {},
+        validation_json: orchestration.validation,
+      })
+      .select()
+      .single(),
+    "Could not persist Training Architecture",
+  );
+
+  await throwOnError(
+    admin
+      .from("ai_graph_runs")
+      .update({ source_training_architecture_id: trainingArchitecture.id })
+      .eq("id", graphRun.id),
+  );
+
+  const acceptedStrategy = orchestration.fitnessStrategy;
+  const strategy = await single(
+    admin
+      .from("fitness_strategies")
+      .insert({
+        user_id: userID,
+        user_goal_id: goal.id,
+        source_blueprint_revision_id: blueprintRevision.id,
+        training_architecture_id: trainingArchitecture.id,
+        version: 1,
+        change_reason: "initial",
+        status: "prepared",
+        title: acceptedStrategyTitle(acceptedStrategy, goalKind),
+        summary: stringAt(acceptedStrategy, "read") || "",
+        rationale: stringAt(acceptedStrategy, "read") || "",
+        review_cadence_days: goalKind === "consistency" ? 28 : Math.max(28, (timeframeWeeks ?? 8) * 7),
+        start_date: isoDate(committedWeekStart),
+        target_date: targetDate,
+        requires_phases: requiresPhases,
+        context_json: {
+          timezone,
+          acceptedAt: acceptedAt.toISOString(),
+          planOwnerStartDate: isoDate(committedWeekStart),
+          acceptedStrategy,
+          trainingArchitectureID: trainingArchitecture.id,
+          graphRunID: graphRun.id,
+        },
+      })
+      .select()
+      .single(),
+    "Could not prepare fitness strategy",
+  );
+
+  await throwOnError(
+    admin
+      .from("ai_graph_runs")
+      .update({ source_fitness_strategy_id: strategy.id })
+      .eq("id", graphRun.id),
+  );
+
+  const phaseRows = await insertAcceptedStrategyPhases(admin, userID, strategy.id, acceptedStrategy);
+  await insertAcceptedPlanningTargets(
+    admin,
+    userID,
+    goal,
+    strategy,
+    phaseRows,
+    acceptedStrategy,
+    isoDate(committedWeekStart),
+    targetDate,
+  );
+
+  if (requestBody.healthSnapshot) {
+    await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot, {
+      userGoalID: goal.id,
+      fitnessStrategyID: strategy.id,
+    });
+  }
+
+  await createPlanEvent(admin, {
+    userID,
+    userGoalID: goal.id,
+    fitnessStrategyID: strategy.id,
+    eventType: "training_architecture_prepared",
+    payload: {
+      graphRunID: graphRun.id,
+      trainingArchitectureID: trainingArchitecture.id,
+      conflictAssessment: trainingArchitecture.conflict_assessment_json ?? null,
+    },
+  });
+  const event = await createPlanEvent(admin, {
+    userID,
+    userGoalID: goal.id,
+    fitnessStrategyID: strategy.id,
+    eventType: "strategy_prepared",
+    payload: {
+      graphRunID: graphRun.id,
+      trainingArchitectureID: trainingArchitecture.id,
+      fitnessStrategyID: strategy.id,
+    },
+  });
+
+  return {
+    userID,
+    model: orchestration.model?.provider ?? "training-orchestrator",
+    status: "completed",
+    graphRunID: graphRun.id,
+    userGoalID: goal.id,
+    fitnessStrategyID: strategy.id,
+    blueprintRevisionID: blueprintRevision.id,
+    trainingArchitectureID: trainingArchitecture.id,
+    eventID: event.id,
+    strategy: acceptedStrategy,
+    trainingArchitecture: orchestration.trainingArchitecture,
+  };
+}
+
+async function acceptPreparedStrategyAndCreateInitialPlan(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const preparedStrategyID = requestBody.preparedStrategyID ?? requestBody.prepared_strategy_id;
+  if (!preparedStrategyID) {
+    throw new Error("accept_prepared_strategy_and_create_initial_plan requires preparedStrategyID");
+  }
+
+  const strategy = await single(
+    admin
+      .from("fitness_strategies")
+      .select()
+      .eq("id", preparedStrategyID)
+      .eq("user_id", userID)
+      .single(),
+    "Prepared fitness strategy not found",
+  );
+  if (!["prepared", "active"].includes(String(strategy.status))) {
+    throw new Error("Fitness strategy is not prepared for acceptance.");
+  }
+
+  const goal = await single(
+    admin
+      .from("user_goals")
+      .select()
+      .eq("id", strategy.user_goal_id)
+      .eq("user_id", userID)
+      .single(),
+    "Prepared user goal not found",
+  );
+  const profile = await maybeSingle(admin.from("profiles").select().eq("id", userID));
+  const onboarding = await maybeSingle(admin.from("onboarding_profiles").select().eq("id", userID).limit(1));
+  const trainingArchitecture = strategy.training_architecture_id
+    ? await maybeSingle(
+      admin
+        .from("training_architectures")
+        .select()
+        .eq("id", strategy.training_architecture_id)
+        .eq("user_id", userID)
+        .limit(1),
+    )
+    : null;
+
+  const timezone = requestBody.deviceTimezone || strategy.context_json?.timezone || "UTC";
+  const acceptedAt = parseTimestamp(requestBody.acceptedAt ?? requestBody.accepted_at) ?? new Date();
+  const acceptedLocalDate = dateOnlyInTimezone(acceptedAt, timezone);
+  const committedWeekStart = firstCommittedWeekStart(acceptedAt, timezone);
+  const draftWeekStart = addDays(committedWeekStart, 7);
+  const ownerStartDate = isoDate(committedWeekStart > acceptedLocalDate ? committedWeekStart : acceptedLocalDate);
+  const acceptedStrategy = objectAt(strategy.context_json ?? {}, "acceptedStrategy") ?? {};
+
+  await supersedeActivePlanningRows(admin, userID);
+  await throwOnError(
+    admin
+      .from("user_goals")
+      .update({
+        status: "active",
+        source_onboarding_profile_id: onboarding?.id ?? goal.source_onboarding_profile_id ?? null,
+      })
+      .eq("id", goal.id)
+      .eq("user_id", userID),
+  );
+  await throwOnError(
+    admin
+      .from("fitness_strategies")
+      .update({
+        status: "active",
+        context_json: {
+          ...(strategy.context_json ?? {}),
+          acceptedAt: acceptedAt.toISOString(),
+          planOwnerStartDate: ownerStartDate,
+        },
+      })
+      .eq("id", strategy.id)
+      .eq("user_id", userID),
+  );
+  if (trainingArchitecture?.id) {
+    await throwOnError(
+      admin
+        .from("training_architectures")
+        .update({ status: "active" })
+        .eq("id", trainingArchitecture.id)
+        .eq("user_id", userID),
+    );
+  }
+
+  const context = {
+    profile,
+    goal,
+    strategy,
+    acceptedStrategy,
+    trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
+    planGenerationPolicy: planGenerationPolicy(onboarding, trainingArchitecture?.architecture_json ?? null),
+    healthSnapshot: requestBody.healthSnapshot ?? null,
+    deviceTimezone: timezone,
+    startDate: isoDate(committedWeekStart),
+    planOwnerStartDate: ownerStartDate,
+    weeklyPlanStatuses: [
+      { weekStartDate: isoDate(committedWeekStart), status: "committed" },
+      { weekStartDate: isoDate(draftWeekStart), status: "draft" },
+    ],
+  };
+
+  const aiGenerated = await runTwoWeekPlanOrchestration(context, model);
+  const initialActuals = actualWorkoutsForInitialWeek(
+    requestBody.actualWorkouts ?? [],
+    isoDate(committedWeekStart),
+    isoDate(addDays(committedWeekStart, 6)),
+    acceptedLocalDate,
+    timezone,
+  );
+  const generated = sanitizeGeneratedPlan(
+    applyInitialWeekActualWorkoutContext(
+      aiGenerated,
+      initialActuals,
+      ownerStartDate,
+    ),
+    onboarding,
+    committedWeekStart,
+    timezone,
+  );
+
+  const weeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
+    userID,
+    strategyID: strategy.id,
+    trainingArchitectureID: trainingArchitecture?.id ?? null,
+    rhythms: generated.rhythms,
+    source: "generated",
+    committedWeekStart: isoDate(committedWeekStart),
+    ownerStartDate,
+    homeLocationLabel: profile?.main_city ?? null,
+  });
+
+  const planningScope: PlanningScope = {
+    goal,
+    strategy: { ...strategy, status: "active" },
+    timezone,
+    homeLocationLabel: profile?.main_city ?? null,
+    weatherSensitive: onboardingHasWeatherBlocker(onboarding),
+    block: {
+      id: strategy.id,
+      kind: goal.goal_kind,
+      title: strategy.title,
+      goal_text: goal.title,
+      start_date: strategy.start_date,
+      target_date: strategy.target_date,
+      review_cadence_days: strategy.review_cadence_days,
+      timezone,
+      context_json: strategy.context_json ?? {},
+    },
+  };
+  const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? [], {
+    createDetectedProposal: false,
+    createDisparityProposal: false,
+  });
+  await generateAndPersistWeeklyTargets(admin, {
+    userID,
+    goal,
+    strategy,
+    weeklyPlans,
+    healthSnapshot: requestBody.healthSnapshot ?? null,
+    acceptedStrategy,
+    model,
+  });
+  await markCurrentWorkoutForStrategy(admin, userID, strategy.id, acceptedLocalDate);
+
+  if (requestBody.healthSnapshot) {
+    await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot, {
+      userGoalID: goal.id,
+      fitnessStrategyID: strategy.id,
+    });
+    await evaluatePlanningTargets(admin, userID, strategy.id, requestBody.healthSnapshot);
+  }
+
+  const event = await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: strategy.id,
+    userGoalID: goal.id,
+    eventType: "strategy_accepted",
+    payload: {
+      usedAIInitialPlan: true,
+      usedFallback: false,
+      usedTrainingArchitecture: Boolean(trainingArchitecture?.id),
+      trainingArchitectureID: trainingArchitecture?.id ?? null,
+      committedWeekStart: isoDate(committedWeekStart),
+      draftWeekStart: isoDate(draftWeekStart),
+      planOwnerStartDate: ownerStartDate,
+      actualSync: initialActualSync,
+    },
+  });
+
+  return {
+    userID,
+    model,
+    usedFallback: false,
+    userGoalID: goal.id,
+    fitnessStrategyID: strategy.id,
+    trainingArchitectureID: trainingArchitecture?.id ?? null,
+    weeklyPlanIDs: weeklyPlans.map((plan) => plan.id),
+    eventID: event.id,
+    plan: generated,
+  };
+}
+
+async function getPlanningGraphRunStatus(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const graphRunID = requestBody.graphRunID ?? requestBody.graph_run_id;
+  if (!graphRunID) {
+    throw new Error("get_planning_graph_run_status requires graphRunID");
+  }
+
+  const graphRun = await single(
+    admin
+      .from("ai_graph_runs")
+      .select()
+      .eq("id", graphRunID)
+      .eq("user_id", userID)
+      .single(),
+    "Planning graph run not found",
+  );
+  const trainingArchitecture = await maybeSingle(
+    admin
+      .from("training_architectures")
+      .select()
+      .eq("ai_graph_run_id", graphRun.id)
+      .eq("user_id", userID)
+      .limit(1),
+  );
+
+  return {
+    userID,
+    graphRunID: graphRun.id,
+    graphName: graphRun.graph_name,
+    status: graphRun.status,
+    errorSummary: graphRun.error_summary ?? null,
+    output: graphRun.output_json ?? null,
+    trainingArchitectureID: trainingArchitecture?.id ?? null,
   };
 }
 
@@ -3930,6 +4433,436 @@ async function scheduledRefreshDueWindows(admin: SupabaseAdminClient, model: str
   };
 }
 
+async function createAIGraphRun(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    graphName: "training_architecture" | "fitness_strategy" | "two_week_plan";
+    triggeringTask: PlanningTask;
+    blueprintRevisionID?: string | null;
+    userGoalID?: string | null;
+    fitnessStrategyID?: string | null;
+    trainingArchitectureID?: string | null;
+    input: Record<string, unknown>;
+  },
+) {
+  return single(
+    admin
+      .from("ai_graph_runs")
+      .insert({
+        user_id: args.userID,
+        graph_name: args.graphName,
+        graph_version: "v1",
+        triggering_task: args.triggeringTask,
+        source_blueprint_revision_id: args.blueprintRevisionID ?? null,
+        source_user_goal_id: args.userGoalID ?? null,
+        source_fitness_strategy_id: args.fitnessStrategyID ?? null,
+        source_training_architecture_id: args.trainingArchitectureID ?? null,
+        status: "running",
+        input_json: args.input,
+        model_json: {},
+      })
+      .select()
+      .single(),
+    "Could not create AI graph run",
+  );
+}
+
+async function completeAIGraphRun(
+  admin: SupabaseAdminClient,
+  graphRunID: string,
+  args: {
+    status: "succeeded" | "failed" | "cancelled";
+    output?: Record<string, unknown>;
+    model?: Record<string, unknown>;
+    errorSummary?: string;
+  },
+) {
+  await throwOnError(
+    admin
+      .from("ai_graph_runs")
+      .update({
+        status: args.status,
+        output_json: args.output ?? null,
+        model_json: args.model ?? {},
+        error_summary: args.errorSummary ?? null,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", graphRunID),
+  );
+}
+
+async function insertAIGraphNodeOutputs(
+  admin: SupabaseAdminClient,
+  graphRunID: string,
+  userID: string,
+  nodes: GraphNodeTraceInput[],
+) {
+  if (nodes.length === 0) return;
+  await throwOnError(
+    admin.from("ai_graph_node_outputs").insert(nodes.map((node, index) => ({
+      graph_run_id: graphRunID,
+      user_id: userID,
+      node_name: node.nodeName,
+      subgraph_name: node.subgraphName ?? null,
+      sequence_order: index + 1,
+      input_summary_json: node.inputSummary ?? {},
+      structured_output_json: node.output ?? {},
+      validation_json: node.validation ?? {},
+      status: node.status ?? "succeeded",
+      retry_count: node.retryCount ?? 0,
+      error_message: node.errorMessage ?? null,
+      finished_at: new Date().toISOString(),
+    }))),
+  );
+}
+
+async function insertAIToolCalls(
+  admin: SupabaseAdminClient,
+  graphRunID: string,
+  userID: string,
+  toolCalls: GraphToolCallInput[],
+) {
+  if (toolCalls.length === 0) return;
+  await throwOnError(
+    admin.from("ai_tool_calls").insert(toolCalls.map((toolCall) => ({
+      graph_run_id: graphRunID,
+      user_id: userID,
+      tool_name: toolCall.toolName,
+      tool_version: toolCall.toolVersion ?? "v1",
+      input_json: toolCall.input ?? {},
+      output_json: toolCall.output ?? null,
+      status: toolCall.status ?? "succeeded",
+      error_message: toolCall.errorMessage ?? null,
+      latency_ms: toolCall.latencyMS ?? null,
+      finished_at: new Date().toISOString(),
+    }))),
+  );
+}
+
+async function runInitialStrategyOrchestration(
+  planningPacket: Record<string, any>,
+): Promise<InitialStrategyOrchestrationOutput> {
+  const serviceURL = Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim();
+  if (serviceURL) {
+    const response = await fetch(`${serviceURL.replace(/\/$/, "")}/planning/prepare-initial-strategy`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")
+          ? { Authorization: `Bearer ${Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")}` }
+          : {}),
+      },
+      body: JSON.stringify({ planningPacket }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.error ?? "Training orchestrator request failed");
+    }
+    return payload as InitialStrategyOrchestrationOutput;
+  }
+
+  const trainingArchitecture = localTrainingArchitecture(planningPacket);
+  const fitnessStrategy = localFitnessStrategy(planningPacket, trainingArchitecture);
+  return {
+    trainingArchitecture,
+    fitnessStrategy,
+    validation: {
+      valid: true,
+      source: "edge_local_contract_bridge",
+      note: "Replace with external LangGraph service output when TRAINING_ORCHESTRATOR_URL is configured.",
+    },
+    nodes: [
+      {
+        nodeName: "validate_packet",
+        output: {
+          blueprintRevisionID: planningPacket.athlete_context?.blueprint_revision_id ?? null,
+          goalKind: planningPacket.goal_context?.goal_kind ?? null,
+        },
+      },
+      {
+        nodeName: "master_coach_framing",
+        output: {
+          priorityOrder: trainingArchitecture.priority_order,
+          weeklyBudget: trainingArchitecture.weekly_budget,
+        },
+      },
+      {
+        nodeName: "specialist_subgraphs",
+        output: {
+          specialists: trainingArchitecture.specialist_recommendations,
+        },
+      },
+      {
+        nodeName: "master_coach_synthesis",
+        output: {
+          conflictAssessment: trainingArchitecture.conflict_assessment,
+        },
+      },
+      {
+        nodeName: "generate_fitness_strategy",
+        output: {
+          targetCount: arrayAt(fitnessStrategy, "targets").length,
+          phaseCount: arrayAt(fitnessStrategy, "phases").length,
+        },
+      },
+    ],
+    toolCalls: [],
+    model: {
+      provider: "edge-local-contract-bridge",
+      graphVersion: "v1",
+    },
+  };
+}
+
+async function runTwoWeekPlanOrchestration(
+  context: Record<string, unknown>,
+  model: string,
+) {
+  const serviceURL = Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim();
+  if (serviceURL) {
+    const response = await fetch(`${serviceURL.replace(/\/$/, "")}/planning/two-week-plan`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")
+          ? { Authorization: `Bearer ${Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")}` }
+          : {}),
+      },
+      body: JSON.stringify({ context }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.error ?? "Two-week plan graph request failed");
+    }
+    return payload.plan as GeneratedPlan;
+  }
+
+  return runPlanGeneration("accept_prepared_strategy_and_create_initial_plan", context, model);
+}
+
+function localTrainingArchitecture(packet: Record<string, any>) {
+  const modalities = compactStringArray(packet.goal_context?.selected_modality_order ?? []);
+  const priorityOrder = modalities.length > 0 ? modalities : ["general"];
+  const frequency = String(packet.planning_constraints?.frequency ?? "");
+  const parsedFrequency = Number(frequency.match(/\d+/)?.[0] ?? NaN);
+  const targetSessions = Number.isFinite(parsedFrequency) ? Math.max(2, Math.min(6, parsedFrequency)) : 3;
+  const requiresPhases = packet.goal_context?.goal_kind !== "consistency";
+  const goalText = JSON.stringify(packet.goal_context?.normalized_goal ?? {}).toLowerCase();
+  const conflictSignals = [
+    goalText.includes("bodybuilder") && goalText.includes("tour de france")
+      ? "maximal_hypertrophy_vs_grand_tour_endurance"
+      : null,
+    goalText.includes("lose") && goalText.includes("power")
+      ? "body_composition_vs_performance_fatigue"
+      : null,
+  ].filter(Boolean);
+  const conflictStatus = conflictSignals.length > 0
+    ? "conflicting"
+    : priorityOrder.length > 2
+    ? "manageable_tradeoff"
+    : "clear";
+
+  return {
+    source_ids: {
+      blueprint_revision_id: packet.athlete_context?.blueprint_revision_id ?? null,
+      user_goal_id: packet.goal_context?.user_goal_id ?? null,
+    },
+    goal_read: {
+      summary: `Build training around ${packet.goal_context?.normalized_goal?.title ?? "the active goal"}.`,
+      goal_kind: packet.goal_context?.goal_kind ?? "consistency",
+      success_definition: packet.goal_context?.success_definition ?? null,
+    },
+    modality_roles: priorityOrder.map((modality, index) => ({
+      modality,
+      role: index === 0 ? "primary_driver" : modality === "running" ? "optional_filler" : "secondary_support",
+      rationale: index === 0
+        ? "This modality best expresses the stated goal and should anchor progression."
+        : "This modality supports the goal without consuming the recovery budget.",
+    })),
+    priority_order: priorityOrder,
+    weekly_budget: {
+      target_sessions: targetSessions,
+      minimum_viable_sessions: Math.max(1, Math.min(3, targetSessions - 1)),
+      hard_sessions: Math.max(1, Math.min(2, Math.floor(targetSessions / 3))),
+      recovery_sessions: 1,
+    },
+    recovery_envelope: {
+      max_hard_days_per_week: Math.max(1, Math.min(2, Math.floor(targetSessions / 3))),
+      spacing_rules: [
+        "Do not stack hard lower-body strength and hard endurance on adjacent days unless the week has no alternative.",
+      ],
+      bad_day_floor: packet.planning_constraints?.bad_day_floor ?? null,
+    },
+    minimum_effective_dose_rules: [
+      "Protect the minimum viable week before adding optional work.",
+      "Keep the primary modality visible every week unless injury, illness, or travel makes it inappropriate.",
+    ],
+    specialist_recommendations: priorityOrder.map((modality, index) => ({
+      coach: `${modality}_coach`,
+      modality,
+      role: index === 0 ? "primary_driver" : modality === "running" ? "optional_filler" : "secondary_support",
+      development_path: localDevelopmentPath(modality, packet),
+      weekly_dose: index === 0 ? "protected recurring exposure" : "dose capped around the primary driver",
+      key_risks: localModalityRisks(modality),
+      planning_rules: [
+        index === 0
+          ? `Protect ${modality} quality before optional support work.`
+          : `Keep ${modality} bounded unless the active goal explicitly promotes it.`,
+      ],
+    })),
+    phase_logic: {
+      requires_phases: requiresPhases,
+      phases: requiresPhases
+        ? [
+          { id: "base", name: "Base", objective: "Make the weekly structure reliable." },
+          { id: "build", name: "Build", objective: "Increase goal-specific dose." },
+          { id: "review", name: "Review", objective: "Confirm progress and decide the next move." },
+        ]
+        : [],
+    },
+    progression_rules: [
+      "Progress only when the committed week is mostly completed and recovery caveats are not worsening.",
+      "Prefer a small dose increase over adding a new modality when adherence is uncertain.",
+    ],
+    interference_rules: [
+      "Protect quality days for the primary modality.",
+      "Use support modalities as reinforcement, not competition for the same fatigue budget.",
+    ],
+    conflict_assessment: {
+      status: conflictStatus,
+      summary: conflictStatus === "conflicting"
+        ? "The stated goals cannot all be maximized at the same time without prioritization."
+        : conflictStatus === "manageable_tradeoff"
+        ? "The goal is viable if support modalities stay bounded."
+        : "No major conflict is visible in the planning packet.",
+      required_tradeoffs: conflictSignals.length > 0
+        ? conflictSignals
+        : ["Recovery and adherence take precedence over optional volume."],
+    },
+    planner_constraints: {
+      weekly_plan_rules: [
+        "Week 1 is committed; week 2 is draft and must preserve user-authored constraints.",
+      ],
+      workout_generation_rules: [
+        "Every workout must have a purpose tied to the Training Architecture.",
+      ],
+      target_generation_rules: [
+        "Targets must be measurable from planned workouts, actual workouts, body entries, or performance observations.",
+      ],
+    },
+  };
+}
+
+function localFitnessStrategy(packet: Record<string, any>, architecture: Record<string, any>) {
+  const primary = String(architecture.priority_order?.[0] ?? "training");
+  const requiresPhases = Boolean(architecture.phase_logic?.requires_phases);
+  const minSessions = Number(architecture.weekly_budget?.minimum_viable_sessions ?? 2);
+  const hardCap = Number(architecture.recovery_envelope?.max_hard_days_per_week ?? 1);
+  const targets = [
+    strategyTarget("primary_exposure", "strategy", "primary", `${titleCase(primary)} weeks`, "Keep the primary training signal present across the strategy.", "planned_session_completion", primary, "complete", minSessions, "sessions/week", `${minSessions}/wk`),
+    strategyTarget("weekly_rhythm", "strategy", "supporting", "Rhythm weeks", "Complete enough sessions for the week to count.", "training_workouts_7d", "consistency", "maintain", minSessions, "sessions/week", `${minSessions}/wk`),
+    strategyTarget("hard_day_cap", "strategy", "supporting", "Hard day cap", "Keep hard training inside the recovery envelope.", "hard_sessions_per_week", "recovery", "maintain", hardCap, "sessions/week", `${hardCap}/wk`),
+  ];
+
+  return {
+    read: architecture.conflict_assessment?.status === "conflicting"
+      ? `HAYF will coach this by forcing the tradeoff into the open before the plan gets concrete. ${titleCase(primary)} stays first, support work is capped, and the week must protect recovery instead of pretending every goal can be maximized at once.`
+      : `HAYF will coach this through a ${titleCase(primary)}-led structure with support work kept useful but bounded. The strategy protects the weekly budget, spaces hard work, and lets progression happen only when the committed week is actually holding.`,
+    goalTargetContext: {
+      title: String(packet.goal_context?.normalized_goal?.title ?? "Active goal"),
+      summary: "This is the user target HAYF is translating into a coaching strategy.",
+    },
+    snapshotItems: [
+      { id: "priority", systemImage: "target", value: titleCase(primary), label: "Primary driver" },
+      { id: "budget", systemImage: "calendar", value: `${architecture.weekly_budget?.target_sessions ?? 3}/wk`, label: "Training budget" },
+      { id: "timeframe", systemImage: "clock", value: packet.goal_context?.timeframe_weeks ? `${packet.goal_context.timeframe_weeks} wks` : "Rolling", label: "Strategy horizon" },
+      { id: "tradeoff", systemImage: "arrow.triangle.branch", value: tradeoffLabel(architecture), label: "Tradeoff read" },
+    ],
+    fitReasons: [
+      { id: "blueprint_fit", systemImage: "person.text.rectangle", title: "Blueprint-led", summary: "The strategy starts from the accepted athlete read." },
+      { id: "modality_fit", systemImage: "figure.run", title: "Priority-aware", summary: "Support work stays bounded around the primary driver." },
+      { id: "recovery_fit", systemImage: "heart", title: "Recovery-aware", summary: "Hard work is capped by the recovery envelope." },
+    ],
+    pillars: [
+      { id: "protect_primary", title: `Protect ${titleCase(primary)}`, summary: "Keep the main goal signal visible every week." },
+      { id: "bound_support", title: "Bound support work", summary: "Use secondary modalities without stealing recovery." },
+      { id: "earn_progression", title: "Earn progression", summary: "Increase load only when the week is holding." },
+    ],
+    phases: requiresPhases
+      ? (architecture.phase_logic?.phases ?? []).map((phase: Record<string, any>) => ({
+        id: phase.id,
+        name: phase.name,
+        objective: phase.objective,
+        targetSummary: "This phase should prove the strategy is moving without breaking recovery.",
+        targets: targets.map((target) => ({ ...target, id: `${phase.id}_${target.id}`, scope: "phase" })),
+      }))
+      : [],
+    operatingRhythm: requiresPhases ? null : {
+      summary: "HAYF will treat consistency as the result, using the smallest useful week that can repeat.",
+      anchors: (architecture.priority_order ?? []).slice(0, 3).map(titleCase),
+    },
+    targets,
+  };
+}
+
+function strategyTarget(
+  id: string,
+  scope: string,
+  kind: string,
+  title: string,
+  summary: string,
+  metricKey: string,
+  metricCategory: string,
+  direction: string,
+  targetValue: number,
+  unit: string,
+  displayValue: string,
+) {
+  return {
+    id,
+    scope,
+    kind,
+    title,
+    summary,
+    metricKey,
+    metricCategory,
+    direction,
+    targetValue,
+    unit,
+    displayValue,
+  };
+}
+
+function localDevelopmentPath(modality: string, packet: Record<string, any>) {
+  if (modality === "cycling") return "aerobic durability, climbing-specific quality, and fatigue-managed intensity";
+  if (modality === "strength") {
+    return packet.goal_context?.body_composition_intent
+      ? "hypertrophy-preserving strength with visible-athletic support"
+      : "general strength continuity and movement quality";
+  }
+  if (modality === "running") return "light aerobic support unless explicitly promoted by the goal";
+  return "repeatable general training exposure";
+}
+
+function localModalityRisks(modality: string) {
+  if (modality === "cycling") return ["lower-body fatigue can crowd strength quality"];
+  if (modality === "strength") return ["soreness can reduce endurance quality"];
+  if (modality === "running") return ["extra impact can compete with recovery"];
+  return ["too much novelty can reduce adherence"];
+}
+
+function tradeoffLabel(architecture: Record<string, any>) {
+  switch (architecture.conflict_assessment?.status) {
+    case "conflicting":
+      return "Needs priority";
+    case "manageable_tradeoff":
+      return "Managed";
+    default:
+      return "Clear";
+  }
+}
+
 async function runPlanGeneration(task: PlanningTask, context: Record<string, unknown>, model: string): Promise<GeneratedPlan> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
   const touchpointConfig = planningAITouchpoint("plan_generation", { workoutTaxonomyRules });
@@ -4783,6 +5716,259 @@ async function createAcceptedBlueprintRevision(
   return revision;
 }
 
+function preparedGoalTitle(onboarding: Record<string, any>) {
+  const selected = onboarding.selected_answers ?? {};
+  return selected.chosenGoal?.title
+    || selected.goalBrief
+    || selected.goalTarget?.title
+    || selected.goalText
+    || (blockKind(String(onboarding.intent ?? "")) === "consistency" ? "Build consistency" : "Active goal");
+}
+
+async function loadPlanningOnboardingContext(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const persisted = await maybeSingle(
+    admin
+      .from("onboarding_profiles")
+      .select()
+      .eq("id", userID)
+      .limit(1),
+  );
+  if (persisted) return persisted;
+
+  const context = requestBody.onboardingContext ?? requestBody.onboarding_context;
+  const intent = stringAt(context ?? {}, "intent");
+  if (!context || !intent) {
+    throw new Error("prepare_initial_strategy_after_blueprint requires onboarding context before onboarding is completed.");
+  }
+
+  return {
+    id: null,
+    intent,
+    selected_answers: context,
+    generated_summary: null,
+    health_permission_state: null,
+  };
+}
+
+function buildCompactPlanningPacket(args: {
+  blueprintRevision: Record<string, any>;
+  acceptedBlueprint: Record<string, unknown>;
+  onboarding: Record<string, any>;
+  goal: Record<string, any>;
+  healthSnapshot: Record<string, unknown> | null;
+  timezone: string;
+  startDate: string;
+}) {
+  const selected = args.onboarding.selected_answers ?? {};
+  const modalities = selectedModalitiesFromOnboarding(args.onboarding);
+  const constraints = planningConstraintsFromOnboarding(args.onboarding);
+  return {
+    athlete_context: {
+      blueprint_revision_id: args.blueprintRevision.id,
+      coach_read: String(args.blueprintRevision.coach_read ?? ""),
+      athlete_archetype: args.blueprintRevision.athlete_archetype_json ?? {},
+      current_training_state: args.blueprintRevision.current_training_state_json ?? {},
+      history_findings: args.blueprintRevision.history_findings_json ?? [],
+      goal_fit: args.blueprintRevision.goal_fit_json ?? {},
+      hidden_inputs: args.blueprintRevision.planning_inputs_json ?? { acceptedBlueprint: args.acceptedBlueprint },
+    },
+    goal_context: {
+      user_goal_id: args.goal.id,
+      normalized_goal: args.goal.normalized_goal_json ?? {},
+      goal_kind: args.goal.goal_kind,
+      timeframe_weeks: args.goal.timeframe_weeks ?? null,
+      success_definition: selected.goalBrief ?? selected.markerText ?? null,
+      selected_modality_order: modalities,
+      body_composition_intent: bodyCompositionIntent(selected),
+    },
+    planning_constraints: {
+      feasible_modalities: modalities.length > 0 ? modalities : constraints.feasibleModalities,
+      frequency: selected.frequency?.summary ?? selected.frequency ?? null,
+      session_length: selected.sessionLength?.summary ?? selected.sessionCapacity?.summary ?? selected.sessionLength ?? null,
+      injuries: selected.injuries ?? selected.injuryNotes ?? null,
+      equipment_access: constraints.equipmentAccess,
+      avoidances: constraints.avoidances,
+      bad_day_floor: selected.badDayFloor?.summary ?? selected.floorSummary ?? selected.floor ?? null,
+      timezone: args.timezone,
+      start_date: args.startDate,
+    },
+    approved_evidence_summary: compactEvidenceSummary(args.healthSnapshot),
+    generation_policy: {
+      visible_horizon_weeks: 2,
+      committed_horizon_weeks: 1,
+      allowed_claims: [
+        "Use only the accepted Athlete Blueprint and compact derived evidence.",
+        "Do not infer medical diagnoses or prescribe medical care.",
+        "Do not claim raw HealthKit sample access.",
+      ],
+      ai_first_plan_generation: true,
+    },
+  };
+}
+
+function selectedModalitiesFromOnboarding(onboarding: Record<string, any>) {
+  const selected = onboarding.selected_answers ?? {};
+  const candidates = [
+    selected.trainingOptions,
+    selected.selectedTrainingOptions,
+    selected.supportingTrainingOptions,
+    selected.options,
+    selected.modalities,
+  ].find(Array.isArray) as unknown[] | undefined;
+  const values = (candidates ?? [])
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      if (entry && typeof entry === "object") {
+        const object = entry as Record<string, any>;
+        return object.title ?? object.label ?? object.name ?? object.id;
+      }
+      return null;
+    })
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+  return Array.from(new Set(values.map(normalizedModalityLabel))).slice(0, 5);
+}
+
+function planningConstraintsFromOnboarding(onboarding: Record<string, any>) {
+  const selected = onboarding.selected_answers ?? {};
+  const equipmentAccess = compactStringArray(selected.infrastructureAccess ?? selected.equipmentAccess ?? selected.infrastructure ?? []);
+  const avoidances = compactStringArray(selected.avoids ?? selected.avoidances ?? selected.blockers ?? []);
+  const feasibleModalities = compactStringArray(selected.feasibleModalities ?? selected.trainingOptions ?? [])
+    .map(normalizedModalityLabel)
+    .filter(Boolean);
+  return { equipmentAccess, avoidances, feasibleModalities };
+}
+
+function compactStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      if (entry && typeof entry === "object") {
+        const object = entry as Record<string, any>;
+        return object.title ?? object.label ?? object.name ?? object.id ?? null;
+      }
+      return null;
+    })
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => entry.trim());
+}
+
+function bodyCompositionIntent(selected: Record<string, any>) {
+  const text = [
+    selected.goalBrief,
+    selected.markerText,
+    selected.chosenGoal?.title,
+    selected.chosenGoal?.rationale,
+  ].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return null;
+  if (/weight|fat|lean|muscle|body|aesthetic|athletic look|defined/.test(text)) return text.slice(0, 240);
+  return null;
+}
+
+function compactEvidenceSummary(snapshot: Record<string, any> | null) {
+  if (!snapshot) {
+    return {
+      recent_training_load: {},
+      consistency: {},
+      modality_mix: {},
+      body_recovery_context: {},
+      confidence: "low",
+      caveats: ["No HealthKit-derived planning snapshot was available."],
+    };
+  }
+
+  const fitnessHistory = snapshot.fitnessHistory ?? snapshot.fitness_history ?? {};
+  return {
+    recent_training_load: {
+      generatedAt: snapshotGeneratedAt(snapshot),
+      loadWindows: (fitnessHistory.load?.windows ?? []).map((window: Record<string, any>) => ({
+        window: window.window,
+        workouts: window.workouts,
+        totalMinutes: window.totalMinutes,
+        totalDistanceKilometers: window.totalDistanceKilometers,
+      })),
+      workouts7d: snapshot.workoutLedger?.windows?.find?.((window: Record<string, any>) => window.window === "7d")?.workouts ?? null,
+    },
+    consistency: {
+      activeWeeks: fitnessHistory.consistency?.activeWeeks ?? null,
+      longestActiveWeekStreak: fitnessHistory.consistency?.longestActiveWeekStreak ?? null,
+      longestGapDays: fitnessHistory.consistency?.longestGapDays ?? null,
+    },
+    modality_mix: {
+      trainingIdentity: fitnessHistory.trainingIdentity?.label ?? null,
+      dominantModalities: fitnessHistory.trainingIdentity?.dominantModalities ?? [],
+      strengthWorkouts90Days: fitnessHistory.strengthContinuity?.strengthWorkouts90Days ?? null,
+    },
+    body_recovery_context: {
+      sleepHoursLastNight: snapshot.recovery?.sleepHoursLastNight ?? null,
+      hrvTrend: snapshot.recovery?.hrvTrend ?? null,
+      restingHeartRateTrend: snapshot.recovery?.restingHeartRateTrend ?? null,
+      bodyMassKilograms: snapshot.body?.bodyMassKilograms ?? null,
+      bodyMassTrend: snapshot.body?.bodyMassTrend ?? fitnessHistory.bodyTrend?.bodyMassTrend ?? null,
+      bodyFatTrend: snapshot.body?.bodyFatTrend ?? fitnessHistory.bodyTrend?.bodyFatTrend ?? null,
+    },
+    confidence: fitnessHistory.confidence ?? "medium",
+    caveats: Array.isArray(snapshot.notes) ? snapshot.notes.slice(0, 8) : [],
+  };
+}
+
+function planGenerationPolicy(
+  onboarding: Record<string, any> | null,
+  trainingArchitecture: Record<string, any> | null,
+) {
+  const allowedActivities = allowedPlanActivities(onboarding, trainingArchitecture);
+  return {
+    allowedActivities,
+    allowedModalities: allowedActivities.map(displayModalityForActivity),
+    hardRules: allowedActivities.length > 0
+      ? [
+        "Generate planned workouts only from allowedActivities.",
+        "Do not introduce off-menu modalities such as rowing, swimming, hiking, walking, or mobility unless they appear in allowedActivities.",
+        "Use recovery only as prescription/recovery guidance, not as an extra planned workout modality.",
+      ]
+      : [],
+  };
+}
+
+function allowedPlanActivities(
+  onboarding: Record<string, any> | null,
+  trainingArchitecture: Record<string, any> | null,
+) {
+  const fromOnboarding = onboarding ? selectedModalitiesFromOnboarding(onboarding) : [];
+  const fromArchitecture = compactStringArray([
+    ...(Array.isArray(trainingArchitecture?.priority_order) ? trainingArchitecture.priority_order : []),
+    ...(Array.isArray(trainingArchitecture?.modality_roles)
+      ? trainingArchitecture.modality_roles.map((role: Record<string, any>) => role.modality)
+      : []),
+  ]);
+  const modalities = fromOnboarding.length > 0 ? fromOnboarding : fromArchitecture;
+  return Array.from(new Set(
+    modalities
+      .map((modality) => normalizeActivity(modality))
+      .filter((activity) => activity && activity !== "workout" && activity !== "recovery" && activity !== "mobility"),
+  ));
+}
+
+function displayModalityForActivity(activity: string) {
+  if (activity === "ride") return "cycling";
+  if (activity === "run") return "running";
+  return activity;
+}
+
+function normalizedModalityLabel(value: string) {
+  const text = value.trim().toLowerCase();
+  if (text.includes("cycl")) return "cycling";
+  if (text.includes("run")) return "running";
+  if (text.includes("strength") || text.includes("gym") || text.includes("lift")) return "strength";
+  if (text.includes("walk")) return "walking";
+  if (text.includes("mobility") || text.includes("yoga")) return "mobility";
+  return text.replace(/\s+/g, "_");
+}
+
 function acceptedStrategyGoalTitle(strategy: Record<string, unknown>, onboarding: Record<string, any>) {
   const fromStrategy = stringAt(objectAt(strategy, "goalTargetContext"), "title");
   const selected = onboarding.selected_answers ?? {};
@@ -4951,6 +6137,7 @@ async function insertWeeklyPlansAndWorkouts(
   args: {
     userID: string;
     strategyID: string;
+    trainingArchitectureID?: string | null;
     rhythms: GeneratedRhythm[];
     source: "generated" | "replanned";
     committedWeekStart: string;
@@ -4967,6 +6154,7 @@ async function insertWeeklyPlansAndWorkouts(
         .upsert(
           {
             fitness_strategy_id: args.strategyID,
+            training_architecture_id: args.trainingArchitectureID ?? null,
             user_id: args.userID,
             week_start_date: rhythm.weekStartDate,
             week_end_date: rhythm.weekEndDate,
@@ -5130,7 +6318,7 @@ function estimatedDistanceKilometers(
     kilometersPerHour = 5;
   } else if (activity === "hike" || /hike/.test(text)) {
     kilometersPerHour = 4.5;
-  } else if (activity === "row" || /row/.test(text)) {
+  } else if (activity === "row" || /\b(row|rows|rowing|rower)\b/.test(text)) {
     kilometersPerHour = 8;
   } else if (activity === "swim" || /swim/.test(text)) {
     kilometersPerHour = 2;
@@ -5911,7 +7099,7 @@ function normalizedWeeklyTargetValue(value: number | null | undefined, family: W
   const numeric = typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
   switch (family) {
     case "planned_session_completion":
-      return Math.max(1, Math.min(workouts.length, numeric ? Math.round(numeric) : workouts.length));
+      return Math.max(1, workouts.length);
     case "minimum_viable_week":
       return Math.max(1, Math.min(workouts.length, numeric ? Math.round(numeric) : Math.ceil(workouts.length * 0.6)));
     case "active_days":
@@ -6376,17 +7564,17 @@ function evaluateWeeklyTarget(
     return weeklyEvaluation("needs_review", null, null, "This weekly target needs a clearer measurable rule.", { reason: "missing_target_value" }, "low");
   }
 
-  const currentValue = weeklyCurrentValue(family, modality, workouts, actualByPlannedID, snapshot, target);
-  if (currentValue === null) {
-    return weeklyEvaluation("needs_review", null, null, "HAYF does not have enough data to evaluate this weekly target yet.", { reason: "missing_weekly_metric", family }, "low");
-  }
-
   const today = new Date();
   const start = parseDateOnly(target.start_date);
   const end = parseDateOnly(target.target_date);
   const weekIsFuture = start ? start > today : false;
   if (weekIsFuture) {
-    return weeklyEvaluation("needs_review", currentValue, null, "This draft-week target will be evaluated once the week starts.", { currentValue, targetValue, family }, "medium");
+    return weeklyEvaluation("needs_review", null, null, "This draft-week target will be evaluated once the week starts.", { targetValue, family, comparator }, "medium");
+  }
+
+  const currentValue = weeklyCurrentValue(family, modality, workouts, actualByPlannedID, snapshot, target);
+  if (currentValue === null) {
+    return weeklyEvaluation("needs_review", null, null, "HAYF does not have enough data to evaluate this weekly target yet.", { reason: "missing_weekly_metric", family }, "low");
   }
 
   const achieved = comparator === "at_most" ? currentValue <= targetValue : currentValue >= targetValue;
@@ -6417,7 +7605,7 @@ function weeklyCurrentValue(
   snapshot: Record<string, any> | null,
   target: Record<string, any>,
 ) {
-  const completed = workouts.filter((workout) => isCompletedWorkout(workout));
+  const completed = workouts.filter((workout) => isCompletedWorkout(workout, actualByPlannedID));
   const completedForModality = completed.filter((workout) => !modality || workoutMatchesModality(workout, modality));
   const actualsForCompleted = completedForModality.map((workout) => actualByPlannedID.get(workout.id)).filter(Boolean) as Record<string, any>[];
   const actualsForModality = modality
@@ -6472,8 +7660,12 @@ function actualMatchesModality(actual: Record<string, any>, modality: string) {
   return normalizeActivity(`${actual.activity_type ?? ""}`) === modality;
 }
 
-function isCompletedWorkout(workout: Record<string, any>) {
-  return ["done", "checked_in"].includes(String(workout.status));
+function isCompletedWorkout(
+  workout: Record<string, any>,
+  actualByPlannedID?: Map<string, Record<string, any>>,
+) {
+  if (String(workout.status) === "done") return true;
+  return actualByPlannedID?.has(String(workout.id)) ?? false;
 }
 
 function longestWorkoutGapDays(workouts: Record<string, any>[], startDate: string, endDate: string) {
@@ -6723,7 +7915,7 @@ function countActualsByDateAndModality(actuals: InitialWeekActualWorkout[]) {
 
 function sanitizeGeneratedPlan(
   generated: GeneratedPlan,
-  _onboarding: Record<string, any> | null,
+  onboarding: Record<string, any> | null,
   start: Date,
   timezone: string,
 ): GeneratedPlan {
@@ -6732,6 +7924,7 @@ function sanitizeGeneratedPlan(
     throw new Error("AI plan generation returned no weekly rhythms.");
   }
   const rhythms = generated.rhythms;
+  const allowedActivities = allowedPlanActivities(onboarding, null);
   const sanitizedTitle = compactBlockTitle(generated.block.title, generated.block.goalText, rhythms, kind);
   return {
     block: {
@@ -6749,7 +7942,10 @@ function sanitizeGeneratedPlan(
     phases: kind === "consistency" ? [] : generated.phases,
     rhythms: rhythms.map((rhythm) => ({
       ...rhythm,
-      workouts: normalizeGeneratedWorkoutTaxonomy(rhythm.workouts).map((workout, index) => ({
+      workouts: sanitizeGeneratedWorkoutsForAllowedActivities(
+        normalizeGeneratedWorkoutTaxonomy(rhythm.workouts),
+        allowedActivities,
+      ).map((workout, index) => ({
         ...workout,
         sequenceOrder: workout.sequenceOrder || index + 1,
         durationMinutes: Math.max(10, workout.durationMinutes || 30),
@@ -6758,6 +7954,31 @@ function sanitizeGeneratedPlan(
       })),
     })),
   };
+}
+
+function sanitizeGeneratedWorkoutsForAllowedActivities(
+  workouts: GeneratedWorkout[],
+  allowedActivities: string[],
+) {
+  if (allowedActivities.length === 0) return workouts;
+  const allowed = new Set(allowedActivities);
+  return workouts.map((workout, index) => {
+    const activity = normalizeActivity(`${workout.activityType} ${workout.title} ${workout.purpose}`);
+    if (allowed.has(activity)) return workout;
+
+    const replacementActivity = allowedActivities[index % allowedActivities.length] ?? allowedActivities[0];
+    const template = workoutTemplateForModality(replacementActivity);
+    return {
+      ...workout,
+      activityType: template.activityType,
+      title: template.title,
+      intensityLabel: template.intensityLabel,
+      purpose: template.purpose,
+      prescription: template.prescription,
+      fuelingSummary: template.fuelingSummary,
+      durationMinutes: workout.durationMinutes || template.durationMinutes,
+    };
+  });
 }
 
 function normalizeGeneratedWorkoutTaxonomy(workouts: GeneratedWorkout[]) {
@@ -7499,6 +8720,7 @@ async function persistFitnessEvidence(
   userID: string,
   activeBlockID: string | null,
   snapshot: Record<string, any>,
+  links: { userGoalID?: string | null; fitnessStrategyID?: string | null } = {},
 ) {
   const profile = snapshot.fitnessHistory ?? snapshot.fitness_history;
   if (!profile) {
@@ -7516,6 +8738,8 @@ async function persistFitnessEvidence(
         insights.map((insight: Record<string, any>) => ({
           user_id: userID,
           active_block_id: activeBlockID,
+          user_goal_id: links.userGoalID ?? null,
+          fitness_strategy_id: links.fitnessStrategyID ?? null,
           insight_key: insight.key,
           category: insight.category ?? "general",
           title: insight.title ?? "Fitness insight",
@@ -7530,7 +8754,7 @@ async function persistFitnessEvidence(
     );
   }
 
-  const observations = fitnessMetricObservations(userID, activeBlockID, snapshot, profile, generatedAt);
+  const observations = fitnessMetricObservations(userID, activeBlockID, snapshot, profile, generatedAt, links);
   if (observations.length > 0) {
     await throwOnError(admin.from("fitness_metric_observations").insert(observations));
   }
@@ -7542,6 +8766,7 @@ function fitnessMetricObservations(
   snapshot: Record<string, any>,
   profile: Record<string, any>,
   observedAt: string,
+  links: { userGoalID?: string | null; fitnessStrategyID?: string | null } = {},
 ) {
   const rows: Array<Record<string, unknown>> = [];
   const push = (
@@ -7561,6 +8786,8 @@ function fitnessMetricObservations(
     rows.push({
       user_id: userID,
       active_block_id: activeBlockID,
+      user_goal_id: links.userGoalID ?? null,
+      fitness_strategy_id: links.fitnessStrategyID ?? null,
       source: "healthkit",
       metric_key: metricKey,
       metric_label: metricLabel,
@@ -7589,10 +8816,10 @@ function fitnessMetricObservations(
   push("active_energy_7d_kcal", "Active energy 7d", "activity_floor", snapshot.activity?.activeEnergy7DaysKilocalories, "kcal", { window: "7d" });
   push("body_mass_latest_kg", "Body mass latest", "body", recentBodyMetricValue(snapshot.body?.bodyMassKilograms, snapshot.body?.bodyMassLatestSampleDate), "kg");
   push("body_mass_28d_avg_kg", "Body mass 28d average", "body", snapshot.body?.bodyMass28DayAverageKilograms, "kg", { window: "28d" });
-  pushBodyTrendObservations(rows, userID, activeBlockID, observedAt, "body_mass", "Body mass", "kg", snapshot.body?.bodyMassHistory ?? profile.bodyTrend?.bodyMassHistory);
+  pushBodyTrendObservations(rows, userID, activeBlockID, observedAt, "body_mass", "Body mass", "kg", snapshot.body?.bodyMassHistory ?? profile.bodyTrend?.bodyMassHistory, links);
   push("body_fat_latest_percentage", "Body fat latest", "body", recentBodyMetricValue(snapshot.body?.bodyFatPercentage, snapshot.body?.bodyFatLatestSampleDate), "%");
   push("body_fat_28d_avg_percentage", "Body fat 28d average", "body", snapshot.body?.bodyFat28DayAveragePercentage, "%", { window: "28d" });
-  pushBodyTrendObservations(rows, userID, activeBlockID, observedAt, "body_fat", "Body fat", "percentage_points", snapshot.body?.bodyFatHistory ?? profile.bodyTrend?.bodyFatHistory);
+  pushBodyTrendObservations(rows, userID, activeBlockID, observedAt, "body_fat", "Body fat", "percentage_points", snapshot.body?.bodyFatHistory ?? profile.bodyTrend?.bodyFatHistory, links);
   push("vo2_max_latest", "VO2 max latest", "recovery", snapshot.recovery?.vo2MaxLatest, "mL/kg/min");
   push("active_weeks", "Active training weeks", "consistency", profile.consistency?.activeWeeks, "weeks");
   push("longest_active_week_streak", "Longest active week streak", "consistency", profile.consistency?.longestActiveWeekStreak, "weeks");
@@ -7626,6 +8853,7 @@ function pushBodyTrendObservations(
   metricLabel: string,
   changeUnit: string,
   trend: Record<string, any> | null | undefined,
+  links: { userGoalID?: string | null; fitnessStrategyID?: string | null } = {},
 ) {
   if (!trend || trend.trend === "insufficient") return;
 
@@ -7651,6 +8879,8 @@ function pushBodyTrendObservations(
     rows.push({
       user_id: userID,
       active_block_id: activeBlockID,
+      user_goal_id: links.userGoalID ?? null,
+      fitness_strategy_id: links.fitnessStrategyID ?? null,
       source: "healthkit",
       metric_key: metricKey,
       metric_label: label,
@@ -8566,16 +9796,16 @@ function compactWorkoutForRepair(workout: Record<string, any>) {
 
 function normalizeActivity(value: string) {
   const lower = value.toLowerCase();
-  if (lower.includes("cycl") || lower.includes("bike") || lower.includes("ride")) return "ride";
-  if (lower.includes("run")) return "run";
-  if (lower.includes("swim")) return "swim";
-  if (lower.includes("row")) return "row";
-  if (lower.includes("walk")) return "walk";
-  if (lower.includes("hike") || lower.includes("hik")) return "hike";
-  if (lower.includes("climb") || lower.includes("boulder")) return "climb";
-  if (lower.includes("strength") || lower.includes("traditional") || lower.includes("lift")) return "strength";
-  if (lower.includes("mobility") || lower.includes("yoga") || lower.includes("stretch")) return "mobility";
-  if (lower.includes("recover")) return "recovery";
+  if (/\b(cycling|cycle|bike|biking|ride|rides|riding|indoor cycling)\b/.test(lower) || lower.includes("cycl")) return "ride";
+  if (/\b(run|runs|running)\b/.test(lower)) return "run";
+  if (/\b(swim|swims|swimming)\b/.test(lower)) return "swim";
+  if (/\b(walk|walks|walking)\b/.test(lower)) return "walk";
+  if (/\b(hike|hikes|hiking)\b/.test(lower)) return "hike";
+  if (/\b(climb|climbs|climbing|boulder|bouldering)\b/.test(lower)) return "climb";
+  if (/\b(strength|traditional|functional strength|lift|lifting|gym|weights?)\b/.test(lower)) return "strength";
+  if (/\b(mobility|yoga|stretch|stretching|pilates)\b/.test(lower)) return "mobility";
+  if (/\b(recover|recovery|restorative)\b/.test(lower)) return "recovery";
+  if (/\b(row|rows|rowing|rower)\b/.test(lower)) return "row";
   return lower.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "workout";
 }
 

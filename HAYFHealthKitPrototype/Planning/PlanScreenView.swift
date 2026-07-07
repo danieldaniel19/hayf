@@ -1671,7 +1671,8 @@ private struct PlanWeekSection: View {
             if !targets.isEmpty {
                 PlanWeeklyTargetsView(
                     targets: targets,
-                    evaluations: evaluations
+                    evaluations: evaluations,
+                    workouts: groups.flatMap(\.workouts)
                 )
             }
 
@@ -1722,6 +1723,7 @@ private struct PlanWorkoutDayDivider: View {
 private struct PlanWeeklyTargetsView: View {
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
+    let workouts: [PlanWorkout]
 
     var body: some View {
         LazyVGrid(
@@ -1731,7 +1733,8 @@ private struct PlanWeeklyTargetsView: View {
             ForEach(targets.prefix(3)) { target in
                 PlanWeeklyTargetCard(
                     target: target,
-                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations)
+                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
+                    workouts: workouts
                 )
             }
         }
@@ -1741,6 +1744,7 @@ private struct PlanWeeklyTargetsView: View {
 private struct PlanWeeklyTargetCard: View {
     let target: PlanGoalTarget
     let evaluation: PlanGoalEvaluation?
+    let workouts: [PlanWorkout]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1755,7 +1759,7 @@ private struct PlanWeeklyTargetCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
 
-            PlanTargetProgressBar(progress: PlanTargetDisplay.progress(for: target, evaluation: evaluation))
+            PlanTargetProgressBar(progress: PlanTargetDisplay.weeklyCardProgress(for: target, evaluation: evaluation, workouts: workouts))
                 .frame(height: 4)
         }
         .padding(10)
@@ -2793,7 +2797,7 @@ private struct WorkoutCardTaxonomy {
         if contains("ride") || contains("cycl") || contains("bike") { return .ride }
         if contains("run") { return .run }
         if contains("swim") { return .swim }
-        if contains("row") { return .row }
+        if containsWord("row") || containsWord("rows") || containsWord("rowing") || containsWord("rower") { return .row }
         if contains("walk") { return .walk }
         if contains("hike") || contains("hik") { return .hike }
         if contains("strength") || contains("gym") || contains("lift") || contains("weights") || contains("body") || contains("upper") || contains("lower") { return .strength }
@@ -2884,6 +2888,13 @@ private struct WorkoutCardTaxonomy {
 
     private func contains(_ value: String) -> Bool {
         normalized.contains(value)
+    }
+
+    private func containsWord(_ value: String) -> Bool {
+        normalized.range(
+            of: "\\b\(NSRegularExpression.escapedPattern(for: value))\\b",
+            options: .regularExpression
+        ) != nil
     }
 
     private func activityTypeContains(_ value: String) -> Bool {
@@ -4620,6 +4631,15 @@ private enum PlanDisplay {
     }
 }
 
+private extension String {
+    func planContainsWord(_ value: String) -> Bool {
+        range(
+            of: "\\b\(NSRegularExpression.escapedPattern(for: value))\\b",
+            options: .regularExpression
+        ) != nil
+    }
+}
+
 private enum PlanTargetDisplay {
     static func isWeeklyTarget(_ target: PlanGoalTarget) -> Bool {
         if target.targetScope == .week {
@@ -4656,10 +4676,6 @@ private enum PlanTargetDisplay {
     }
 
     static func weeklyCardIconName(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
-        if status(for: target, evaluation: evaluation) == .achieved {
-            return "checkmark"
-        }
-
         if let modality = weeklyTargetModality(for: target) {
             return modalityIconName(for: modality)
         }
@@ -4672,7 +4688,7 @@ private enum PlanTargetDisplay {
         case "max_gap_guardrail":
             return "calendar.badge.clock"
         case "minimum_viable_week":
-            return "checkmark.circle"
+            return "flag"
         case "body_weight_logging":
             return "scalemass"
         case "running_pace", "cycling_pace":
@@ -4693,7 +4709,7 @@ private enum PlanTargetDisplay {
 
         switch family {
         case "planned_session_completion":
-            return "\(formatted(targetValue)) sessions"
+            return "Complete \(formatted(targetValue))"
         case "modality_session_count", "support_modality_presence":
             return "\(formatted(targetValue)) \(modalityCountLabel(for: modality))"
         case "modality_minutes":
@@ -4719,6 +4735,41 @@ private enum PlanTargetDisplay {
             }
             return weeklyRuleDisplayValue(for: target) ?? compactTitle(target.title)
         }
+    }
+
+    static func weeklyCardProgress(
+        for target: PlanGoalTarget,
+        evaluation: PlanGoalEvaluation?,
+        workouts: [PlanWorkout]
+    ) -> Double? {
+        if isFutureWeekTarget(target) {
+            return nil
+        }
+
+        let family = weeklyTargetFamily(for: target)
+        let targetValue = evaluation?.targetValue ?? target.targetValue
+        guard let targetValue, targetValue > 0 else {
+            return progress(for: target, evaluation: evaluation)
+        }
+
+        let completed = workouts.filter { $0.status == .done }
+        let currentValue: Double?
+        switch family {
+        case "planned_session_completion", "minimum_viable_week":
+            currentValue = Double(completed.count)
+        case "modality_session_count", "support_modality_presence":
+            guard let modality = weeklyTargetModality(for: target) else { return progress(for: target, evaluation: evaluation) }
+            currentValue = Double(completed.filter { workoutModality(for: $0) == modality }.count)
+        case "active_days":
+            currentValue = Double(Set(completed.map(\.scheduledDate)).count)
+        case "max_gap_guardrail":
+            currentValue = nil
+        default:
+            return progress(for: target, evaluation: evaluation)
+        }
+
+        guard let currentValue else { return nil }
+        return min(max(currentValue / targetValue, 0), 1)
     }
 
     static func iconName(for target: PlanGoalTarget) -> String {
@@ -4786,7 +4837,7 @@ private enum PlanTargetDisplay {
             return "run"
         } else if text.contains("swim") {
             return "swim"
-        } else if text.contains("row") {
+        } else if text.planContainsWord("row") || text.planContainsWord("rows") || text.planContainsWord("rowing") || text.planContainsWord("rower") {
             return "row"
         } else if text.contains("hike") {
             return "hike"
@@ -4803,6 +4854,33 @@ private enum PlanTargetDisplay {
         }
 
         return nil
+    }
+
+    private static func workoutModality(for workout: PlanWorkout) -> String {
+        let activityType = workout.activityType.lowercased()
+        let text = "\(workout.activityType) \(workout.title) \(workout.purpose)".lowercased()
+        if activityType.planContainsWord("strength") || activityType.planContainsWord("traditional") || text.planContainsWord("lift") || text.planContainsWord("gym") {
+            return "strength"
+        } else if text.contains("cycling") || text.contains("cycle") || text.contains("bike") || text.contains("ride") {
+            return "ride"
+        } else if text.planContainsWord("run") || text.planContainsWord("running") {
+            return "run"
+        } else if text.planContainsWord("swim") || text.planContainsWord("swimming") {
+            return "swim"
+        } else if text.planContainsWord("walk") || text.planContainsWord("walking") {
+            return "walk"
+        } else if text.planContainsWord("hike") || text.planContainsWord("hiking") {
+            return "hike"
+        } else if text.planContainsWord("climb") || text.planContainsWord("boulder") {
+            return "climb"
+        } else if text.planContainsWord("mobility") || text.planContainsWord("yoga") || text.planContainsWord("stretch") {
+            return "mobility"
+        } else if text.planContainsWord("recovery") || text.planContainsWord("recover") {
+            return "recovery"
+        } else if text.planContainsWord("row") || text.planContainsWord("rows") || text.planContainsWord("rowing") || text.planContainsWord("rower") {
+            return "row"
+        }
+        return ""
     }
 
     private static func weeklyRuleString(for target: PlanGoalTarget, key: String) -> String? {

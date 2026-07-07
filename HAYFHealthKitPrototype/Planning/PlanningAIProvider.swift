@@ -29,6 +29,57 @@ struct PlanningAIProvider {
         )
     }
 
+    func prepareInitialStrategyAfterBlueprint(
+        healthSnapshot: HealthFeatureSnapshot?,
+        acceptedBlueprint: JSONValue,
+        onboardingContext: JSONValue,
+        deviceTimezone: String = TimeZone.current.identifier,
+        acceptedAt: Date = Date()
+    ) async throws -> PlanningPreparedStrategyOutput {
+        let response: PlanningPreparedStrategyFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .prepareInitialStrategyAfterBlueprint,
+                healthSnapshot: healthSnapshot,
+                deviceTimezone: deviceTimezone,
+                acceptedBlueprint: acceptedBlueprint,
+                onboardingContext: onboardingContext,
+                acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
+            )
+        )
+
+        return response.output
+    }
+
+    func acceptPreparedStrategyAndCreateInitialPlan(
+        preparedStrategyID: UUID,
+        healthSnapshot: HealthFeatureSnapshot?,
+        actualWorkouts: [HealthActualWorkoutSummary] = [],
+        deviceTimezone: String = TimeZone.current.identifier,
+        acceptedAt: Date = Date()
+    ) async throws -> PlanningFunctionResponse {
+        try await invoke(
+            PlanningFunctionRequest(
+                task: .acceptPreparedStrategyAndCreateInitialPlan,
+                healthSnapshot: healthSnapshot,
+                actualWorkouts: actualWorkouts,
+                deviceTimezone: deviceTimezone,
+                preparedStrategyID: preparedStrategyID,
+                acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
+            )
+        )
+    }
+
+    func planningGraphRunStatus(graphRunID: UUID) async throws -> PlanningGraphRunStatusOutput {
+        let response: PlanningGraphRunStatusFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .getPlanningGraphRunStatus,
+                graphRunID: graphRunID
+            )
+        )
+
+        return response.output
+    }
+
     func syncHealthKitAndReconcile(
         payload: PlanningHealthSyncPayload,
         deviceTimezone: String = TimeZone.current.identifier
@@ -468,6 +519,27 @@ struct PlanningFunctionResponse: Decodable {
     let output: JSONValue
 }
 
+struct PlanningPreparedStrategyOutput: Decodable {
+    let status: String
+    let graphRunID: UUID
+    let userGoalID: UUID
+    let fitnessStrategyID: UUID
+    let blueprintRevisionID: UUID
+    let trainingArchitectureID: UUID
+    let eventID: UUID?
+    let strategy: JSONValue
+    let trainingArchitecture: JSONValue
+}
+
+struct PlanningGraphRunStatusOutput: Decodable {
+    let graphRunID: UUID
+    let graphName: String
+    let status: String
+    let errorSummary: String?
+    let output: JSONValue?
+    let trainingArchitectureID: UUID?
+}
+
 struct PlanningEditOutcome: Decodable {
     let eventID: UUID?
     let proposalID: UUID?
@@ -506,6 +578,18 @@ private struct PlanningEditOutcomeFunctionResponse: Decodable {
     let task: PlanningAITask
     let model: String
     let output: PlanningEditOutcome
+}
+
+private struct PlanningPreparedStrategyFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningPreparedStrategyOutput
+}
+
+private struct PlanningGraphRunStatusFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningGraphRunStatusOutput
 }
 
 struct PlanningFunctionError: LocalizedError {
@@ -550,6 +634,9 @@ private struct PlanningWorkoutInterpretationFunctionResponse: Decodable {
 
 enum PlanningAITask: String, Codable {
     case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
+    case prepareInitialStrategyAfterBlueprint = "prepare_initial_strategy_after_blueprint"
+    case acceptPreparedStrategyAndCreateInitialPlan = "accept_prepared_strategy_and_create_initial_plan"
+    case getPlanningGraphRunStatus = "get_planning_graph_run_status"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"
     case refreshPlanWindow = "refresh_plan_window"
     case refreshWorkoutWeatherForecasts = "refresh_workout_weather_forecasts"
@@ -578,6 +665,9 @@ private struct PlanningFunctionRequest: Encodable {
     let windowStart: String?
     let acceptedBlueprint: JSONValue?
     let acceptedStrategy: JSONValue?
+    let onboardingContext: JSONValue?
+    let preparedStrategyID: UUID?
+    let graphRunID: UUID?
     let acceptedAt: String?
     let edit: PlanningPlanEdit?
     let proposalID: UUID?
@@ -604,6 +694,9 @@ private struct PlanningFunctionRequest: Encodable {
         windowStart: String? = nil,
         acceptedBlueprint: JSONValue? = nil,
         acceptedStrategy: JSONValue? = nil,
+        onboardingContext: JSONValue? = nil,
+        preparedStrategyID: UUID? = nil,
+        graphRunID: UUID? = nil,
         acceptedAt: String? = nil,
         edit: PlanningPlanEdit? = nil,
         proposalID: UUID? = nil,
@@ -629,6 +722,9 @@ private struct PlanningFunctionRequest: Encodable {
         self.windowStart = windowStart
         self.acceptedBlueprint = acceptedBlueprint
         self.acceptedStrategy = acceptedStrategy
+        self.onboardingContext = onboardingContext
+        self.preparedStrategyID = preparedStrategyID
+        self.graphRunID = graphRunID
         self.acceptedAt = acceptedAt
         self.edit = edit
         self.proposalID = proposalID
@@ -656,6 +752,9 @@ private struct PlanningFunctionRequest: Encodable {
         case windowStart
         case acceptedBlueprint = "accepted_blueprint"
         case acceptedStrategy = "accepted_strategy"
+        case onboardingContext = "onboarding_context"
+        case preparedStrategyID = "prepared_strategy_id"
+        case graphRunID = "graph_run_id"
         case acceptedAt = "accepted_at"
         case edit
         case proposalID = "proposal_id"
@@ -688,6 +787,9 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(windowStart, forKey: .windowStart)
         try container.encodeIfPresent(acceptedBlueprint, forKey: .acceptedBlueprint)
         try container.encodeIfPresent(acceptedStrategy, forKey: .acceptedStrategy)
+        try container.encodeIfPresent(onboardingContext, forKey: .onboardingContext)
+        try container.encodeIfPresent(preparedStrategyID?.uuidString.lowercased(), forKey: .preparedStrategyID)
+        try container.encodeIfPresent(graphRunID?.uuidString.lowercased(), forKey: .graphRunID)
         try container.encodeIfPresent(acceptedAt, forKey: .acceptedAt)
         try container.encodeIfPresent(edit, forKey: .edit)
         try container.encodeIfPresent(proposalID?.uuidString.lowercased(), forKey: .proposalID)

@@ -20,6 +20,8 @@ struct OnboardingFlowView: View {
     @State private var healthRequestState: HealthRequestState = .idle
     @State private var athleteBlueprint: AthleteBlueprintOutput?
     @State private var fitnessStrategy: FitnessStrategyOutput?
+    @State private var preparedFitnessStrategyID: UUID?
+    @State private var preparedPlanningGraphRunID: UUID?
     @State private var pendingHealthSnapshot: HealthFeatureSnapshot?
     @State private var selectedBlueprintDetail: AthleteBlueprintDetail?
     @State private var completionErrorMessage: String?
@@ -1190,6 +1192,8 @@ struct OnboardingFlowView: View {
                 Button("Edit answers") {
                     athleteBlueprint = nil
                     fitnessStrategy = nil
+                    preparedFitnessStrategyID = nil
+                    preparedPlanningGraphRunID = nil
                     pendingHealthSnapshot = nil
                     step = summaryEditStep
                 }
@@ -1591,6 +1595,8 @@ struct OnboardingFlowView: View {
         blendedCandidate = nil
         athleteBlueprint = nil
         fitnessStrategy = nil
+        preparedFitnessStrategyID = nil
+        preparedPlanningGraphRunID = nil
         aiGenerationFailure = nil
     }
 
@@ -1739,21 +1745,22 @@ struct OnboardingFlowView: View {
 
     private func generateFitnessStrategy() async {
         aiGenerationFailure = nil
-        let fallback = FitnessStrategyBuilder.build(
-            intent: currentIntent,
-            draft: draft,
-            blueprint: currentAthleteBlueprint,
-            snapshot: pendingHealthSnapshot
-        )
         do {
-            fitnessStrategy = try await aiProvider.generateFitnessStrategy(
-                intent: currentIntent,
-                draft: draft,
-                blueprint: currentAthleteBlueprint,
-                fallback: fallback
+            let prepared = try await planningAIProvider.prepareInitialStrategyAfterBlueprint(
+                healthSnapshot: pendingHealthSnapshot,
+                acceptedBlueprint: acceptedBlueprintArtifact(from: currentAthleteBlueprint),
+                onboardingContext: JSONValue.isoEncoded(OnboardingAICompactContext(intent: currentIntent, draft: draft)),
+                deviceTimezone: TimeZone.current.identifier,
+                acceptedAt: Date()
             )
+            fitnessStrategy = try FitnessStrategyOutput.decode(from: prepared.strategy)
+            preparedFitnessStrategyID = prepared.fitnessStrategyID
+            preparedPlanningGraphRunID = prepared.graphRunID
             step = .fitnessStrategy
         } catch {
+            fitnessStrategy = nil
+            preparedFitnessStrategyID = nil
+            preparedPlanningGraphRunID = nil
             aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingStrategy, error: error)
         }
     }
@@ -1801,6 +1808,7 @@ struct OnboardingFlowView: View {
                 let acceptedAt = Date()
                 let acceptedBlueprint = currentAthleteBlueprint
                 let acceptedStrategy = currentFitnessStrategy
+                let preparedStrategyID = preparedFitnessStrategyID
                 let syncPayload = try? await healthSyncService.buildSyncPayload(daysBack: 14)
                 let healthSnapshot: HealthFeatureSnapshot?
                 if let pendingHealthSnapshot {
@@ -1816,14 +1824,24 @@ struct OnboardingFlowView: View {
                     summary: currentSummary,
                     healthRequestState: healthRequestState
                 )
-                _ = try await planningAIProvider.acceptStrategyAndCreateInitialPlan(
-                    healthSnapshot: healthSnapshot,
-                    actualWorkouts: syncPayload?.actualWorkouts ?? [],
-                    acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
-                    acceptedStrategy: acceptedStrategyArtifact(from: acceptedStrategy),
-                    deviceTimezone: TimeZone.current.identifier,
-                    acceptedAt: acceptedAt
-                )
+                if let preparedStrategyID {
+                    _ = try await planningAIProvider.acceptPreparedStrategyAndCreateInitialPlan(
+                        preparedStrategyID: preparedStrategyID,
+                        healthSnapshot: healthSnapshot,
+                        actualWorkouts: syncPayload?.actualWorkouts ?? [],
+                        deviceTimezone: TimeZone.current.identifier,
+                        acceptedAt: acceptedAt
+                    )
+                } else {
+                    _ = try await planningAIProvider.acceptStrategyAndCreateInitialPlan(
+                        healthSnapshot: healthSnapshot,
+                        actualWorkouts: syncPayload?.actualWorkouts ?? [],
+                        acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
+                        acceptedStrategy: acceptedStrategyArtifact(from: acceptedStrategy),
+                        deviceTimezone: TimeZone.current.identifier,
+                        acceptedAt: acceptedAt
+                    )
+                }
                 await MainActor.run {
                     onboardingProfileStore.useProfile(completedProfile)
                     onComplete()
@@ -5820,7 +5838,7 @@ private struct CoachNote: View {
     }
 }
 
-private struct FitnessStrategyOutput {
+private struct FitnessStrategyOutput: Decodable {
     let read: String
     let goalTargetContext: FitnessStrategyGoalTargetContext
     let snapshotItems: [FitnessStrategySnapshotItem]
@@ -5829,34 +5847,39 @@ private struct FitnessStrategyOutput {
     let phases: [FitnessStrategyPhase]
     let operatingRhythm: FitnessStrategyOperatingRhythm?
     let targets: [FitnessStrategyTarget]
+
+    static func decode(from value: JSONValue) throws -> FitnessStrategyOutput {
+        let data = try JSONEncoder().encode(value)
+        return try JSONDecoder().decode(FitnessStrategyOutput.self, from: data)
+    }
 }
 
-private struct FitnessStrategyGoalTargetContext {
+private struct FitnessStrategyGoalTargetContext: Decodable {
     let title: String
     let summary: String
 }
 
-private struct FitnessStrategySnapshotItem: Identifiable {
+private struct FitnessStrategySnapshotItem: Identifiable, Decodable {
     let id: String
     let systemImage: String
     let value: String
     let label: String
 }
 
-private struct FitnessStrategyFitReason: Identifiable {
+private struct FitnessStrategyFitReason: Identifiable, Decodable {
     let id: String
     let systemImage: String
     let title: String
     let summary: String
 }
 
-private struct FitnessStrategyPillar: Identifiable {
+private struct FitnessStrategyPillar: Identifiable, Decodable {
     let id: String
     let title: String
     let summary: String
 }
 
-private struct FitnessStrategyPhase: Identifiable {
+private struct FitnessStrategyPhase: Identifiable, Decodable {
     let id: String
     let name: String
     let objective: String
@@ -5864,19 +5887,19 @@ private struct FitnessStrategyPhase: Identifiable {
     let targets: [FitnessStrategyTarget]
 }
 
-private struct FitnessStrategyOperatingRhythm {
+private struct FitnessStrategyOperatingRhythm: Decodable {
     let summary: String
     let anchors: [String]
 }
 
-private enum FitnessStrategyTargetScope: String {
+private enum FitnessStrategyTargetScope: String, Decodable {
     case goal
     case strategy
     case phase
     case week
 }
 
-private enum FitnessStrategyTargetKind: String {
+private enum FitnessStrategyTargetKind: String, Decodable {
     case primary
     case supporting
 
@@ -5888,7 +5911,7 @@ private enum FitnessStrategyTargetKind: String {
     }
 }
 
-private enum FitnessStrategyTargetDirection: String {
+private enum FitnessStrategyTargetDirection: String, Decodable {
     case increase
     case decrease
     case maintain
@@ -5896,7 +5919,7 @@ private enum FitnessStrategyTargetDirection: String {
     case review
 }
 
-private struct FitnessStrategyTarget: Identifiable {
+private struct FitnessStrategyTarget: Identifiable, Decodable {
     let id: String
     let scope: FitnessStrategyTargetScope
     let kind: FitnessStrategyTargetKind
@@ -5933,6 +5956,35 @@ private struct FitnessStrategyTarget: Identifiable {
         self.targetValue = targetValue
         self.unit = unit
         self.displayValueOverride = displayValueOverride
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case scope
+        case kind
+        case title
+        case summary
+        case metricKey
+        case metricCategory
+        case direction
+        case targetValue
+        case unit
+        case displayValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        scope = try container.decode(FitnessStrategyTargetScope.self, forKey: .scope)
+        kind = try container.decode(FitnessStrategyTargetKind.self, forKey: .kind)
+        title = try container.decode(String.self, forKey: .title)
+        summary = try container.decode(String.self, forKey: .summary)
+        metricKey = try container.decodeIfPresent(String.self, forKey: .metricKey)
+        metricCategory = try container.decodeIfPresent(String.self, forKey: .metricCategory) ?? "strategy"
+        direction = try container.decode(FitnessStrategyTargetDirection.self, forKey: .direction)
+        targetValue = try container.decodeIfPresent(Double.self, forKey: .targetValue)
+        unit = try container.decodeIfPresent(String.self, forKey: .unit)
+        displayValueOverride = try container.decodeIfPresent(String.self, forKey: .displayValue)
     }
 
     var displayValue: String? {

@@ -1,0 +1,9 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "training_architecture": "./src/graphs/training-architecture.ts:trainingArchitectureGraph",
+    "fitness_strategy": "./src/graphs/fitness-strategy.ts:fitnessStrategyGraph",
+    "two_week_plan": "./src/graphs/two-week-plan.ts:twoWeekPlanGraph"
+  },
+  "env": "./.env"
+}
