@@ -77,6 +77,8 @@ A practical first approach is:
 
 The v1 AI layer can be implemented as a single fitness coach, but its contracts should anticipate later domain coaches. In practice, that means keeping context packets explicit, outputs structured, and actions separate from recommendation text.
 
+The post-blueprint planning refactor is the first place where this becomes a graph-shaped AI system rather than a single coach call. The canonical target is defined in `docs/post-blueprint-planning-architecture.md`: Supabase remains the product backend and source of truth, while LangGraph runs the long-lived Training Architecture and planning orchestration outside Supabase Edge Functions.
+
 Example context packet:
 
 - self-reported feeling today

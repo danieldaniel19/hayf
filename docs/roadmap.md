@@ -111,7 +111,7 @@ The coaching layer should eventually support:
 - a future domain-agent shape where fitness, nutrition, and mind assistants can share relevant context and advice
 - an action layer for bounded user-approved tasks, such as adding a workout to the user's calendar
 
-Current status: onboarding AI exists for structured summaries and goal shaping, and planning AI now owns the first visible plan instead of relying on deterministic workout templates. The next major AI architecture step is the hidden Training Architecture layer defined in `docs/post-blueprint-planning-architecture.md`: an orchestrated coaching-structure pass before Fitness Strategy and Plan generation.
+Current status: onboarding AI exists for structured summaries and goal shaping, and planning AI now owns the first visible plan instead of relying on deterministic workout templates. The next major AI architecture step is the LangGraph planning refactor defined in `docs/post-blueprint-planning-architecture.md`: a dedicated integration branch, a hidden Training Architecture graph, specialist coach subgraphs, and a Supabase-to-orchestration-service deployment boundary.
 
 ## Stage 7: Learning loop
 
