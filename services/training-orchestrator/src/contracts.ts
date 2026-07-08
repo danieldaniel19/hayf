@@ -1,5 +1,12 @@
 export type JsonObject = Record<string, unknown>;
 
+export type KnowledgeSourceRef = {
+  id: string;
+  title: string;
+  version: string;
+  path: string;
+};
+
 export type PlanningPacket = {
   athlete_context: {
     blueprint_revision_id: string;
@@ -53,6 +60,81 @@ export type ModalityRole =
   | "optional_filler"
   | "currently_inappropriate";
 
+export type TrainingArchitectFrame = {
+  goal_read: {
+    summary: string;
+    priority_basis: string[];
+    conflict_questions: string[];
+  };
+  selected_modalities: string[];
+  feasible_modalities: string[];
+  priority_hypotheses: string[];
+  weekly_budget_range: {
+    minimum_sessions: number;
+    target_sessions: number;
+    maximum_sessions: number;
+    hard_day_cap: number;
+  };
+  recovery_risks: string[];
+  specialist_briefs: Array<{
+    modality: string;
+    pack_id: string;
+    requested_role: ModalityRole;
+    brief: string;
+    questions: string[];
+    knowledge_refs: KnowledgeSourceRef[];
+  }>;
+  knowledge_refs: KnowledgeSourceRef[];
+};
+
+export type CoachToolRequest = {
+  tool_name: string;
+  purpose: string;
+  input: JsonObject;
+  optional: boolean;
+};
+
+export type WorkoutArchetypeRecommendation = {
+  id: string;
+  modality: string;
+  purpose: string;
+  target_adaptation: string;
+  intensity_domain: string;
+  typical_duration_minutes: {
+    min: number;
+    max: number;
+  };
+  dose_range: string;
+  progression_rule: string;
+  fatigue_cost: "low" | "moderate" | "high";
+  prerequisites: string[];
+  incompatibilities: string[];
+  planner_constraints: string[];
+  knowledge_refs: KnowledgeSourceRef[];
+};
+
+export type SpecialistConsultation = {
+  coach: string;
+  modality: string;
+  recommended_role: ModalityRole;
+  rationale: string;
+  performance_determinants: string[];
+  adaptation_priorities: string[];
+  intensity_model: string;
+  weekly_dose: {
+    minimum: string;
+    target: string;
+    maximum: string;
+    hard_cap: string;
+  };
+  archetype_proposals: WorkoutArchetypeRecommendation[];
+  fatigue_signals: string[];
+  interference_rules: string[];
+  common_mistakes: string[];
+  tool_requests: CoachToolRequest[];
+  knowledge_refs: KnowledgeSourceRef[];
+};
+
 export type SpecialistRecommendation = {
   coach: string;
   modality: string;
@@ -77,6 +159,7 @@ export type TrainingArchitecture = {
     modality: string;
     role: ModalityRole;
     rationale: string;
+    knowledge_refs: KnowledgeSourceRef[];
   }>;
   priority_order: string[];
   weekly_budget: {
@@ -92,6 +175,15 @@ export type TrainingArchitecture = {
   };
   minimum_effective_dose_rules: string[];
   specialist_recommendations: SpecialistRecommendation[];
+  architect_frame_summary: TrainingArchitectFrame;
+  specialist_consultations: SpecialistConsultation[];
+  approved_archetypes: WorkoutArchetypeRecommendation[];
+  rejected_specialist_recommendations: Array<{
+    modality: string;
+    archetype_id?: string;
+    reason: string;
+    knowledge_refs: KnowledgeSourceRef[];
+  }>;
   phase_logic: {
     requires_phases: boolean;
     phases: Array<{
@@ -107,11 +199,18 @@ export type TrainingArchitecture = {
     summary: string;
     required_tradeoffs: string[];
   };
+  conflict_decisions: Array<{
+    id: string;
+    decision: string;
+    rationale: string;
+    knowledge_refs: KnowledgeSourceRef[];
+  }>;
   planner_constraints: {
     weekly_plan_rules: string[];
     workout_generation_rules: string[];
     target_generation_rules: string[];
   };
+  source_knowledge_refs: KnowledgeSourceRef[];
 };
 
 export type FitnessStrategyArtifact = {
@@ -149,6 +248,16 @@ export type FitnessStrategyArtifact = {
     anchors: string[];
   } | null;
   targets: StrategyTarget[];
+};
+
+export type PlannerInputContract = {
+  validated_architecture: TrainingArchitecture;
+  approved_archetypes: WorkoutArchetypeRecommendation[];
+  strategy: FitnessStrategyArtifact;
+  constraints: PlanningPacket["planning_constraints"];
+  actuals_summary: JsonObject;
+  draft_inputs: JsonObject;
+  allowed_modalities: string[];
 };
 
 export type StrategyTarget = {
@@ -223,16 +332,20 @@ export type GraphTraceNode = {
   status: "succeeded" | "failed" | "skipped";
 };
 
+export type GraphToolCall = {
+  tool_name: string;
+  tool_version: string;
+  input: JsonObject;
+  output: JsonObject | null;
+  status: "succeeded" | "failed" | "skipped";
+  error_message?: string | null;
+  latency_ms?: number | null;
+};
+
 export type GraphResult<T> = {
   artifact: T;
   nodes: GraphTraceNode[];
-  tool_calls: Array<{
-    tool_name: string;
-    tool_version: string;
-    input: JsonObject;
-    output: JsonObject | null;
-    status: "succeeded" | "failed" | "skipped";
-  }>;
+  tool_calls: GraphToolCall[];
 };
 
 export function assertPlanningPacket(value: unknown): asserts value is PlanningPacket {
@@ -249,16 +362,28 @@ export function assertPlanningPacket(value: unknown): asserts value is PlanningP
   if (!packet.planning_constraints?.timezone || !packet.planning_constraints.start_date) {
     throw new Error("Planning packet requires timezone and start_date.");
   }
-  if (JSON.stringify(packet).includes("workoutLedger")) {
-    throw new Error("Planning packet must not include raw HealthKit workout ledgers.");
+  if (/"(workoutLedger|rawHealthKitSamples|healthKitSamples|samples)"\s*:/.test(JSON.stringify(packet))) {
+    throw new Error("Planning packet must not include raw HealthKit workout ledgers or samples.");
   }
 }
 
 export function normalizeModality(value: string) {
   const normalized = value.trim().toLowerCase();
-  if (normalized.includes("cycl")) return "cycling";
-  if (normalized.includes("run")) return "running";
-  if (normalized.includes("strength") || normalized.includes("gym") || normalized.includes("lift")) return "strength";
+  if (normalized.includes("cycl") || normalized.includes("bike") || normalized.includes("biking") || normalized.includes("ride")) return "cycling";
+  if (normalized.includes("run") || normalized.includes("jog")) return "running";
+  if (
+    normalized.includes("strength") ||
+    normalized.includes("gym") ||
+    normalized.includes("lift") ||
+    normalized.includes("full body") ||
+    normalized.includes("full_body") ||
+    normalized.includes("bodyweight") ||
+    normalized.includes("resistance")
+  ) return "strength";
+  if (normalized.includes("swim")) return "swimming";
+  if (normalized.includes("tennis")) return "tennis";
+  if (normalized.includes("row")) return "rowing";
+  if (normalized.includes("hike")) return "hiking";
   if (normalized.includes("walk")) return "walking";
   return normalized.replace(/\s+/g, "_") || "general";
 }

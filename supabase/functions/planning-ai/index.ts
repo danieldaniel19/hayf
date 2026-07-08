@@ -257,6 +257,14 @@ type InitialStrategyOrchestrationOutput = {
   model: Record<string, unknown>;
 };
 
+type TwoWeekPlanOrchestrationOutput = {
+  plan: GeneratedPlan;
+  validation: Record<string, unknown>;
+  nodes: GraphNodeTraceInput[];
+  toolCalls: GraphToolCallInput[];
+  model: Record<string, unknown>;
+};
+
 type WorkoutCandidateInput = {
   title: string;
   activityType: string;
@@ -1378,7 +1386,50 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
     ],
   };
 
-  const aiGenerated = await runTwoWeekPlanOrchestration(context, model);
+  const planGraphRun = await createAIGraphRun(admin, {
+    userID,
+    graphName: "two_week_plan",
+    triggeringTask: "accept_prepared_strategy_and_create_initial_plan",
+    blueprintRevisionID: trainingArchitecture?.source_blueprint_revision_id ?? goal.source_blueprint_revision_id ?? null,
+    userGoalID: goal.id,
+    fitnessStrategyID: strategy.id,
+    trainingArchitectureID: trainingArchitecture?.id ?? null,
+    input: {
+      strategyID: strategy.id,
+      trainingArchitectureID: trainingArchitecture?.id ?? null,
+      committedWeekStart: isoDate(committedWeekStart),
+      draftWeekStart: isoDate(draftWeekStart),
+      planOwnerStartDate: ownerStartDate,
+      timezone,
+      context,
+    },
+  });
+
+  let planOrchestration: TwoWeekPlanOrchestrationOutput;
+  try {
+    planOrchestration = await runTwoWeekPlanOrchestration(context, model);
+    await completeAIGraphRun(admin, planGraphRun.id, {
+      status: "succeeded",
+      output: {
+        plan: planOrchestration.plan,
+        validation: planOrchestration.validation,
+      },
+      model: planOrchestration.model,
+    });
+    await insertAIGraphNodeOutputs(admin, planGraphRun.id, userID, planOrchestration.nodes);
+    await insertAIToolCalls(admin, planGraphRun.id, userID, planOrchestration.toolCalls);
+  } catch (error) {
+    await completeAIGraphRun(admin, planGraphRun.id, {
+      status: "failed",
+      errorSummary: errorMessage(error),
+      model: {
+        provider: Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim() ? "hayf-training-orchestrator" : "supabase-planning-ai",
+        requestedModel: model,
+      },
+    });
+    throw error;
+  }
+  const aiGenerated = planOrchestration.plan;
   const initialActuals = actualWorkoutsForInitialWeek(
     requestBody.actualWorkouts ?? [],
     isoDate(committedWeekStart),
@@ -4544,6 +4595,9 @@ async function runInitialStrategyOrchestration(
   planningPacket: Record<string, any>,
 ): Promise<InitialStrategyOrchestrationOutput> {
   const serviceURL = Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim();
+  if (!serviceURL && trainingOrchestratorRequired()) {
+    throw new Error("TRAINING_ORCHESTRATOR_REQUIRED is true but TRAINING_ORCHESTRATOR_URL is not configured.");
+  }
   if (serviceURL) {
     const response = await fetch(`${serviceURL.replace(/\/$/, "")}/planning/prepare-initial-strategy`, {
       method: "POST",
@@ -4581,22 +4635,35 @@ async function runInitialStrategyOrchestration(
         },
       },
       {
-        nodeName: "master_coach_framing",
+        nodeName: "load_knowledge_manifest",
         output: {
-          priorityOrder: trainingArchitecture.priority_order,
-          weeklyBudget: trainingArchitecture.weekly_budget,
+          packIDs: compactStringArray(trainingArchitecture.source_knowledge_refs?.map((ref: Record<string, any>) => ref.id) ?? []),
         },
       },
       {
-        nodeName: "specialist_subgraphs",
+        nodeName: "architect_frame",
         output: {
-          specialists: trainingArchitecture.specialist_recommendations,
+          selectedModalities: trainingArchitecture.architect_frame_summary?.selected_modalities ?? [],
+          priorityHypotheses: trainingArchitecture.architect_frame_summary?.priority_hypotheses ?? [],
         },
       },
       {
-        nodeName: "master_coach_synthesis",
+        nodeName: "specialist_consultations",
+        output: {
+          specialists: trainingArchitecture.specialist_consultations ?? [],
+        },
+      },
+      {
+        nodeName: "architect_synthesis",
         output: {
           conflictAssessment: trainingArchitecture.conflict_assessment,
+          approvedArchetypes: trainingArchitecture.approved_archetypes ?? [],
+        },
+      },
+      {
+        nodeName: "deterministic_validation",
+        output: {
+          valid: true,
         },
       },
       {
@@ -4618,8 +4685,11 @@ async function runInitialStrategyOrchestration(
 async function runTwoWeekPlanOrchestration(
   context: Record<string, unknown>,
   model: string,
-) {
+): Promise<TwoWeekPlanOrchestrationOutput> {
   const serviceURL = Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim();
+  if (!serviceURL && trainingOrchestratorRequired()) {
+    throw new Error("TRAINING_ORCHESTRATOR_REQUIRED is true but TRAINING_ORCHESTRATOR_URL is not configured.");
+  }
   if (serviceURL) {
     const response = await fetch(`${serviceURL.replace(/\/$/, "")}/planning/two-week-plan`, {
       method: "POST",
@@ -4635,20 +4705,50 @@ async function runTwoWeekPlanOrchestration(
     if (!response.ok) {
       throw new Error(payload?.error ?? "Two-week plan graph request failed");
     }
-    return payload.plan as GeneratedPlan;
+    return {
+      plan: payload.plan as GeneratedPlan,
+      validation: objectAt(payload, "validation") ?? {},
+      nodes: Array.isArray(payload.nodes) ? payload.nodes as GraphNodeTraceInput[] : [],
+      toolCalls: Array.isArray(payload.toolCalls) ? payload.toolCalls as GraphToolCallInput[] : [],
+      model: objectAt(payload, "model") ?? { provider: "hayf-training-orchestrator" },
+    };
   }
 
-  return runPlanGeneration("accept_prepared_strategy_and_create_initial_plan", context, model);
+  return {
+    plan: await runPlanGeneration("accept_prepared_strategy_and_create_initial_plan", context, model),
+    validation: {
+      valid: true,
+      source: "supabase_openai_plan_generation",
+      note: "Used only because TRAINING_ORCHESTRATOR_URL is not configured and TRAINING_ORCHESTRATOR_REQUIRED is not true.",
+    },
+    nodes: [],
+    toolCalls: [],
+    model: {
+      provider: "supabase-planning-ai",
+      model,
+    },
+  };
+}
+
+function trainingOrchestratorRequired() {
+  return ["true", "1", "yes"].includes((Deno.env.get("TRAINING_ORCHESTRATOR_REQUIRED") ?? "").trim().toLowerCase());
 }
 
 function localTrainingArchitecture(packet: Record<string, any>) {
   const modalities = compactStringArray(packet.goal_context?.selected_modality_order ?? []);
   const priorityOrder = modalities.length > 0 ? modalities : ["general"];
+  const feasibleModalities = compactStringArray(packet.planning_constraints?.feasible_modalities ?? priorityOrder);
   const frequency = String(packet.planning_constraints?.frequency ?? "");
   const parsedFrequency = Number(frequency.match(/\d+/)?.[0] ?? NaN);
   const targetSessions = Number.isFinite(parsedFrequency) ? Math.max(2, Math.min(6, parsedFrequency)) : 3;
+  const minimumSessions = Math.max(1, Math.min(3, targetSessions - 1));
+  const hardDayCap = Math.max(1, Math.min(2, Math.floor(targetSessions / 3)));
   const requiresPhases = packet.goal_context?.goal_kind !== "consistency";
-  const goalText = JSON.stringify(packet.goal_context?.normalized_goal ?? {}).toLowerCase();
+  const goalText = [
+    JSON.stringify(packet.goal_context?.normalized_goal ?? {}),
+    packet.goal_context?.success_definition,
+    packet.goal_context?.body_composition_intent,
+  ].filter(Boolean).join(" ").toLowerCase();
   const conflictSignals = [
     goalText.includes("bodybuilder") && goalText.includes("tour de france")
       ? "maximal_hypertrophy_vs_grand_tour_endurance"
@@ -4656,12 +4756,58 @@ function localTrainingArchitecture(packet: Record<string, any>) {
     goalText.includes("lose") && goalText.includes("power")
       ? "body_composition_vs_performance_fatigue"
       : null,
-  ].filter(Boolean);
+  ].filter((signal): signal is string => typeof signal === "string");
   const conflictStatus = conflictSignals.length > 0
     ? "conflicting"
     : priorityOrder.length > 2
     ? "manageable_tradeoff"
     : "clear";
+  const sourceRefs = localSourceKnowledgeRefs(priorityOrder, packet);
+  const architectFrame = {
+    goal_read: {
+      summary: `Build training around ${packet.goal_context?.normalized_goal?.title ?? "the active goal"}.`,
+      priority_basis: [
+        "Use the selected modality order as the first priority signal.",
+        "Protect adherence and recovery before optional volume.",
+        "Promote body-composition or performance-specific work only when the evidence and budget support it.",
+      ],
+      conflict_questions: conflictSignals.map(localConflictQuestion),
+    },
+    selected_modalities: priorityOrder,
+    feasible_modalities: feasibleModalities,
+    priority_hypotheses: priorityOrder,
+    weekly_budget_range: {
+      minimum_sessions: minimumSessions,
+      target_sessions: targetSessions,
+      maximum_sessions: Math.max(targetSessions, Math.min(6, targetSessions + 1)),
+      hard_day_cap: hardDayCap,
+    },
+    recovery_risks: localRecoveryRisks(priorityOrder, packet),
+    specialist_briefs: priorityOrder.map((modality, index) => ({
+      modality,
+      pack_id: localModalityKnowledgeRef(modality).id,
+      requested_role: localRoleForModality(modality, index, packet),
+      brief: `${titleCase(modality)} is selected for the athlete's plan. Training budget hypothesis: ${targetSessions} sessions per week with ${hardDayCap} hard day(s).`,
+      questions: [
+        "Which adaptations matter most for this modality in the stated goal?",
+        "Which workout archetypes are useful without creating dated workouts?",
+        "What fatigue, interference, and common mistake warnings should the Architect consider?",
+      ],
+      knowledge_refs: localKnowledgeRefsForModality(modality, packet),
+    })),
+    knowledge_refs: sourceRefs,
+  };
+  const specialistConsultations = priorityOrder.map((modality, index) => localSpecialistConsultation(modality, index, packet));
+  const approvedArchetypes = specialistConsultations.flatMap((consultation) => consultation.archetype_proposals)
+    .filter((archetype) => !(archetype.fatigue_cost === "high" && (targetSessions <= 3 || packet.approved_evidence_summary?.confidence === "missing")));
+  const rejectedRecommendations = specialistConsultations.flatMap((consultation) => consultation.archetype_proposals)
+    .filter((archetype) => !approvedArchetypes.some((approved) => approved.id === archetype.id))
+    .map((archetype) => ({
+      modality: archetype.modality,
+      archetype_id: archetype.id,
+      reason: "Rejected by the Training Architect because its fatigue cost does not fit the current budget or evidence confidence.",
+      knowledge_refs: archetype.knowledge_refs,
+    }));
 
   return {
     source_ids: {
@@ -4675,22 +4821,24 @@ function localTrainingArchitecture(packet: Record<string, any>) {
     },
     modality_roles: priorityOrder.map((modality, index) => ({
       modality,
-      role: index === 0 ? "primary_driver" : modality === "running" ? "optional_filler" : "secondary_support",
+      role: localRoleForModality(modality, index, packet),
       rationale: index === 0
         ? "This modality best expresses the stated goal and should anchor progression."
         : "This modality supports the goal without consuming the recovery budget.",
+      knowledge_refs: localKnowledgeRefsForModality(modality, packet),
     })),
     priority_order: priorityOrder,
     weekly_budget: {
       target_sessions: targetSessions,
-      minimum_viable_sessions: Math.max(1, Math.min(3, targetSessions - 1)),
-      hard_sessions: Math.max(1, Math.min(2, Math.floor(targetSessions / 3))),
-      recovery_sessions: 1,
+      minimum_viable_sessions: minimumSessions,
+      hard_sessions: hardDayCap,
+      recovery_sessions: Math.max(1, targetSessions - hardDayCap),
     },
     recovery_envelope: {
-      max_hard_days_per_week: Math.max(1, Math.min(2, Math.floor(targetSessions / 3))),
+      max_hard_days_per_week: hardDayCap,
       spacing_rules: [
         "Do not stack hard lower-body strength and hard endurance on adjacent days unless the week has no alternative.",
+        "If recovery evidence is missing or worsening, use the minimum viable week before adding intensity.",
       ],
       bad_day_floor: packet.planning_constraints?.bad_day_floor ?? null,
     },
@@ -4698,19 +4846,19 @@ function localTrainingArchitecture(packet: Record<string, any>) {
       "Protect the minimum viable week before adding optional work.",
       "Keep the primary modality visible every week unless injury, illness, or travel makes it inappropriate.",
     ],
-    specialist_recommendations: priorityOrder.map((modality, index) => ({
-      coach: `${modality}_coach`,
-      modality,
-      role: index === 0 ? "primary_driver" : modality === "running" ? "optional_filler" : "secondary_support",
-      development_path: localDevelopmentPath(modality, packet),
-      weekly_dose: index === 0 ? "protected recurring exposure" : "dose capped around the primary driver",
-      key_risks: localModalityRisks(modality),
-      planning_rules: [
-        index === 0
-          ? `Protect ${modality} quality before optional support work.`
-          : `Keep ${modality} bounded unless the active goal explicitly promotes it.`,
-      ],
+    specialist_recommendations: specialistConsultations.map((consultation) => ({
+      coach: consultation.coach,
+      modality: consultation.modality,
+      role: consultation.recommended_role,
+      development_path: consultation.adaptation_priorities.join(", "),
+      weekly_dose: consultation.weekly_dose.target,
+      key_risks: consultation.fatigue_signals,
+      planning_rules: consultation.interference_rules,
     })),
+    architect_frame_summary: architectFrame,
+    specialist_consultations: specialistConsultations,
+    approved_archetypes: approvedArchetypes,
+    rejected_specialist_recommendations: rejectedRecommendations,
     phase_logic: {
       requires_phases: requiresPhases,
       phases: requiresPhases
@@ -4740,18 +4888,270 @@ function localTrainingArchitecture(packet: Record<string, any>) {
         ? conflictSignals
         : ["Recovery and adherence take precedence over optional volume."],
     },
+    conflict_decisions: [
+      {
+        id: "final_priority_order",
+        decision: `Use ${priorityOrder.map(titleCase).join(" > ")} as the final priority order.`,
+        rationale: "The selected modality order is the strongest user-authored priority signal.",
+        knowledge_refs: sourceRefs,
+      },
+      {
+        id: "specialist_filtering",
+        decision: "Only approved archetypes should reach plan generation.",
+        rationale: "Specialists provide recommendations, but the Training Architect owns coherence and filters fatigue or interference conflicts.",
+        knowledge_refs: sourceRefs,
+      },
+      ...conflictSignals.map((signal) => ({
+        id: String(signal),
+        decision: "Require explicit tradeoff handling before progression.",
+        rationale: localConflictQuestion(String(signal)),
+        knowledge_refs: sourceRefs,
+      })),
+    ],
     planner_constraints: {
       weekly_plan_rules: [
         "Week 1 is committed; week 2 is draft and must preserve user-authored constraints.",
+        "Use the final priority order and role assignments from the Training Architecture.",
       ],
       workout_generation_rules: [
         "Every workout must have a purpose tied to the Training Architecture.",
+        `Allowed modalities: ${priorityOrder.join(", ")}.`,
+        `Approved archetypes: ${approvedArchetypes.map((archetype) => archetype.id).join(", ")}.`,
+        "Do not introduce off-menu modalities.",
       ],
       target_generation_rules: [
-        "Targets must be measurable from planned workouts, actual workouts, body entries, or performance observations.",
+        "Targets must be measurable from actual completion, body entries, performance observations, or approved plan structure.",
+        "Do not mark completion-based targets done from planned workouts alone.",
       ],
     },
+    source_knowledge_refs: sourceRefs,
   };
+}
+
+function localSourceKnowledgeRefs(modalities: string[], packet: Record<string, any>) {
+  const refs = [
+    localKnowledgeRef("core.training_doctrine", "Training Doctrine", "core/training-doctrine.md"),
+    localKnowledgeRef("policy.hayf_planning", "HAYF Planning Policy", "policy/hayf-planning-policy.md"),
+    packet.goal_context?.goal_kind === "consistency"
+      ? localKnowledgeRef("goal.consistency", "Consistency Goal Pack", "goals/consistency.md")
+      : localKnowledgeRef("goal.performance", "Performance Goal Pack", "goals/performance.md"),
+    packet.goal_context?.body_composition_intent
+      ? localKnowledgeRef("goal.body_composition", "Body Composition Goal Pack", "goals/body-composition.md")
+      : null,
+    ...modalities.map(localModalityKnowledgeRef),
+  ].filter(Boolean) as Array<Record<string, string>>;
+  return uniqueByID(refs);
+}
+
+function localKnowledgeRefsForModality(modality: string, packet: Record<string, any>) {
+  return uniqueByID([
+    localKnowledgeRef("core.training_doctrine", "Training Doctrine", "core/training-doctrine.md"),
+    localKnowledgeRef("policy.hayf_planning", "HAYF Planning Policy", "policy/hayf-planning-policy.md"),
+    packet.goal_context?.goal_kind === "consistency"
+      ? localKnowledgeRef("goal.consistency", "Consistency Goal Pack", "goals/consistency.md")
+      : localKnowledgeRef("goal.performance", "Performance Goal Pack", "goals/performance.md"),
+    ...(packet.goal_context?.body_composition_intent
+      ? [localKnowledgeRef("goal.body_composition", "Body Composition Goal Pack", "goals/body-composition.md")]
+      : []),
+    localModalityKnowledgeRef(modality),
+  ]);
+}
+
+function localKnowledgeRef(id: string, title: string, path: string) {
+  return { id, title, version: "2026-07-07", path };
+}
+
+function localModalityKnowledgeRef(modality: string) {
+  if (["cycling", "strength", "running"].includes(modality)) {
+    return localKnowledgeRef(`modality.${modality}`, `${titleCase(modality)} Modality Pack`, `modalities/${modality}.md`);
+  }
+  return localKnowledgeRef("modality.generic", "Generic Modality Fallback Pack", "modalities/generic.md");
+}
+
+function uniqueByID(refs: Array<Record<string, string>>) {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    if (seen.has(ref.id)) return false;
+    seen.add(ref.id);
+    return true;
+  });
+}
+
+function localRoleForModality(modality: string, index: number, packet: Record<string, any>) {
+  if (index === 0) return "primary_driver";
+  if (modality === "running") return "optional_filler";
+  if (modality === "strength") return "secondary_support";
+  if (!["cycling", "strength", "running"].includes(modality) && index > 1) return "maintenance_exposure";
+  if (packet.goal_context?.body_composition_intent && modality === "strength") return "secondary_support";
+  return index === 1 ? "secondary_support" : "maintenance_exposure";
+}
+
+function localSpecialistConsultation(modality: string, index: number, packet: Record<string, any>) {
+  const role = localRoleForModality(modality, index, packet);
+  const knowledgeRefs = localKnowledgeRefsForModality(modality, packet);
+  const supported = ["cycling", "strength", "running"].includes(modality);
+  return {
+    coach: supported ? `${modality}_specialist_consultant` : "generic_specialist_consultant",
+    modality,
+    recommended_role: role,
+    rationale: supported
+      ? (index === 0
+        ? `${titleCase(modality)} best expresses the user's selected priority and anchors progression.`
+        : `${titleCase(modality)} supports the primary goal but must stay bounded by recovery.`)
+      : `${titleCase(modality)} uses the generic fallback pack, so the role stays conservative until a dedicated specialist pack exists.`,
+    performance_determinants: localPerformanceDeterminants(modality),
+    adaptation_priorities: localAdaptationPriorities(modality, packet),
+    intensity_model: localIntensityModel(modality),
+    weekly_dose: localWeeklyDose(role, supported),
+    archetype_proposals: localArchetypesFor(modality, role, packet, knowledgeRefs),
+    fatigue_signals: localModalityRisks(modality),
+    interference_rules: localInterferenceRules(modality, role),
+    common_mistakes: localCommonMistakes(modality),
+    tool_requests: [
+      {
+        tool_name: "read_modality_consistency",
+        purpose: `Summarize recent consistency for ${modality} when live evidence tools are connected.`,
+        input: { modality },
+        optional: true,
+      },
+      {
+        tool_name: "read_fatigue_signals",
+        purpose: "Summarize cardio, muscular, connective-tissue, and nervous-system fatigue signals.",
+        input: { modality, horizon_days: 28 },
+        optional: true,
+      },
+    ],
+    knowledge_refs: knowledgeRefs,
+  };
+}
+
+function localArchetypesFor(modality: string, role: string, packet: Record<string, any>, knowledgeRefs: Array<Record<string, string>>) {
+  if (modality === "cycling") {
+    const archetypes = [
+      localArchetype("cycling_endurance_ride", modality, "Build durable low-intensity aerobic volume.", "aerobic base and durability", "easy aerobic", 45, 120, "low", knowledgeRefs),
+      localArchetype("cycling_tempo_ride", modality, "Add controlled sustained work without maximal strain.", "tempo durability", "tempo", 35, 75, "moderate", knowledgeRefs),
+    ];
+    if (role === "primary_driver" && packet.goal_context?.goal_kind !== "consistency") {
+      archetypes.push(localArchetype("cycling_vo2_intervals", modality, "Use short high-output intervals only when performance needs justify them.", "VO2max and high-end aerobic power", "VO2max", 35, 60, "high", knowledgeRefs));
+    }
+    return archetypes;
+  }
+  if (modality === "strength") {
+    const archetypes = [
+      localArchetype("strength_full_body_support", modality, "Maintain full-body strength and tissue capacity.", "force production and movement quality", "moderate strength", 35, 60, "moderate", knowledgeRefs),
+      localArchetype("strength_maintenance", modality, "Keep the strength signal alive with low complexity.", "strength retention", "easy-moderate strength", 20, 45, "low", knowledgeRefs),
+    ];
+    if (packet.goal_context?.body_composition_intent || /muscle|strong|hypertrophy|lean/i.test(JSON.stringify(packet.goal_context?.normalized_goal ?? {}))) {
+      archetypes.push(localArchetype("strength_hypertrophy_support", modality, "Protect lean mass with enough mechanical tension.", "hypertrophy support and muscle retention", "moderate strength", 40, 65, "moderate", knowledgeRefs));
+    }
+    return archetypes;
+  }
+  if (modality === "running") {
+    return [
+      localArchetype("running_easy_aerobic", modality, "Build easy aerobic exposure with impact kept controlled.", "aerobic base and tissue tolerance", "easy aerobic", 20, 50, "moderate", knowledgeRefs),
+      localArchetype("running_strides", modality, "Use short relaxed strides for mechanics without a full hard session.", "neuromuscular coordination", "neuromuscular", 20, 40, "moderate", knowledgeRefs),
+    ];
+  }
+  return [
+    localArchetype(`${modality}_skill_practice`, modality, "Practice repeatable technique at a controlled effort.", "skill economy and adherence", "easy-skill", 20, 45, "low", knowledgeRefs),
+    localArchetype(`${modality}_easy_conditioning`, modality, "Use an easy conditioning exposure for general fitness.", "aerobic base and routine", "easy aerobic", 20, 50, "low", knowledgeRefs),
+  ];
+}
+
+function localArchetype(
+  id: string,
+  modality: string,
+  purpose: string,
+  targetAdaptation: string,
+  intensityDomain: string,
+  minMinutes: number,
+  maxMinutes: number,
+  fatigueCost: string,
+  knowledgeRefs: Array<Record<string, string>>,
+) {
+  return {
+    id,
+    modality,
+    purpose,
+    target_adaptation: targetAdaptation,
+    intensity_domain: intensityDomain,
+    typical_duration_minutes: { min: minMinutes, max: maxMinutes },
+    dose_range: "Use only inside the weekly budget approved by the Training Architect.",
+    progression_rule: "Progress only after the committed week is completed and recovery is stable.",
+    fatigue_cost: fatigueCost,
+    prerequisites: [],
+    incompatibilities: ["Do not stack hard lower-body work on adjacent days when avoidable."],
+    planner_constraints: ["Use this as an archetype, not as a dated workout."],
+    knowledge_refs: knowledgeRefs,
+  };
+}
+
+function localPerformanceDeterminants(modality: string) {
+  if (modality === "cycling") return ["aerobic durability", "sustainable power", "fatigue resistance"];
+  if (modality === "strength") return ["movement quality", "force production", "tissue tolerance"];
+  if (modality === "running") return ["impact tolerance", "aerobic economy", "durability"];
+  return ["repeatability", "skill familiarity", "low-risk conditioning"];
+}
+
+function localAdaptationPriorities(modality: string, packet: Record<string, any>) {
+  if (modality === "cycling") return ["aerobic base", "durability", packet.goal_context?.goal_kind === "consistency" ? "repeatable habit" : "controlled intensity"];
+  if (modality === "strength") return packet.goal_context?.body_composition_intent
+    ? ["mechanical tension", "lean mass protection", "joint capacity"]
+    : ["movement quality", "general strength", "injury resilience"];
+  if (modality === "running") return ["easy aerobic consistency", "impact tolerance", "running economy"];
+  return ["skill familiarity", "repeatable exposure", "conservative progression"];
+}
+
+function localIntensityModel(modality: string) {
+  if (modality === "cycling") return "Power, heart rate, RPE, and talk-test domains: easy, tempo, threshold, VO2max.";
+  if (modality === "strength") return "RPE/reps-in-reserve, movement quality, volume, and soreness response.";
+  if (modality === "running") return "Pace, heart rate, RPE, and impact tolerance domains: easy, strides, tempo, threshold.";
+  return "Use simple easy/moderate/hard language until a dedicated modality intensity model exists.";
+}
+
+function localWeeklyDose(role: string, supported: boolean) {
+  if (!supported) return { minimum: "0 exposures", target: "1 conservative exposure", maximum: "2 exposures", hard_cap: "0 hard exposures" };
+  if (role === "primary_driver") return { minimum: "1 exposure", target: "2 protected exposures", maximum: "3 exposures", hard_cap: "1 hard exposure unless the budget is high" };
+  if (role === "secondary_support") return { minimum: "1 exposure", target: "1 to 2 bounded exposures", maximum: "2 exposures", hard_cap: "0 to 1 hard exposure only if it does not conflict" };
+  if (role === "maintenance_exposure") return { minimum: "0 exposures", target: "1 exposure", maximum: "1 to 2 exposures", hard_cap: "0 hard exposures" };
+  return { minimum: "0 exposures", target: "0 to 1 exposure", maximum: "1 exposure", hard_cap: "0 hard exposures" };
+}
+
+function localInterferenceRules(modality: string, role: string) {
+  if (modality === "cycling") return ["Do not place cycling VO2 work next to heavy lower-body strength.", "Long rides should not erase the minimum strength dose."];
+  if (modality === "strength") return ["Avoid heavy lower-body strength immediately before key endurance intensity.", "Stop support strength short of failure in mixed-goal weeks."];
+  if (modality === "running") return role === "primary_driver"
+    ? ["Hard running counts as a hard day and needs spacing from strength."]
+    : ["Running remains optional if impact soreness threatens the minimum week."];
+  return ["Generic modalities cannot displace approved primary or secondary work in V1."];
+}
+
+function localCommonMistakes(modality: string) {
+  if (modality === "cycling") return ["Turning every ride into tempo.", "Adding intensity before easy volume is repeatable."];
+  if (modality === "strength") return ["Chasing soreness as proof of progress.", "Letting support strength impair endurance quality."];
+  if (modality === "running") return ["Adding speed before impact tolerance.", "Running easy days too hard."];
+  return ["Treating a generic fallback as expert modality prescription.", "Adding complexity before the habit is stable."];
+}
+
+function localRecoveryRisks(modalities: string[], packet: Record<string, any>) {
+  const risks = [
+    modalities.includes("strength") && (modalities.includes("running") || modalities.includes("cycling"))
+      ? "Lower-body strength can interfere with endurance quality if hard sessions are stacked."
+      : null,
+    modalities.includes("running") ? "Running adds impact cost and should be conservative when evidence is thin." : null,
+    packet.approved_evidence_summary?.confidence === "missing" ? "Missing evidence requires conservative dose and no fake certainty." : null,
+  ].filter(Boolean);
+  return risks.length > 0 ? risks : ["No unusual recovery risk is visible beyond normal hard-day spacing."];
+}
+
+function localConflictQuestion(signal: string) {
+  if (signal === "maximal_hypertrophy_vs_grand_tour_endurance") {
+    return "Maximal hypertrophy and grand-tour endurance cannot both be maximized; the plan must select a priority.";
+  }
+  if (signal === "body_composition_vs_performance_fatigue") {
+    return "Fat loss and performance work can coexist only if fueling, recovery, and hard-day caps are explicit.";
+  }
+  return "A stated goal conflict requires explicit prioritization.";
 }
 
 function localFitnessStrategy(packet: Record<string, any>, architecture: Record<string, any>) {

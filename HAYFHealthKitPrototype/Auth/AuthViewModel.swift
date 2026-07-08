@@ -12,10 +12,19 @@ final class AuthViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let supabase = SupabaseClientProvider.shared
+    private var didAttemptLocalLangGraphAutoLogin = false
 
     func startAuthStateListener() async {
+        await attemptLocalLangGraphAutoLoginIfNeeded()
+
         for await state in supabase.auth.authStateChanges {
             if [.initialSession, .signedIn, .signedOut].contains(state.event) {
+                if state.session == nil {
+                    await attemptLocalLangGraphAutoLoginIfNeeded()
+                    if isAuthenticated {
+                        continue
+                    }
+                }
                 updateSession(state.session)
             }
         }
@@ -53,6 +62,33 @@ final class AuthViewModel: ObservableObject {
         userEmail = session?.user.email
         userDisplayName = session?.user.googleDisplayName
         userAvatarURL = session?.user.googleAvatarURL
+    }
+
+    private func attemptLocalLangGraphAutoLoginIfNeeded() async {
+        #if DEBUG
+        guard SupabaseClientProvider.isLocalLangGraphEnabled else { return }
+        guard !didAttemptLocalLangGraphAutoLogin else { return }
+        guard !isAuthenticated else { return }
+        guard
+            let email = SupabaseClientProvider.environmentValue("HAYF_LOCAL_AUTH_EMAIL"),
+            let password = SupabaseClientProvider.environmentValue("HAYF_LOCAL_AUTH_PASSWORD")
+        else {
+            errorMessage = "Local LangGraph auth requires HAYF_LOCAL_AUTH_EMAIL and HAYF_LOCAL_AUTH_PASSWORD."
+            return
+        }
+
+        didAttemptLocalLangGraphAutoLogin = true
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+
+        do {
+            let session = try await supabase.auth.signIn(email: email, password: password)
+            updateSession(session)
+        } catch {
+            errorMessage = "Local LangGraph auto-login failed: \(error.localizedDescription)"
+        }
+        #endif
     }
 }
 

@@ -7,10 +7,12 @@ coverage/
 *.xcuserstate
 xcuserdata/
 supabase/.temp/
+supabase/.branches/
 .env
 .env.*
 *.env
 supabase/.env
 supabase/.env.*
+!supabase/.env.local-langgraph.example
 tools/ai-touchpoint-lab/.env
 tools/ai-touchpoint-lab/.env.*

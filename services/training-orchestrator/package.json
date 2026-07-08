@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "mkdir -p dist/src/knowledge && cp -R src/knowledge/packs dist/src/knowledge/",
     "check": "tsc --noEmit",
     "dev": "langgraph dev",
+    "serve": "tsx src/server.ts",
+    "start": "node dist/src/server.js",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
