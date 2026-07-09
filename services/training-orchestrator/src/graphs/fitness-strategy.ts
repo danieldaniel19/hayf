@@ -81,6 +81,7 @@ async function generateStrategy(state: FitnessStrategyState) {
   const seedTargets = strategyTargets(architecture);
   const targetAI = await runStructuredJSON<TargetAIOutput>({
     toolName: "generate_fitness_strategy_targets",
+    graphNodeName: "generate_strategy",
     system: [
       "You are HAYF's Fitness Strategy target writer.",
       "Use only the validated Training Architecture and compact planning packet.",
@@ -100,12 +101,14 @@ async function generateStrategy(state: FitnessStrategyState) {
       seedTargetIDs: seedTargets.map((target) => target.id),
     },
     schema: fitnessStrategyTargetsSchema,
+    knowledgeRefs: architecture.source_knowledge_refs,
     testOutput: () => testTargetOutput(seedTargets, architecture),
   });
   const targets = mergeTargets(seedTargets, targetAI.data.strategyTargets);
   const phaseTargetSummaries = new Map(targetAI.data.phaseTargetSummaries.map((phase) => [phase.phaseID, phase.targetSummary]));
   const strategyAI = await runStructuredJSON<StrategyAIOutput>({
     toolName: "generate_fitness_strategy",
+    graphNodeName: "generate_strategy",
     system: [
       "You are HAYF's Fitness Strategy writer.",
       "Write concise coaching copy for the reveal screen using the validated Training Architecture and generated targets.",
@@ -123,6 +126,7 @@ async function generateStrategy(state: FitnessStrategyState) {
       conflictStatus: architecture.conflict_assessment.status,
     },
     schema: fitnessStrategyCopySchema,
+    knowledgeRefs: architecture.source_knowledge_refs,
     testOutput: () => testStrategyOutput(architecture, primary),
   });
   const artifact: FitnessStrategyArtifact = {

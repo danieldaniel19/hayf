@@ -48,6 +48,7 @@ async function generatePlan(state: TwoWeekPlanState) {
   });
   const planAI = await runStructuredJSON<TwoWeekPlanArtifact>({
     toolName: "compile_two_week_plan",
+    graphNodeName: "generate_plan",
     system: [
       "You are HAYF's two-week plan compiler.",
       "Generate exactly two rhythms: the first committed week and the next draft week.",
@@ -75,6 +76,7 @@ async function generatePlan(state: TwoWeekPlanState) {
       weeklyBudget: architecture.weekly_budget,
     },
     schema: twoWeekPlanSchema,
+    knowledgeRefs: architecture.source_knowledge_refs,
     testOutput: () => deterministicTestPlan(packet, architecture, state.fitness_strategy),
   });
   const artifact = validatePlanArtifact(planAI.data, plannerInput, isoDate(start));

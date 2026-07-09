@@ -16,15 +16,25 @@
             <p id="statusLine">Loading catalog</p>
           </div>
         </div>
+        <div class="mode-switch" aria-label="Lab mode">
+          <button id="touchpointModeButton" type="button" class="active">Prompts</button>
+          <button id="graphModeButton" type="button">Graphs</button>
+        </div>
         <nav
           id="touchpointList"
           class="touchpoint-list"
           aria-label="AI touchpoints"
         >
         </nav>
+        <nav
+          id="graphList"
+          class="touchpoint-list hidden"
+          aria-label="LangGraph graphs"
+        >
+        </nav>
       </aside>
 
-      <section class="workspace">
+      <section id="touchpointWorkspace" class="workspace">
         <header class="topbar">
           <div>
             <p id="groupLabel" class="eyebrow">Touchpoint</p>
@@ -149,7 +159,103 @@
           <pre id="diffOutput" class="output diff-output"></pre>
         </section>
       </section>
+
+      <section id="graphWorkspace" class="workspace hidden">
+        <header class="topbar">
+          <div>
+            <p id="graphEyebrow" class="eyebrow">LangGraph</p>
+            <h2 id="graphTitle">Select a graph</h2>
+          </div>
+          <div class="actions">
+            <button id="refreshGraphsButton" type="button">Refresh</button>
+            <button id="runGraphButton" type="button" class="primary">Run</button>
+          </div>
+        </header>
+
+        <section class="graph-grid">
+          <section class="panel graph-map-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Wiring</h3>
+                <p id="graphPurpose">Graph nodes and directed edges.</p>
+              </div>
+            </div>
+            <div id="graphMap" class="graph-map"></div>
+          </section>
+
+          <section class="panel node-panel">
+            <div class="panel-heading">
+              <div>
+                <h3 id="nodeTitle">Node</h3>
+                <p id="nodeKind">Select a node.</p>
+              </div>
+              <button id="testToolButton" type="button">Test Tool</button>
+            </div>
+            <div id="nodeDetails" class="node-details"></div>
+          </section>
+        </section>
+
+        <section class="graph-grid lower">
+          <section class="panel test-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Graph Run</h3>
+                <p>Fixture JSON is sent to the orchestrator.</p>
+              </div>
+              <button id="saveGraphFixtureButton" type="button">Save Fixture</button>
+            </div>
+
+            <label>
+              Graph fixture
+              <select id="graphFixtureInput"></select>
+            </label>
+            <label>
+              Fixture name
+              <input id="graphFixtureNameInput" type="text" placeholder="planning-packet">
+            </label>
+            <label>
+              Fixture JSON
+              <textarea
+                id="graphFixtureJSONInput"
+                class="json-field tall"
+                spellcheck="false"
+              ></textarea>
+            </label>
+          </section>
+
+          <section class="panel diff-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Run Timeline</h3>
+                <p id="graphRunStatus">No run yet.</p>
+              </div>
+              <button id="readableGraphOutputButton" type="button" disabled>Readable View</button>
+            </div>
+            <div id="graphTimeline" class="timeline"></div>
+            <pre id="graphResultOutput" class="output"></pre>
+          </section>
+        </section>
+      </section>
     </main>
+
+    <div
+      id="readableGraphModal"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="readableGraphTitle"
+    >
+      <section class="modal-panel">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Readable output</p>
+            <h2 id="readableGraphTitle">Graph Result</h2>
+          </div>
+          <button id="closeReadableGraphButton" type="button">Close</button>
+        </header>
+        <div id="readableGraphContent" class="readable-content"></div>
+      </section>
+    </div>
 
     <script type="module" src="/static/app.js"></script>
   </body>

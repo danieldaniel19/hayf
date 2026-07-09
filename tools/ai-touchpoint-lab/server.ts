@@ -50,6 +50,14 @@ type TestRequest = {
   fixture?: unknown;
 };
 
+type GraphFixtureSaveRequest = {
+  graphName?: string;
+  name?: string;
+  fixture?: unknown;
+};
+
+type GraphName = "training_architecture" | "fitness_strategy" | "two_week_plan" | "prepare_initial_strategy";
+
 export function cloneCatalog(
   catalog: AITouchpointCatalog,
 ): AITouchpointCatalog {
@@ -197,6 +205,28 @@ export function buildOpenAIRequestBody(
   return payload;
 }
 
+export function validateGraphRunRequest(value: unknown) {
+  if (!isRecord(value)) throw new Error("Graph run request must be a JSON object");
+  const graphName = validateGraphName(value.graphName ?? value.graph_name);
+  const fixture = isRecord(value.fixture) ? value.fixture : {};
+  return { graphName, fixture };
+}
+
+export function validateGraphFixtureDraft(value: unknown) {
+  if (!isRecord(value)) throw new Error("Graph fixture save body must be an object");
+  const graphName = validateGraphName(value.graphName);
+  const name = typeof value.name === "string" ? value.name : "";
+  const safeName = name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!safeName) throw new Error("Fixture name is required");
+  return {
+    graphName,
+    safeName,
+    filename: `graph-${graphName}-${safeName}.json`,
+    fixture: value.fixture ?? {},
+  };
+}
+
 export async function handleRequest(req: Request): Promise<Response> {
   if (!isLocalhostRequest(req)) {
     return json(
@@ -230,6 +260,12 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (req.method === "GET" && url.pathname === "/api/fixtures") {
       return json({ fixtures: await listFixtures() });
     }
+    if (req.method === "GET" && url.pathname === "/api/graphs") {
+      return json(await orchestratorJSON("/observability/graphs"));
+    }
+    if (req.method === "GET" && url.pathname === "/api/graph-fixtures") {
+      return json({ fixtures: await listGraphFixtures() });
+    }
     if (req.method === "POST" && url.pathname === "/api/save") {
       const body = await req.json() as SaveRequest;
       const nextCatalog = updateCatalogEntry(catalogState, body);
@@ -251,6 +287,23 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (req.method === "POST" && url.pathname === "/api/test") {
       const body = await req.json() as TestRequest;
       return json(await runOpenAITest(body));
+    }
+    if (req.method === "POST" && url.pathname === "/api/graph-run") {
+      const body = await req.json();
+      return json(await orchestratorJSON("/observability/run", validateGraphRunRequest(body)));
+    }
+    if (req.method === "POST" && url.pathname === "/api/graph-tool-test") {
+      const body = await req.json();
+      return json(await orchestratorJSON("/observability/tool-test", body));
+    }
+    if (req.method === "POST" && url.pathname === "/api/graph-fixtures") {
+      const body = await req.json() as GraphFixtureSaveRequest;
+      const saved = await saveGraphFixture(body);
+      return json({ ok: true, fixture: saved, fixtures: await listGraphFixtures() });
+    }
+    if (req.method === "POST" && url.pathname === "/api/graph-run-status") {
+      const body = await req.json();
+      return json(await planningGraphRunStatus(body));
     }
 
     return json({ error: "Not found" }, 404);
@@ -382,6 +435,22 @@ async function listFixtures() {
   return fixtures.sort();
 }
 
+async function listGraphFixtures() {
+  await Deno.mkdir(FIXTURE_DIR, { recursive: true });
+  const fixtures = [];
+  for await (const entry of Deno.readDir(FIXTURE_DIR)) {
+    if (!entry.isFile || !entry.name.startsWith("graph-") || !entry.name.endsWith(".json")) continue;
+    const fixture = JSON.parse(await Deno.readTextFile(new URL(entry.name, FIXTURE_DIR)));
+    fixtures.push({
+      filename: entry.name,
+      graphName: typeof fixture.graphName === "string" ? fixture.graphName : "prepare_initial_strategy",
+      name: typeof fixture.name === "string" ? fixture.name : entry.name.replace(/^graph-/, "").replace(/\.json$/, ""),
+      fixture: fixture.fixture ?? fixture,
+    });
+  }
+  return fixtures.sort((left, right) => left.filename.localeCompare(right.filename));
+}
+
 async function saveFixture(body: unknown) {
   if (!isRecord(body)) throw new Error("Fixture save body must be an object");
   const group = body.group;
@@ -404,6 +473,81 @@ async function saveFixture(body: unknown) {
     `${JSON.stringify(body.fixture ?? {}, null, 2)}\n`,
   );
   return filename;
+}
+
+async function saveGraphFixture(body: GraphFixtureSaveRequest) {
+  const draft = validateGraphFixtureDraft(body);
+  const filename = draft.filename;
+  const fixtureURL = new URL(filename, FIXTURE_DIR);
+  await assertAllowedFixturePath(fixtureURL);
+  await Deno.mkdir(FIXTURE_DIR, { recursive: true });
+  await Deno.writeTextFile(
+    fixtureURL,
+    `${JSON.stringify({ graphName: draft.graphName, name: draft.safeName, fixture: draft.fixture }, null, 2)}\n`,
+  );
+  return filename;
+}
+
+function validateGraphName(value: unknown): GraphName {
+  if (
+    value === "training_architecture" ||
+    value === "fitness_strategy" ||
+    value === "two_week_plan" ||
+    value === "prepare_initial_strategy"
+  ) {
+    return value;
+  }
+  throw new Error("Unknown graph");
+}
+
+async function orchestratorJSON(path: string, body?: unknown) {
+  const baseURL = (envValue("TRAINING_ORCHESTRATOR_URL") || "http://127.0.0.1:8787").replace(/\/$/, "");
+  const response = await fetch(`${baseURL}${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(envValue("TRAINING_ORCHESTRATOR_API_KEY")
+        ? { Authorization: `Bearer ${envValue("TRAINING_ORCHESTRATOR_API_KEY")}` }
+        : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error ?? `Training orchestrator request failed: ${response.status}`);
+  }
+  return payload;
+}
+
+async function planningGraphRunStatus(body: unknown) {
+  if (!isRecord(body)) throw new Error("Graph run status body must be an object");
+  const graphRunID = typeof body.graphRunID === "string" ? body.graphRunID : typeof body.graph_run_id === "string" ? body.graph_run_id : "";
+  if (!graphRunID) throw new Error("graphRunID is required");
+
+  const supabaseURL = envValue("SUPABASE_URL")?.replace(/\/$/, "");
+  const anonKey = envValue("SUPABASE_ANON_KEY");
+  const accessToken = typeof body.accessToken === "string" ? body.accessToken : envValue("SUPABASE_ACCESS_TOKEN");
+  if (!supabaseURL || !anonKey) {
+    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY are required for durable graph run inspection.");
+  }
+  const response = await fetch(`${supabaseURL}/functions/v1/planning-ai`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: anonKey,
+      Authorization: `Bearer ${accessToken || anonKey}`,
+    },
+    body: JSON.stringify({
+      task: "get_planning_graph_run_status",
+      graphRunID,
+      includeTrace: true,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error ?? `Graph run status request failed: ${response.status}`);
+  }
+  return payload;
 }
 
 async function assertAllowedFixturePath(url: URL) {

@@ -76,6 +76,68 @@ describe("training orchestrator HTTP adapter", () => {
     )));
   });
 
+  it("serves explicit graph metadata for the inspector", async () => {
+    const response = await fetch(`${baseURL}/observability/graphs`);
+    const body = await response.json() as Record<string, any>;
+
+    assert.equal(response.status, 200);
+    const training = body.graphs.find((graph: Record<string, unknown>) => graph.name === "training_architecture");
+    assert.ok(training);
+    assert.ok(training.nodes.some((node: Record<string, unknown>) => node.id === "architect_synthesis"));
+    assert.ok(training.edges.some((edge: Record<string, unknown>) => edge.from === "architect_frame" && edge.to === "specialist_consultations"));
+  });
+
+  it("keeps observability traces compact by default", async () => {
+    delete process.env.HAYF_OBSERVABILITY_TRACE_LEVEL;
+    const body = await postJSON("/observability/run", {
+      graphName: "training_architecture",
+      fixture: { planningPacket: basePacket() },
+    });
+    const tool = body.toolCalls.find((call: Record<string, unknown>) => call.tool_name === "synthesize_training_architecture");
+
+    assert.ok(tool);
+    assert.equal(tool.input.systemPrompt, undefined);
+    assert.equal(tool.system_prompt, undefined);
+  });
+
+  it("includes full prompt, input, schema, and knowledge refs when full trace is enabled", async () => {
+    process.env.HAYF_OBSERVABILITY_TRACE_LEVEL = "full";
+    try {
+      const body = await postJSON("/observability/run", {
+        graphName: "training_architecture",
+        fixture: { planningPacket: basePacket() },
+      });
+      const tool = body.toolCalls.find((call: Record<string, unknown>) => call.tool_name === "synthesize_training_architecture");
+
+      assert.ok(tool);
+      assert.ok(tool.input.systemPrompt.includes("master Training Architect"));
+      assert.ok(tool.input.input.goal_context);
+      assert.ok(tool.input.schema.properties);
+      assert.ok(tool.knowledge_refs.length > 0);
+    } finally {
+      delete process.env.HAYF_OBSERVABILITY_TRACE_LEVEL;
+    }
+  });
+
+  it("tests a single model-backed tool call from the inspector endpoint", async () => {
+    process.env.HAYF_OBSERVABILITY_TRACE_LEVEL = "full";
+    try {
+      const body = await postJSON("/observability/tool-test", {
+        toolName: "compile_two_week_plan",
+        fixture: { planningPacket: basePacket() },
+      });
+
+      assert.equal(body.ok, true);
+      assert.equal(body.toolName, "compile_two_week_plan");
+      assert.equal(body.status, "succeeded");
+      assert.equal(typeof body.latencyMS, "number");
+      assert.ok(body.request.input);
+      assert.ok(body.output.rhythms.length === 2);
+    } finally {
+      delete process.env.HAYF_OBSERVABILITY_TRACE_LEVEL;
+    }
+  });
+
   async function post(path: string, payload: unknown) {
     return fetch(`${baseURL}${path}`, {
       method: "POST",

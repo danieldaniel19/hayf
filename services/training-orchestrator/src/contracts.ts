@@ -145,6 +145,14 @@ export type SpecialistRecommendation = {
   planning_rules: string[];
 };
 
+export type SpecialistRecommendationDisposition = {
+  modality: string;
+  archetype_id?: string;
+  reason: string;
+  phase_hint?: string;
+  knowledge_refs: KnowledgeSourceRef[];
+};
+
 export type TrainingArchitecture = {
   source_ids: {
     blueprint_revision_id: string;
@@ -178,12 +186,8 @@ export type TrainingArchitecture = {
   architect_frame_summary: TrainingArchitectFrame;
   specialist_consultations: SpecialistConsultation[];
   approved_archetypes: WorkoutArchetypeRecommendation[];
-  rejected_specialist_recommendations: Array<{
-    modality: string;
-    archetype_id?: string;
-    reason: string;
-    knowledge_refs: KnowledgeSourceRef[];
-  }>;
+  deferred_specialist_recommendations: SpecialistRecommendationDisposition[];
+  rejected_specialist_recommendations: SpecialistRecommendationDisposition[];
   phase_logic: {
     requires_phases: boolean;
     phases: Array<{
@@ -335,11 +339,18 @@ export type GraphTraceNode = {
 export type GraphToolCall = {
   tool_name: string;
   tool_version: string;
+  graph_node_name?: string;
   input: JsonObject;
   output: JsonObject | null;
   status: "succeeded" | "failed" | "skipped";
   error_message?: string | null;
   latency_ms?: number | null;
+  provider?: string;
+  model?: string;
+  system_prompt?: string;
+  request_json?: JsonObject;
+  schema_json?: JsonObject;
+  knowledge_refs?: KnowledgeSourceRef[];
 };
 
 export type GraphResult<T> = {

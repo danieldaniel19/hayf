@@ -42,6 +42,8 @@ type PlanningAIRequest = {
   prepared_strategy_id?: string;
   graphRunID?: string;
   graph_run_id?: string;
+  includeTrace?: boolean;
+  include_trace?: boolean;
   acceptedAt?: string;
   accepted_at?: string;
   weeklyPlanConstraint?: WeeklyPlanConstraintInput | null;
@@ -830,7 +832,9 @@ async function handleTask(args: {
 
   switch (requestBody.task) {
     case "accept_strategy_and_create_initial_plan":
-      return acceptStrategyAndCreateInitialPlan(admin, userID!, requestBody, touchpointModel("plan_generation"));
+      throw new Error(
+        "accept_strategy_and_create_initial_plan is deprecated. Use prepare_initial_strategy_after_blueprint, then accept_prepared_strategy_and_create_initial_plan.",
+      );
     case "prepare_initial_strategy_after_blueprint":
       return prepareInitialStrategyAfterBlueprint(admin, userID!, requestBody);
     case "accept_prepared_strategy_and_create_initial_plan":
@@ -1557,6 +1561,13 @@ async function getPlanningGraphRunStatus(
       .eq("user_id", userID)
       .limit(1),
   );
+  const includeTrace = requestBody.includeTrace === true || requestBody.include_trace === true;
+  const nodes = includeTrace
+    ? await graphRunNodeOutputs(admin, graphRun.id, userID)
+    : undefined;
+  const toolCalls = includeTrace
+    ? await graphRunToolCalls(admin, graphRun.id, userID)
+    : undefined;
 
   return {
     userID,
@@ -1564,7 +1575,11 @@ async function getPlanningGraphRunStatus(
     graphName: graphRun.graph_name,
     status: graphRun.status,
     errorSummary: graphRun.error_summary ?? null,
+    input: includeTrace ? graphRun.input_json ?? null : undefined,
     output: graphRun.output_json ?? null,
+    model: includeTrace ? graphRun.model_json ?? {} : undefined,
+    nodes,
+    toolCalls,
     trainingArchitectureID: trainingArchitecture?.id ?? null,
   };
 }
@@ -4517,6 +4532,66 @@ async function createAIGraphRun(
       .single(),
     "Could not create AI graph run",
   );
+}
+
+async function graphRunNodeOutputs(
+  admin: SupabaseAdminClient,
+  graphRunID: string,
+  userID: string,
+) {
+  const rows = await list(
+    admin
+      .from("ai_graph_node_outputs")
+      .select()
+      .eq("graph_run_id", graphRunID)
+      .eq("user_id", userID)
+      .order("sequence_order", { ascending: true })
+      .order("created_at", { ascending: true }),
+  );
+  return rows.map((row: Record<string, any>) => ({
+    id: row.id,
+    graphRunID: row.graph_run_id,
+    nodeName: row.node_name,
+    subgraphName: row.subgraph_name ?? null,
+    sequenceOrder: row.sequence_order,
+    inputSummary: row.input_summary_json ?? {},
+    output: row.structured_output_json ?? {},
+    validation: row.validation_json ?? {},
+    status: row.status,
+    retryCount: row.retry_count ?? 0,
+    errorMessage: row.error_message ?? null,
+    startedAt: row.started_at ?? null,
+    finishedAt: row.finished_at ?? null,
+  }));
+}
+
+async function graphRunToolCalls(
+  admin: SupabaseAdminClient,
+  graphRunID: string,
+  userID: string,
+) {
+  const rows = await list(
+    admin
+      .from("ai_tool_calls")
+      .select()
+      .eq("graph_run_id", graphRunID)
+      .eq("user_id", userID)
+      .order("created_at", { ascending: true }),
+  );
+  return rows.map((row: Record<string, any>) => ({
+    id: row.id,
+    graphRunID: row.graph_run_id,
+    graphNodeOutputID: row.graph_node_output_id ?? null,
+    toolName: row.tool_name,
+    toolVersion: row.tool_version,
+    input: row.input_json ?? {},
+    output: row.output_json ?? null,
+    status: row.status,
+    errorMessage: row.error_message ?? null,
+    latencyMS: row.latency_ms ?? null,
+    startedAt: row.started_at ?? null,
+    finishedAt: row.finished_at ?? null,
+  }));
 }
 
 async function completeAIGraphRun(

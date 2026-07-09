@@ -10,7 +10,7 @@ deno run \
   --allow-read=. \
   --allow-write=supabase/functions/_shared/ai-touchpoint-catalog.ts,tools/ai-touchpoint-lab/fixtures \
   --allow-run=git,/opt/homebrew/bin/deno \
-  --allow-env=OPENAI_API_KEY,AI_TOUCHPOINT_LAB_PORT,OPENAI_MODEL \
+  --allow-env=OPENAI_API_KEY,AI_TOUCHPOINT_LAB_PORT,OPENAI_MODEL,TRAINING_ORCHESTRATOR_URL,TRAINING_ORCHESTRATOR_API_KEY,SUPABASE_URL,SUPABASE_ANON_KEY,SUPABASE_ACCESS_TOKEN \
   --allow-net=127.0.0.1,api.openai.com \
   tools/ai-touchpoint-lab/server.ts
 ```
@@ -33,7 +33,23 @@ For example:
 ```sh
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-5-mini
+TRAINING_ORCHESTRATOR_URL=http://127.0.0.1:8787
 ```
+
+## Graph Inspector
+
+Use the Graphs mode to inspect the local training orchestrator graphs, run graph
+fixtures, test model-backed graph calls, and review node/tool traces. Start the
+training orchestrator separately with `HAYF_ALLOW_AI_STUB=true` for deterministic
+local runs, or with `OPENAI_API_KEY` for real model calls.
+
+Set `HAYF_OBSERVABILITY_TRACE_LEVEL=full` on the training orchestrator to include
+full prompts, compact inputs, JSON schemas, model outputs, and knowledge refs in
+local traces. Leave it unset for compact production-safe traces.
+
+Durable app-triggered run inspection uses `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+and either a user access token in the request or `SUPABASE_ACCESS_TOKEN`. If the
+Supabase URL is not local, add that host to the Deno `--allow-net` list.
 
 ## Persistence
 

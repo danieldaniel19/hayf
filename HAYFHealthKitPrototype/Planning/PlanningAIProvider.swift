@@ -8,6 +8,7 @@ struct PlanningAIProvider {
         self.supabase = supabase
     }
 
+    @available(*, unavailable, message: "Use prepareInitialStrategyAfterBlueprint followed by acceptPreparedStrategyAndCreateInitialPlan.")
     func acceptStrategyAndCreateInitialPlan(
         healthSnapshot: HealthFeatureSnapshot?,
         actualWorkouts: [HealthActualWorkoutSummary] = [],

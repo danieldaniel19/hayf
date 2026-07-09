@@ -117,6 +117,26 @@ describe("trainingArchitectureGraph", () => {
     assert.ok(result.artifact.approved_archetypes.every((archetype) => archetype.fatigue_cost !== "high"));
   });
 
+  it("defers high-fatigue cycling work instead of rejecting it for the initial two-week plan", async () => {
+    const packet = basePacket({
+      selected_modality_order: ["Cycling", "Strength"],
+      normalized_goal: {
+        title: "Improve cycling stamina",
+        desiredOutcome: "ride longer and handle sustained efforts",
+      },
+    });
+
+    const result = await invokeTrainingArchitectureGraph(packet);
+
+    assert.ok(result.artifact.approved_archetypes.every((archetype) => archetype.id !== "cycling_vo2_intervals"));
+    assert.ok(result.artifact.deferred_specialist_recommendations.some((recommendation) => (
+      recommendation.archetype_id === "cycling_vo2_intervals" && recommendation.phase_hint === "build"
+    )));
+    assert.equal(result.artifact.rejected_specialist_recommendations.some((recommendation) => (
+      recommendation.archetype_id === "cycling_vo2_intervals"
+    )), false);
+  });
+
   it("routes unsupported tennis and swimming through the generic consultant without losing roles", async () => {
     const result = await invokeTrainingArchitectureGraph(basePacket({
       selected_modality_order: ["Tennis", "Swimming"],

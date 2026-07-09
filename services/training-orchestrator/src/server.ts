@@ -12,6 +12,7 @@ import {
 import { invokeFitnessStrategyGraph } from "./graphs/fitness-strategy.js";
 import { invokeTrainingArchitectureGraph } from "./graphs/training-architecture.js";
 import { invokeTwoWeekPlanGraph } from "./graphs/two-week-plan.js";
+import { observabilityGraphs, runObservabilityGraph, runObservabilityToolTest } from "./observability.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -29,11 +30,18 @@ type EdgeGraphNodeTrace = {
 type EdgeToolCallTrace = {
   toolName: string;
   toolVersion?: string;
+  graphNodeName?: string | null;
   input?: JsonRecord;
   output?: JsonRecord | null;
   status?: "succeeded" | "failed" | "skipped";
   errorMessage?: string | null;
   latencyMS?: number | null;
+  provider?: string | null;
+  model?: string | null;
+  systemPrompt?: string | null;
+  request?: JsonRecord | null;
+  schema?: JsonRecord | null;
+  knowledgeRefs?: unknown[];
 };
 
 const serviceVersion = "training-architect-consultants-v1";
@@ -54,6 +62,11 @@ export function createTrainingOrchestratorServer() {
 async function route(request: IncomingMessage, response: ServerResponse) {
   if (request.method === "GET" && request.url === "/health") {
     writeJSON(response, 200, { ok: true, service: "@hayf/training-orchestrator", version: serviceVersion });
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/observability/graphs") {
+    writeJSON(response, 200, observabilityGraphs());
     return;
   }
 
@@ -88,6 +101,18 @@ async function route(request: IncomingMessage, response: ServerResponse) {
       ],
       model: modelMetadata(),
     });
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/observability/run") {
+    const body = await readJSON(request);
+    writeJSON(response, 200, await runObservabilityGraph(body));
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/observability/tool-test") {
+    const body = await readJSON(request);
+    writeJSON(response, 200, await runObservabilityToolTest(body));
     return;
   }
 
@@ -168,11 +193,18 @@ function edgeToolCalls(result: GraphResult<unknown>): EdgeToolCallTrace[] {
   return result.tool_calls.map((toolCall) => ({
     toolName: toolCall.tool_name,
     toolVersion: toolCall.tool_version,
+    graphNodeName: toolCall.graph_node_name ?? null,
     input: toolCall.input,
     output: toolCall.output,
     status: toolCall.status,
     errorMessage: toolCall.error_message ?? null,
     latencyMS: toolCall.latency_ms ?? null,
+    provider: toolCall.provider ?? null,
+    model: toolCall.model ?? null,
+    systemPrompt: toolCall.system_prompt ?? null,
+    request: toolCall.request_json ?? null,
+    schema: toolCall.schema_json ?? null,
+    knowledgeRefs: toolCall.knowledge_refs ?? [],
   }));
 }
 

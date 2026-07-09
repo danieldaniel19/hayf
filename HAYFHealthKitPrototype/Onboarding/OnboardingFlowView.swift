@@ -1807,7 +1807,6 @@ struct OnboardingFlowView: View {
             do {
                 let acceptedAt = Date()
                 let acceptedBlueprint = currentAthleteBlueprint
-                let acceptedStrategy = currentFitnessStrategy
                 let preparedStrategyID = preparedFitnessStrategyID
                 let syncPayload = try? await healthSyncService.buildSyncPayload(daysBack: 14)
                 let healthSnapshot: HealthFeatureSnapshot?
@@ -1833,11 +1832,19 @@ struct OnboardingFlowView: View {
                         acceptedAt: acceptedAt
                     )
                 } else {
-                    _ = try await planningAIProvider.acceptStrategyAndCreateInitialPlan(
+                    let prepared = try await planningAIProvider.prepareInitialStrategyAfterBlueprint(
+                        healthSnapshot: healthSnapshot,
+                        acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
+                        onboardingContext: JSONValue.isoEncoded(OnboardingAICompactContext(intent: currentIntent, draft: draft)),
+                        deviceTimezone: TimeZone.current.identifier,
+                        acceptedAt: acceptedAt
+                    )
+                    preparedFitnessStrategyID = prepared.fitnessStrategyID
+                    preparedPlanningGraphRunID = prepared.graphRunID
+                    _ = try await planningAIProvider.acceptPreparedStrategyAndCreateInitialPlan(
+                        preparedStrategyID: prepared.fitnessStrategyID,
                         healthSnapshot: healthSnapshot,
                         actualWorkouts: syncPayload?.actualWorkouts ?? [],
-                        acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
-                        acceptedStrategy: acceptedStrategyArtifact(from: acceptedStrategy),
                         deviceTimezone: TimeZone.current.identifier,
                         acceptedAt: acceptedAt
                     )

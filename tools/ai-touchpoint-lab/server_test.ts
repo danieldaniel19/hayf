@@ -6,6 +6,8 @@ import {
   parseEnvFile,
   serializeCatalog,
   updateCatalogEntry,
+  validateGraphFixtureDraft,
+  validateGraphRunRequest,
   validateTouchpointDraft,
 } from "./server.ts";
 
@@ -102,6 +104,38 @@ Deno.test("parseEnvFile reads project-style env files without exposing comments"
       SUPABASE_URL: "https://example.supabase.co",
     },
   );
+});
+
+Deno.test("validateGraphRunRequest accepts known graph fixtures", () => {
+  assertEquals(validateGraphRunRequest({
+    graphName: "prepare_initial_strategy",
+    fixture: { planningPacket: { goal_context: { goal_kind: "consistency" } } },
+  }), {
+    graphName: "prepare_initial_strategy",
+    fixture: { planningPacket: { goal_context: { goal_kind: "consistency" } } },
+  });
+});
+
+Deno.test("validateGraphRunRequest rejects unknown graphs", () => {
+  assertThrows(() =>
+    validateGraphRunRequest({
+      graphName: "mystery_graph",
+      fixture: {},
+    })
+  );
+});
+
+Deno.test("validateGraphFixtureDraft saves graph fixtures with graph prefix", () => {
+  assertEquals(validateGraphFixtureDraft({
+    graphName: "two_week_plan",
+    name: "Happy Path",
+    fixture: { planningPacket: {} },
+  }), {
+    graphName: "two_week_plan",
+    safeName: "happy-path",
+    filename: "graph-two_week_plan-happy-path.json",
+    fixture: { planningPacket: {} },
+  });
 });
 
 function assert(value: unknown, message = "Expected value to be truthy") {

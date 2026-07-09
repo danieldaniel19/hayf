@@ -35,6 +35,7 @@ type TrainingArchitectureState = {
 };
 
 type RejectedRecommendation = TrainingArchitecture["rejected_specialist_recommendations"][number];
+type DeferredRecommendation = TrainingArchitecture["deferred_specialist_recommendations"][number];
 
 type ArchitectSynthesisDecision = {
   priority_order: string[];
@@ -53,6 +54,12 @@ type ArchitectSynthesisDecision = {
     bad_day_floor: string | null;
   };
   approved_archetype_ids: string[];
+  deferred_recommendations: Array<{
+    modality: string;
+    archetype_id: string | null;
+    reason: string;
+    phase_hint: string | null;
+  }>;
   rejected_recommendations: Array<{
     modality: string;
     archetype_id: string | null;
@@ -311,6 +318,7 @@ async function architectSynthesis(state: TrainingArchitectureState) {
     architect_frame_summary: frame,
     specialist_consultations: consultations,
     approved_archetypes: filterResult.approved,
+    deferred_specialist_recommendations: filterResult.deferred,
     rejected_specialist_recommendations: filterResult.rejected,
     phase_logic: normalizePhaseLogic(synthesis.decision.phase_logic, packet),
     progression_rules: nonEmptyStrings(synthesis.decision.progression_rules, [
@@ -364,6 +372,8 @@ async function architectSynthesis(state: TrainingArchitectureState) {
       ...frame.knowledge_refs,
       ...consultations.flatMap((consultation) => consultation.knowledge_refs),
       ...filterResult.approved.flatMap((archetype) => archetype.knowledge_refs),
+      ...filterResult.deferred.flatMap((deferral) => deferral.knowledge_refs),
+      ...filterResult.rejected.flatMap((rejection) => rejection.knowledge_refs),
     ]),
   };
 
@@ -373,6 +383,7 @@ async function architectSynthesis(state: TrainingArchitectureState) {
       priority_order: artifact.priority_order,
       role_count: artifact.modality_roles.length,
       approved_archetype_count: artifact.approved_archetypes.length,
+      deferred_recommendation_count: artifact.deferred_specialist_recommendations.length,
       rejected_recommendation_count: artifact.rejected_specialist_recommendations.length,
       conflict_status: artifact.conflict_assessment.status,
     }),
@@ -418,6 +429,7 @@ function deterministicValidation(state: TrainingArchitectureState) {
       valid: true,
       selected_modality_count: selected.size,
       approved_archetype_count: artifact.approved_archetypes.length,
+      deferred_recommendation_count: artifact.deferred_specialist_recommendations.length,
     }),
   };
 }
@@ -432,6 +444,7 @@ async function architectureReasoningTrace(state: TrainingArchitectureState) {
   if (!state.artifact) throw new Error("Training Architecture reasoning requires a validated artifact.");
   const result = await runStructuredJSON<ArchitectureReasoningOutput>({
     toolName: "author_training_architecture_reasoning",
+    graphNodeName: "author_training_architecture_reasoning",
     system: [
       "You are HAYF's Training Architect reviewer.",
       "Review the already validated Training Architecture and write a concise reasoning trace.",
@@ -450,6 +463,7 @@ async function architectureReasoningTrace(state: TrainingArchitectureState) {
       conflictStatus: state.artifact.conflict_assessment.status,
     },
     schema: architectureReasoningSchema,
+    knowledgeRefs: state.artifact.source_knowledge_refs,
     testOutput: () => ({
       reasoning: "The validated architecture keeps the selected priority first, bounds support work, and caps hard days inside the recovery envelope.",
       finalChecks: [
@@ -652,6 +666,7 @@ const architectSynthesisDecisionSchema = {
     "weekly_budget",
     "recovery_envelope",
     "approved_archetype_ids",
+    "deferred_recommendations",
     "rejected_recommendations",
     "phase_logic",
     "progression_rules",
@@ -697,6 +712,20 @@ const architectSynthesisDecisionSchema = {
       },
     },
     approved_archetype_ids: { type: "array", items: { type: "string" } },
+    deferred_recommendations: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["modality", "archetype_id", "reason", "phase_hint"],
+        properties: {
+          modality: { type: "string" },
+          archetype_id: { type: ["string", "null"] },
+          reason: { type: "string" },
+          phase_hint: { type: ["string", "null"] },
+        },
+      },
+    },
     rejected_recommendations: {
       type: "array",
       items: {
@@ -791,6 +820,7 @@ async function consultSpecialist(
   const toolName = supported ? `consult_${brief.modality}_specialist` : `consult_${brief.modality}_generic_specialist`;
   const result = await runStructuredJSON<SpecialistConsultation>({
     toolName,
+    graphNodeName: "specialist_consultations",
     system: [
       `You are HAYF's ${titleCase(brief.modality)} specialist coach.`,
       "Use the provided knowledge packs as bounded source material and the athlete packet as the athlete-specific context.",
@@ -830,6 +860,7 @@ async function consultSpecialist(
       knowledgeRefs: refs.map((ref) => ref.id),
     },
     schema: specialistConsultationSchema,
+    knowledgeRefs: refs,
     testOutput: () => fallback,
   });
 
@@ -847,6 +878,7 @@ async function synthesizeArchitecture(
   const fallback = deterministicSynthesisDecision(frame, consultations, packet);
   const result = await runStructuredJSON<ArchitectSynthesisDecision>({
     toolName: "synthesize_training_architecture",
+    graphNodeName: "architect_synthesis",
     system: [
       "You are HAYF's master Training Architect.",
       "Consolidate independent specialist coach recommendations into one coherent Training Architecture decision.",
@@ -854,6 +886,8 @@ async function synthesizeArchitecture(
       "Use HAYF policy and the athlete's approved evidence. Do not create dated workouts.",
       "Prefer a smaller coherent plan over satisfying every specialist request.",
       "Only approve archetype ids proposed by specialists.",
+      "Use deferred_recommendations for relevant specialist proposals that should wait for a later phase or stronger recovery evidence.",
+      "Use rejected_recommendations only for proposals that should not influence this architecture.",
     ].join(" "),
     input: {
       athlete_context: packet.athlete_context,
@@ -868,6 +902,10 @@ async function synthesizeArchitecture(
       output_requirements: {
         selected_modalities: frame.selected_modalities,
         weekly_budget_range: frame.weekly_budget_range,
+        disposition_sets: ["approved_archetype_ids", "deferred_recommendations", "rejected_recommendations"],
+        approved_means: "May be used by the first two-week planner.",
+        deferred_means: "Relevant but withheld from the first two-week planner; include a phase_hint when possible.",
+        rejected_means: "Not coherent for this athlete, evidence, or selected modalities.",
         no_dated_workouts: true,
       },
     },
@@ -879,6 +917,10 @@ async function synthesizeArchitecture(
       goalKind: packet.goal_context.goal_kind,
     },
     schema: architectSynthesisDecisionSchema,
+    knowledgeRefs: sourceRefs([
+      ...frame.knowledge_refs,
+      ...consultations.flatMap((consultation) => consultation.knowledge_refs),
+    ]),
     testOutput: () => fallback,
   });
 
@@ -968,6 +1010,20 @@ function normalizeSynthesisDecision(
   )));
   const approved = nonEmptyStrings(decision.approved_archetype_ids, fallback.approved_archetype_ids)
     .filter((id) => availableArchetypeIDs.has(id));
+  const approvedIDs = new Set(approved.length ? approved : fallback.approved_archetype_ids);
+  const deferred = (Array.isArray(decision.deferred_recommendations)
+    ? decision.deferred_recommendations
+    : fallback.deferred_recommendations)
+    .filter((deferral) => (
+      !deferral.archetype_id ||
+      (availableArchetypeIDs.has(deferral.archetype_id) && !approvedIDs.has(deferral.archetype_id))
+    ))
+    .map((deferral) => ({
+      modality: normalizeModality(deferral.modality),
+      archetype_id: deferral.archetype_id,
+      reason: nonEmptyString(deferral.reason, "Deferred by the Training Architect for later phase review."),
+      phase_hint: deferral.phase_hint ?? null,
+    }));
   return {
     priority_order: nonEmptyStrings(normalizeUnique(decision.priority_order), fallback.priority_order)
       .filter((modality) => frame.selected_modalities.includes(modality)),
@@ -982,6 +1038,7 @@ function normalizeSynthesisDecision(
       bad_day_floor: decision.recovery_envelope?.bad_day_floor ?? fallback.recovery_envelope.bad_day_floor,
     },
     approved_archetype_ids: approved.length ? approved : fallback.approved_archetype_ids,
+    deferred_recommendations: deferred,
     rejected_recommendations: Array.isArray(decision.rejected_recommendations)
       ? decision.rejected_recommendations
       : fallback.rejected_recommendations,
@@ -1061,6 +1118,12 @@ function deterministicSynthesisDecision(
       bad_day_floor: packet.planning_constraints.bad_day_floor,
     },
     approved_archetype_ids: filterResult.approved.map((archetype) => archetype.id),
+    deferred_recommendations: filterResult.deferred.map((deferral) => ({
+      modality: deferral.modality,
+      archetype_id: deferral.archetype_id ?? null,
+      reason: deferral.reason,
+      phase_hint: deferral.phase_hint ?? null,
+    })),
     rejected_recommendations: filterResult.rejected.map((rejection) => ({
       modality: rejection.modality,
       archetype_id: rejection.archetype_id ?? null,
@@ -1080,6 +1143,7 @@ function deterministicSynthesisDecision(
       "Progress only when the committed week is mostly completed and recovery caveats are not worsening.",
       "Prefer a small dose increase over adding a new modality when adherence is uncertain.",
       "Escalate intensity only through approved archetypes.",
+      "Revisit deferred archetypes only at phase review or after recovery and adherence evidence improve.",
     ],
     interference_rules: uniqueStrings(consultations.flatMap((consultation) => consultation.interference_rules)),
     conflict_assessment: {
@@ -1119,6 +1183,8 @@ function deterministicSynthesisDecision(
       workout_generation_rules: [
         `Allowed modalities: ${frame.selected_modalities.join(", ")}.`,
         `Approved archetypes: ${filterResult.approved.map((archetype) => archetype.id).join(", ")}.`,
+        `Deferred archetypes for later review: ${filterResult.deferred.map((deferral) => deferral.archetype_id).filter(Boolean).join(", ") || "none"}.`,
+        "Do not schedule deferred archetypes in the first two-week plan.",
         "Do not introduce off-menu modalities.",
         "Do not reopen goal priority, modality role, or tradeoff decisions.",
       ],
@@ -1274,12 +1340,20 @@ function filterApprovedArchetypes(
   consultations: SpecialistConsultation[],
   packet: PlanningPacket,
   decision?: ArchitectSynthesisDecision,
-): { approved: WorkoutArchetypeRecommendation[]; rejected: RejectedRecommendation[] } {
+): {
+  approved: WorkoutArchetypeRecommendation[];
+  deferred: DeferredRecommendation[];
+  rejected: RejectedRecommendation[];
+} {
   const approved: WorkoutArchetypeRecommendation[] = [];
+  const deferred: DeferredRecommendation[] = [];
   const rejected: RejectedRecommendation[] = [];
   const lowBudget = frame.weekly_budget_range.target_sessions <= 3;
   const missingEvidence = packet.approved_evidence_summary.confidence === "missing";
   const architectApprovedIDs = decision ? new Set(decision.approved_archetype_ids) : null;
+  const architectDeferrals = new Map((decision?.deferred_recommendations ?? [])
+    .filter((deferral) => deferral.archetype_id)
+    .map((deferral) => [deferral.archetype_id, deferral]));
   const architectRejections = new Map((decision?.rejected_recommendations ?? [])
     .filter((rejection) => rejection.archetype_id)
     .map((rejection) => [rejection.archetype_id, rejection.reason]));
@@ -1291,6 +1365,17 @@ function filterApprovedArchetypes(
       const highFatigueLowBudget = proposal.fatigue_cost === "high" && lowBudget;
       const highFatigueMissingEvidence = proposal.fatigue_cost === "high" && missingEvidence;
       const notArchitectApproved = architectApprovedIDs ? !architectApprovedIDs.has(proposal.id) : false;
+      const architectDeferral = architectDeferrals.get(proposal.id);
+      if (architectDeferral || (consultation.recommended_role === "primary_driver" && (highFatigueLowBudget || highFatigueMissingEvidence))) {
+        deferred.push({
+          modality: proposal.modality,
+          archetype_id: proposal.id,
+          reason: architectDeferral?.reason ?? deferralReason(proposal, lowBudget, missingEvidence),
+          phase_hint: architectDeferral?.phase_hint ?? "build",
+          knowledge_refs: proposal.knowledge_refs,
+        });
+        continue;
+      }
       if (highFatigueSupport || highFatigueLowBudget || highFatigueMissingEvidence || notArchitectApproved) {
         rejected.push({
           modality: proposal.modality,
@@ -1314,7 +1399,21 @@ function filterApprovedArchetypes(
   if (!approved.length && decision) {
     return filterApprovedArchetypes(frame, consultations, packet);
   }
-  return { approved, rejected };
+  return { approved, deferred, rejected };
+}
+
+function deferralReason(
+  proposal: WorkoutArchetypeRecommendation,
+  lowBudget: boolean,
+  missingEvidence: boolean,
+): string {
+  if (missingEvidence) {
+    return `${proposal.id} matches the goal but needs stronger recovery or training-load evidence before it becomes available to the planner.`;
+  }
+  if (lowBudget) {
+    return `${proposal.id} matches the goal but is deferred until the athlete proves the minimum week and has room for a hard progression.`;
+  }
+  return `${proposal.id} is relevant but deferred for phase review before it influences dated workouts.`;
 }
 
 function compatRecommendationFor(consultation: SpecialistConsultation): SpecialistRecommendation {
