@@ -154,6 +154,77 @@ const MOCK_GRAPH_FIXTURES = [
   },
 ];
 
+const WORKFLOW_STAGES = [
+  {
+    title: "1. Onboarding Stream",
+    summary: "The app captures the user's intent stream and turns it into compact onboarding context.",
+    steps: [
+      workflowStep("stream_selection", "Select onboarding stream", "entry", "User chooses the path and answers the stream questions.", "App UI", "Onboarding intent + draft answers"),
+      workflowStep("generate_summary", "Generate onboarding summary", "ai", "AI summarizes the draft into a coach-readable onboarding context.", "onboarding-ai", "Onboarding summary"),
+      workflowStep("generate_candidates", "Generate goal candidates", "ai", "AI proposes candidate goals and modality directions.", "onboarding-ai", "Goal candidates"),
+      workflowStep("accept_goal", "Accept goal direction", "deterministic", "User selection becomes the source goal signal for blueprint generation.", "App UI", "Accepted intent"),
+    ],
+  },
+  {
+    title: "2. Blueprint",
+    summary: "The athlete context is compressed before any planning graph sees it.",
+    steps: [
+      workflowStep("athlete_blueprint", "Generate athlete blueprint", "ai", "AI produces coach read, archetype, training state, baseline, history findings, and goal fit.", "onboarding-ai", "AthleteBlueprintOutput"),
+      workflowStep("blueprint_accept", "Accept blueprint", "entry", "User accepts the blueprint, which starts initial strategy preparation.", "App UI", "Accepted blueprint artifact"),
+    ],
+  },
+  {
+    title: "3. Prepare Strategy",
+    summary: "This is the rich LangGraph path that should happen before a strategy is accepted.",
+    steps: [
+      workflowStep("prepare_task", "prepare_initial_strategy_after_blueprint", "entry", "Local Edge Function receives accepted blueprint and onboarding context.", "planning-ai", "Planning packet input"),
+      workflowStep("compact_packet", "Build compact planning packet", "deterministic", "Raw/large context is reduced to the bounded PlanningPacket contract.", "planning-ai", "PlanningPacket"),
+      workflowStep("validate_packet", "Validate packet", "deterministic", "Training orchestrator rejects raw HealthKit ledgers and unsafe packet shapes.", "training_architecture", "Validated packet"),
+      workflowStep("load_knowledge", "Load knowledge packs", "deterministic", "Doctrine, policy, goal packs, and modality packs become bounded source material.", "training_architecture", "KnowledgePack[]"),
+      workflowStep("architect_frame", "Architect frame", "deterministic", "Builds modality briefs, weekly budget hypothesis, recovery risks, and specialist questions.", "training_architecture", "TrainingArchitectFrame"),
+      workflowStep("worker_specialists", "Worker specialists", "fanout", "Selected modalities call bounded specialist coaches in parallel.", "training_architecture", "SpecialistConsultation[]"),
+      workflowStep("master_coach", "Master coach synthesis", "ai", "Training Architect resolves priorities, roles, weekly budget, approved/deferred/rejected archetypes, and conflicts.", "training_architecture", "TrainingArchitecture"),
+      workflowStep("validate_architecture", "Validate architecture", "deterministic", "Checks invariants before persisting strategy state.", "training_architecture", "Validation summary"),
+      workflowStep("architecture_reasoning", "Architecture reasoning", "ai", "Explains the validated architecture without changing decisions.", "training_architecture", "Reasoning trace"),
+      workflowStep("strategy_writer", "Strategy writer", "ai", "Generates strategy targets and user-facing strategy copy from the architecture.", "fitness_strategy", "FitnessStrategyArtifact"),
+      workflowStep("persist_prepared", "Persist prepared strategy", "storage", "Stores prepared user goal, training architecture, strategy, node outputs, and tool calls.", "planning-ai + Supabase", "Prepared strategy ID"),
+    ],
+  },
+  {
+    title: "4. Accept and Generate First Two Weeks",
+    summary: "The accepted plan uses the prepared architecture rather than inventing strategy from scratch.",
+    steps: [
+      workflowStep("accept_prepared", "accept_prepared_strategy_and_create_initial_plan", "entry", "User accepts the prepared strategy in the app.", "planning-ai", "Prepared strategy ID"),
+      workflowStep("activate_strategy", "Activate goal and strategy", "deterministic", "Prepared rows become active and older active planning rows are superseded.", "planning-ai + Supabase", "Active strategy"),
+      workflowStep("plan_context", "Build planner contract", "deterministic", "Planner receives only approved archetypes, allowed modalities, constraints, strategy, and architecture.", "planning-ai", "PlannerInputContract"),
+      workflowStep("compile_two_week_plan", "Compile two-week plan", "ai", "AI generates week 1 committed and week 2 draft from approved architecture constraints.", "two_week_plan", "TwoWeekPlanArtifact"),
+      workflowStep("sanitize_insert_plan", "Sanitize and persist plan", "deterministic", "Validates workouts, applies actuals context, inserts weekly plans/workouts and targets.", "planning-ai + Supabase", "Visible two-week plan"),
+    ],
+  },
+  {
+    title: "5. Replanning and Plan Maintenance",
+    summary: "Current maintenance paths mostly repair or refresh dated plans; specialist/master phase transitions are still future work.",
+    steps: [
+      workflowStep("health_sync", "Sync HealthKit and reconcile", "deterministic", "Actual workouts and health evidence are persisted and compared with planned work.", "planning-ai", "Evidence + actuals"),
+      workflowStep("refresh_window", "Refresh plan window", "ai", "Generates or repairs visible weekly windows when dates roll forward or user requests a refresh.", "planning-ai", "Updated weekly plans"),
+      workflowStep("record_edit", "Record plan edit", "deterministic", "User edits are stored as planning events and constraints.", "planning-ai + Supabase", "Plan edit event"),
+      workflowStep("repair_proposal", "Create repair proposal", "ai", "AI proposes coherent repairs for recent or pending edits.", "planning-ai", "Repair proposal"),
+      workflowStep("apply_replan", "Apply replan proposal", "deterministic", "Accepted proposal updates the plan and preserves audit events.", "planning-ai + Supabase", "Updated plan"),
+      workflowStep("weekly_targets", "Generate weekly targets", "ai", "AI derives measurable weekly targets from the active strategy and visible plan.", "planning-ai", "Weekly targets"),
+      workflowStep("future_phase_review", "Future phase/specialist review", "planned", "Later we should revisit deferred archetypes and re-engage specialists/master coach at phase transitions.", "future graph", "Not implemented yet"),
+    ],
+  },
+];
+
+const WORKFLOW_LEGEND = [
+  { kind: "entry", label: "Entry/user event", description: "A user action or product task boundary starts the next segment." },
+  { kind: "deterministic", label: "Deterministic", description: "Code path with validation, shaping, persistence, or rules. No model call." },
+  { kind: "ai", label: "AI/model", description: "A model-backed call whose prompt, input, schema, and output can be traced in local/full observability mode." },
+  { kind: "fanout", label: "AI fanout", description: "Parallel model-backed worker calls, usually one per selected modality." },
+  { kind: "storage", label: "Storage", description: "Supabase persistence of canonical product state and durable traces." },
+  { kind: "planned", label: "Planned future", description: "Important lifecycle point that is documented but not wired as a dedicated graph yet." },
+];
+
 const els = {
   statusLine: document.querySelector("#statusLine"),
   touchpointList: document.querySelector("#touchpointList"),
@@ -178,9 +249,14 @@ const els = {
   saveFixtureButton: document.querySelector("#saveFixtureButton"),
   touchpointModeButton: document.querySelector("#touchpointModeButton"),
   graphModeButton: document.querySelector("#graphModeButton"),
+  workflowModeButton: document.querySelector("#workflowModeButton"),
   touchpointWorkspace: document.querySelector("#touchpointWorkspace"),
   graphWorkspace: document.querySelector("#graphWorkspace"),
+  workflowWorkspace: document.querySelector("#workflowWorkspace"),
   graphList: document.querySelector("#graphList"),
+  workflowList: document.querySelector("#workflowList"),
+  workflowDiagram: document.querySelector("#workflowDiagram"),
+  workflowLegend: document.querySelector("#workflowLegend"),
   graphEyebrow: document.querySelector("#graphEyebrow"),
   graphTitle: document.querySelector("#graphTitle"),
   graphPurpose: document.querySelector("#graphPurpose"),
@@ -195,6 +271,8 @@ const els = {
   graphFixtureNameInput: document.querySelector("#graphFixtureNameInput"),
   graphFixtureJSONInput: document.querySelector("#graphFixtureJSONInput"),
   saveGraphFixtureButton: document.querySelector("#saveGraphFixtureButton"),
+  graphRunIDInput: document.querySelector("#graphRunIDInput"),
+  loadGraphRunButton: document.querySelector("#loadGraphRunButton"),
   graphRunStatus: document.querySelector("#graphRunStatus"),
   graphTimeline: document.querySelector("#graphTimeline"),
   graphResultOutput: document.querySelector("#graphResultOutput"),
@@ -208,6 +286,7 @@ const els = {
 await loadCatalog();
 await loadGraphInspector();
 wireEvents();
+renderWorkflow();
 await refreshDiff();
 
 async function loadCatalog() {
@@ -250,9 +329,11 @@ function wireEvents() {
   els.saveFixtureButton.addEventListener("click", saveFixture);
   els.touchpointModeButton.addEventListener("click", () => setMode("touchpoints"));
   els.graphModeButton.addEventListener("click", () => setMode("graphs"));
+  els.workflowModeButton.addEventListener("click", () => setMode("workflow"));
   els.refreshGraphsButton.addEventListener("click", loadGraphInspector);
   els.runGraphButton.addEventListener("click", runSelectedGraph);
   els.saveGraphFixtureButton.addEventListener("click", saveGraphFixture);
+  els.loadGraphRunButton.addEventListener("click", loadGraphRunByID);
   els.testToolButton.addEventListener("click", testSelectedTool);
   els.readableGraphOutputButton.addEventListener("click", openReadableGraphModal);
   els.closeReadableGraphButton.addEventListener("click", closeReadableGraphModal);
@@ -283,12 +364,81 @@ function wireEvents() {
 
 function setMode(mode) {
   const graphMode = mode === "graphs";
-  els.touchpointModeButton.classList.toggle("active", !graphMode);
+  const workflowMode = mode === "workflow";
+  const touchpointMode = mode === "touchpoints";
+  els.touchpointModeButton.classList.toggle("active", touchpointMode);
   els.graphModeButton.classList.toggle("active", graphMode);
-  els.touchpointWorkspace.classList.toggle("hidden", graphMode);
-  els.touchpointList.classList.toggle("hidden", graphMode);
+  els.workflowModeButton.classList.toggle("active", workflowMode);
+  els.touchpointWorkspace.classList.toggle("hidden", !touchpointMode);
+  els.touchpointList.classList.toggle("hidden", !touchpointMode);
   els.graphWorkspace.classList.toggle("hidden", !graphMode);
   els.graphList.classList.toggle("hidden", !graphMode);
+  els.workflowWorkspace.classList.toggle("hidden", !workflowMode);
+  els.workflowList.classList.toggle("hidden", !workflowMode);
+}
+
+function renderWorkflow() {
+  renderWorkflowSidebar();
+  renderWorkflowDiagram();
+  renderWorkflowLegend();
+}
+
+function renderWorkflowSidebar() {
+  els.workflowList.innerHTML = "";
+  const section = document.createElement("section");
+  const title = document.createElement("div");
+  title.className = "group-title";
+  title.textContent = "Workflow";
+  section.append(title);
+  for (const stage of WORKFLOW_STAGES) {
+    const item = document.createElement("div");
+    item.className = "workflow-nav-item";
+    item.innerHTML = `<strong>${escapeHTML(stage.title)}</strong><span>${escapeHTML(stage.summary)}</span>`;
+    section.append(item);
+  }
+  els.workflowList.append(section);
+}
+
+function renderWorkflowDiagram() {
+  els.workflowDiagram.innerHTML = "";
+  for (const [stageIndex, stage] of WORKFLOW_STAGES.entries()) {
+    const stageEl = document.createElement("section");
+    stageEl.className = "workflow-stage";
+    const heading = document.createElement("div");
+    heading.className = "workflow-stage-heading";
+    heading.innerHTML = `<h3>${escapeHTML(stage.title)}</h3><p>${escapeHTML(stage.summary)}</p>`;
+    const steps = document.createElement("div");
+    steps.className = "workflow-steps";
+    for (const [stepIndex, step] of stage.steps.entries()) {
+      const stepEl = document.createElement("article");
+      stepEl.className = `workflow-step workflow-kind-${step.kind}`;
+      stepEl.innerHTML = [
+        `<div class="workflow-step-top"><span class="workflow-number">${stageIndex + 1}.${stepIndex + 1}</span>${workflowBadge(step.kind)}</div>`,
+        `<h4>${escapeHTML(step.label)}</h4>`,
+        `<p>${escapeHTML(step.description)}</p>`,
+        `<div class="workflow-meta"><span>${escapeHTML(step.owner)}</span><strong>${escapeHTML(step.output)}</strong></div>`,
+      ].join("");
+      steps.append(stepEl);
+      if (stepIndex < stage.steps.length - 1) {
+        const connector = document.createElement("div");
+        connector.className = "workflow-connector";
+        connector.textContent = "then";
+        steps.append(connector);
+      }
+    }
+    stageEl.append(heading, steps);
+    els.workflowDiagram.append(stageEl);
+  }
+}
+
+function renderWorkflowLegend() {
+  els.workflowLegend.innerHTML = "";
+  for (const item of WORKFLOW_LEGEND) {
+    const row = document.createElement("div");
+    row.className = "workflow-legend-row";
+    row.innerHTML = `${workflowBadge(item.kind)}<div><strong>${escapeHTML(item.label)}</strong><p>${escapeHTML(item.description)}</p></div>`;
+    els.workflowLegend.append(row);
+  }
 }
 
 function renderTouchpoints() {
@@ -516,6 +666,44 @@ async function runSelectedGraph() {
     renderTimeline(payload);
     renderNodeDetails();
     setStatus("Graph run complete");
+  } catch (error) {
+    showGraphError(error);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function loadGraphRunByID() {
+  const graphRunID = els.graphRunIDInput.value.trim();
+  if (!graphRunID) {
+    showGraphError(new Error("Paste a graph run ID first."));
+    return;
+  }
+
+  try {
+    setBusy(true, "Loading graph run");
+    const payload = await requestJSON("/api/graph-run-status", {
+      method: "POST",
+      body: {
+        graphRunID,
+        includeTrace: true,
+      },
+    });
+    const output = payload.output ?? payload;
+    const graphName = output.graphName ?? output.graph_name;
+    if (graphName) {
+      const matchingGraph = state.graphs.find((graph) => graph.name === graphName);
+      if (matchingGraph) selectGraph(matchingGraph.name);
+    }
+    state.lastGraphRun = output;
+    els.graphRunStatus.textContent = `${graphName ?? "Graph run"} ${output.status ?? "loaded"}`;
+    setGraphResult(output.output ?? {
+      trainingArchitecture: output.trainingArchitecture,
+      fitnessStrategy: output.strategy,
+    });
+    renderTimeline(output);
+    renderNodeDetails();
+    setStatus("Graph run loaded");
   } catch (error) {
     showGraphError(error);
   } finally {
@@ -1092,6 +1280,7 @@ function setBusy(isBusy, label = "Working") {
   els.saveFixtureButton.disabled = isBusy;
   els.runGraphButton.disabled = isBusy;
   els.saveGraphFixtureButton.disabled = isBusy;
+  els.loadGraphRunButton.disabled = isBusy;
   els.testToolButton.disabled = isBusy || !state.selectedNode?.toolCalls.length;
   if (isBusy) setStatus(label);
 }
@@ -1283,6 +1472,16 @@ function graphFixtureFor(options) {
       },
     },
   };
+}
+
+function workflowStep(id, label, kind, description, owner, output) {
+  return { id, label, kind, description, owner, output };
+}
+
+function workflowBadge(kind) {
+  const item = WORKFLOW_LEGEND.find((candidate) => candidate.kind === kind);
+  const label = item?.label ?? kind;
+  return `<span class="workflow-badge workflow-badge-${escapeHTML(kind)}">${escapeHTML(label)}</span>`;
 }
 
 function plannedNode(

@@ -51,6 +51,45 @@ struct PlanningAIProvider {
         return response.output
     }
 
+    func startPrepareInitialStrategyAfterBlueprint(
+        healthSnapshot: HealthFeatureSnapshot?,
+        acceptedBlueprint: JSONValue,
+        onboardingContext: JSONValue,
+        deviceTimezone: String = TimeZone.current.identifier,
+        acceptedAt: Date = Date()
+    ) async throws -> PlanningStartedStrategyOutput {
+        let response: PlanningStartedStrategyFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .startPrepareInitialStrategyAfterBlueprint,
+                healthSnapshot: healthSnapshot,
+                deviceTimezone: deviceTimezone,
+                acceptedBlueprint: acceptedBlueprint,
+                onboardingContext: onboardingContext,
+                acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
+            )
+        )
+
+        return response.output
+    }
+
+    func prepareInitialStrategyAfterBlueprintAsync(
+        healthSnapshot: HealthFeatureSnapshot?,
+        acceptedBlueprint: JSONValue,
+        onboardingContext: JSONValue,
+        deviceTimezone: String = TimeZone.current.identifier,
+        acceptedAt: Date = Date()
+    ) async throws -> PlanningPreparedStrategyOutput {
+        let started = try await startPrepareInitialStrategyAfterBlueprint(
+            healthSnapshot: healthSnapshot,
+            acceptedBlueprint: acceptedBlueprint,
+            onboardingContext: onboardingContext,
+            deviceTimezone: deviceTimezone,
+            acceptedAt: acceptedAt
+        )
+
+        return try await waitForPreparedStrategy(graphRunID: started.graphRunID)
+    }
+
     func acceptPreparedStrategyAndCreateInitialPlan(
         preparedStrategyID: UUID,
         healthSnapshot: HealthFeatureSnapshot?,
@@ -79,6 +118,48 @@ struct PlanningAIProvider {
         )
 
         return response.output
+    }
+
+    func waitForPreparedStrategy(graphRunID: UUID) async throws -> PlanningPreparedStrategyOutput {
+        let deadline = Date().addingTimeInterval(300)
+        var pollDelay: UInt64 = 1_500_000_000
+
+        while Date() < deadline {
+            let status = try await planningGraphRunStatus(graphRunID: graphRunID)
+            if status.status == "succeeded" {
+                guard
+                    let userGoalID = status.userGoalID,
+                    let fitnessStrategyID = status.fitnessStrategyID,
+                    let blueprintRevisionID = status.blueprintRevisionID,
+                    let trainingArchitectureID = status.trainingArchitectureID,
+                    let strategy = status.strategy,
+                    let trainingArchitecture = status.trainingArchitecture
+                else {
+                    throw PlanningGraphRunError.missingPreparedStrategy
+                }
+
+                return PlanningPreparedStrategyOutput(
+                    status: "completed",
+                    graphRunID: status.graphRunID,
+                    userGoalID: userGoalID,
+                    fitnessStrategyID: fitnessStrategyID,
+                    blueprintRevisionID: blueprintRevisionID,
+                    trainingArchitectureID: trainingArchitectureID,
+                    eventID: status.eventID,
+                    strategy: strategy,
+                    trainingArchitecture: trainingArchitecture
+                )
+            }
+
+            if status.status == "failed" || status.status == "cancelled" {
+                throw PlanningGraphRunError.failed(status.errorSummary ?? "Planning graph run failed.")
+            }
+
+            try await Task.sleep(nanoseconds: pollDelay)
+            pollDelay = min(pollDelay + 500_000_000, 5_000_000_000)
+        }
+
+        throw PlanningGraphRunError.timedOut
     }
 
     func syncHealthKitAndReconcile(
@@ -532,6 +613,13 @@ struct PlanningPreparedStrategyOutput: Decodable {
     let trainingArchitecture: JSONValue
 }
 
+struct PlanningStartedStrategyOutput: Decodable {
+    let status: String
+    let graphRunID: UUID
+    let userGoalID: UUID
+    let blueprintRevisionID: UUID
+}
+
 struct PlanningGraphRunStatusOutput: Decodable {
     let graphRunID: UUID
     let graphName: String
@@ -539,6 +627,29 @@ struct PlanningGraphRunStatusOutput: Decodable {
     let errorSummary: String?
     let output: JSONValue?
     let trainingArchitectureID: UUID?
+    let userGoalID: UUID?
+    let fitnessStrategyID: UUID?
+    let blueprintRevisionID: UUID?
+    let eventID: UUID?
+    let strategy: JSONValue?
+    let trainingArchitecture: JSONValue?
+}
+
+enum PlanningGraphRunError: LocalizedError {
+    case failed(String)
+    case missingPreparedStrategy
+    case timedOut
+
+    var errorDescription: String? {
+        switch self {
+        case let .failed(message):
+            return message
+        case .missingPreparedStrategy:
+            return "Planning finished but the prepared strategy was not available yet. Try again in a moment."
+        case .timedOut:
+            return "Planning is taking longer than expected. Try again in a moment."
+        }
+    }
 }
 
 struct PlanningEditOutcome: Decodable {
@@ -585,6 +696,12 @@ private struct PlanningPreparedStrategyFunctionResponse: Decodable {
     let task: PlanningAITask
     let model: String
     let output: PlanningPreparedStrategyOutput
+}
+
+private struct PlanningStartedStrategyFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningStartedStrategyOutput
 }
 
 private struct PlanningGraphRunStatusFunctionResponse: Decodable {
@@ -636,6 +753,7 @@ private struct PlanningWorkoutInterpretationFunctionResponse: Decodable {
 enum PlanningAITask: String, Codable {
     case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
     case prepareInitialStrategyAfterBlueprint = "prepare_initial_strategy_after_blueprint"
+    case startPrepareInitialStrategyAfterBlueprint = "start_prepare_initial_strategy_after_blueprint"
     case acceptPreparedStrategyAndCreateInitialPlan = "accept_prepared_strategy_and_create_initial_plan"
     case getPlanningGraphRunStatus = "get_planning_graph_run_status"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"

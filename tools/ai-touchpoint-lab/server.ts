@@ -19,6 +19,7 @@ const CATALOG_PATH = new URL(
 );
 const ENV_FILE_CANDIDATES = [
   new URL("./.env.local", LAB_DIR),
+  new URL("../../supabase/.env.local-langgraph", import.meta.url),
   new URL("../../supabase/.env.local", import.meta.url),
   new URL("../../supabase/functions/.env.local", import.meta.url),
   new URL("../../.env.local", import.meta.url),
@@ -411,7 +412,14 @@ function isIgnorableEnvReadError(error: unknown) {
 }
 
 function envValue(name: string) {
-  return Deno.env.get(name) ?? localEnv[name];
+  try {
+    return Deno.env.get(name) ?? localEnv[name];
+  } catch (error) {
+    if (error instanceof Deno.errors.PermissionDenied || error instanceof Error && error.name === "NotCapable") {
+      return localEnv[name];
+    }
+    throw error;
+  }
 }
 
 function catalogForClient(catalog: AITouchpointCatalog) {
@@ -526,10 +534,12 @@ async function planningGraphRunStatus(body: unknown) {
 
   const supabaseURL = envValue("SUPABASE_URL")?.replace(/\/$/, "");
   const anonKey = envValue("SUPABASE_ANON_KEY");
-  const accessToken = typeof body.accessToken === "string" ? body.accessToken : envValue("SUPABASE_ACCESS_TOKEN");
   if (!supabaseURL || !anonKey) {
     throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY are required for durable graph run inspection.");
   }
+  const accessToken = typeof body.accessToken === "string"
+    ? body.accessToken
+    : envValue("SUPABASE_ACCESS_TOKEN") ?? await localSupabaseAccessToken(supabaseURL, anonKey);
   const response = await fetch(`${supabaseURL}/functions/v1/planning-ai`, {
     method: "POST",
     headers: {
@@ -548,6 +558,26 @@ async function planningGraphRunStatus(body: unknown) {
     throw new Error(payload?.error ?? `Graph run status request failed: ${response.status}`);
   }
   return payload;
+}
+
+async function localSupabaseAccessToken(supabaseURL: string, anonKey: string) {
+  const email = envValue("HAYF_LOCAL_AUTH_EMAIL");
+  const password = envValue("HAYF_LOCAL_AUTH_PASSWORD");
+  if (!email || !password) return "";
+
+  const response = await fetch(`${supabaseURL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: anonKey,
+    },
+    body: JSON.stringify({ email, password }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error_description ?? payload?.error ?? "Could not sign in local Supabase user for graph inspection.");
+  }
+  return typeof payload.access_token === "string" ? payload.access_token : "";
 }
 
 async function assertAllowedFixturePath(url: URL) {

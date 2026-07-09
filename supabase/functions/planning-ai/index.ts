@@ -10,6 +10,7 @@ type SupabaseAdminClient = any;
 type PlanningTask =
   | "accept_strategy_and_create_initial_plan"
   | "prepare_initial_strategy_after_blueprint"
+  | "start_prepare_initial_strategy_after_blueprint"
   | "accept_prepared_strategy_and_create_initial_plan"
   | "get_planning_graph_run_status"
   | "sync_healthkit_and_reconcile"
@@ -837,6 +838,8 @@ async function handleTask(args: {
       );
     case "prepare_initial_strategy_after_blueprint":
       return prepareInitialStrategyAfterBlueprint(admin, userID!, requestBody);
+    case "start_prepare_initial_strategy_after_blueprint":
+      return startPrepareInitialStrategyAfterBlueprint(admin, userID!, requestBody);
     case "accept_prepared_strategy_and_create_initial_plan":
       return acceptPreparedStrategyAndCreateInitialPlan(admin, userID!, requestBody, touchpointModel("plan_generation"));
     case "get_planning_graph_run_status":
@@ -1075,6 +1078,32 @@ async function prepareInitialStrategyAfterBlueprint(
   userID: string,
   requestBody: PlanningAIRequest,
 ) {
+  const preparation = await createInitialStrategyPreparation(admin, userID, requestBody);
+  return finishInitialStrategyPreparation(admin, preparation);
+}
+
+async function startPrepareInitialStrategyAfterBlueprint(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const preparation = await createInitialStrategyPreparation(admin, userID, requestBody);
+  runInBackground(finishInitialStrategyPreparation(admin, preparation));
+  return {
+    userID,
+    model: "training-orchestrator",
+    status: "running",
+    graphRunID: preparation.graphRun.id,
+    userGoalID: preparation.goal.id,
+    blueprintRevisionID: preparation.blueprintRevision.id,
+  };
+}
+
+async function createInitialStrategyPreparation(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
   const onboarding = await loadPlanningOnboardingContext(admin, userID, requestBody);
 
   const timezone = requestBody.deviceTimezone || "UTC";
@@ -1137,6 +1166,59 @@ async function prepareInitialStrategyAfterBlueprint(
     userGoalID: goal.id,
     input: planningPacket,
   });
+
+  return {
+    userID,
+    requestBody,
+    onboarding,
+    timezone,
+    acceptedAt,
+    committedWeekStart,
+    acceptedBlueprint,
+    goalKind,
+    timeframeWeeks,
+    requiresPhases,
+    targetDate,
+    blueprintRevision,
+    goal,
+    planningPacket,
+    graphRun,
+  };
+}
+
+async function finishInitialStrategyPreparation(
+  admin: SupabaseAdminClient,
+  preparation: {
+    userID: string;
+    requestBody: PlanningAIRequest;
+    timezone: string;
+    acceptedAt: Date;
+    committedWeekStart: Date;
+    goalKind: string;
+    timeframeWeeks: number | null;
+    requiresPhases: boolean;
+    targetDate: string | null;
+    blueprintRevision: Record<string, any>;
+    goal: Record<string, any>;
+    planningPacket: Record<string, any>;
+    graphRun: Record<string, any>;
+  },
+) {
+  const {
+    userID,
+    requestBody,
+    timezone,
+    acceptedAt,
+    committedWeekStart,
+    goalKind,
+    timeframeWeeks,
+    requiresPhases,
+    targetDate,
+    blueprintRevision,
+    goal,
+    planningPacket,
+    graphRun,
+  } = preparation;
 
   let orchestration: InitialStrategyOrchestrationOutput;
   try {
@@ -1282,6 +1364,17 @@ async function prepareInitialStrategyAfterBlueprint(
     strategy: acceptedStrategy,
     trainingArchitecture: orchestration.trainingArchitecture,
   };
+}
+
+function runInBackground(promise: Promise<unknown>) {
+  const edgeRuntime = (globalThis as any).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) {
+    edgeRuntime.waitUntil(promise);
+    return;
+  }
+  promise.catch((error) => {
+    console.error("Background planning task failed", error);
+  });
 }
 
 async function acceptPreparedStrategyAndCreateInitialPlan(
@@ -1561,6 +1654,23 @@ async function getPlanningGraphRunStatus(
       .eq("user_id", userID)
       .limit(1),
   );
+  const strategy = graphRun.source_fitness_strategy_id
+    ? await maybeSingle(
+      admin
+        .from("fitness_strategies")
+        .select()
+        .eq("id", graphRun.source_fitness_strategy_id)
+        .eq("user_id", userID)
+        .limit(1),
+    )
+    : await maybeSingle(
+      admin
+        .from("fitness_strategies")
+        .select()
+        .eq("training_architecture_id", trainingArchitecture?.id ?? "00000000-0000-0000-0000-000000000000")
+        .eq("user_id", userID)
+        .limit(1),
+    );
   const includeTrace = requestBody.includeTrace === true || requestBody.include_trace === true;
   const nodes = includeTrace
     ? await graphRunNodeOutputs(admin, graphRun.id, userID)
@@ -1581,6 +1691,11 @@ async function getPlanningGraphRunStatus(
     nodes,
     toolCalls,
     trainingArchitectureID: trainingArchitecture?.id ?? null,
+    userGoalID: graphRun.source_user_goal_id ?? strategy?.user_goal_id ?? null,
+    fitnessStrategyID: strategy?.id ?? graphRun.source_fitness_strategy_id ?? null,
+    blueprintRevisionID: graphRun.source_blueprint_revision_id ?? strategy?.source_blueprint_revision_id ?? null,
+    strategy: objectAt(strategy?.context_json ?? {}, "acceptedStrategy") ?? objectAt(graphRun.output_json ?? {}, "fitnessStrategy") ?? null,
+    trainingArchitecture: trainingArchitecture?.architecture_json ?? objectAt(graphRun.output_json ?? {}, "trainingArchitecture") ?? null,
   };
 }
 

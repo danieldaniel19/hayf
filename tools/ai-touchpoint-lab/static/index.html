@@ -19,6 +19,7 @@
         <div class="mode-switch" aria-label="Lab mode">
           <button id="touchpointModeButton" type="button" class="active">Prompts</button>
           <button id="graphModeButton" type="button">Graphs</button>
+          <button id="workflowModeButton" type="button">Workflow</button>
         </div>
         <nav
           id="touchpointList"
@@ -30,6 +31,12 @@
           id="graphList"
           class="touchpoint-list hidden"
           aria-label="LangGraph graphs"
+        >
+        </nav>
+        <nav
+          id="workflowList"
+          class="touchpoint-list hidden"
+          aria-label="Workflow legend"
         >
         </nav>
       </aside>
@@ -221,6 +228,20 @@
                 spellcheck="false"
               ></textarea>
             </label>
+
+            <div class="run-lookup">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h3>App Run</h3>
+                  <p>Load a graph run created by the simulator.</p>
+                </div>
+                <button id="loadGraphRunButton" type="button">Load Run</button>
+              </div>
+              <label>
+                Graph run ID
+                <input id="graphRunIDInput" type="text" placeholder="dab4c072-fb51-437b-95b0-9770938e5ece">
+              </label>
+            </div>
           </section>
 
           <section class="panel diff-panel">
@@ -233,6 +254,37 @@
             </div>
             <div id="graphTimeline" class="timeline"></div>
             <pre id="graphResultOutput" class="output"></pre>
+          </section>
+        </section>
+      </section>
+
+      <section id="workflowWorkspace" class="workspace hidden">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Planning Workflow</p>
+            <h2>Onboarding to Plan Lifecycle</h2>
+          </div>
+        </header>
+
+        <section class="workflow-layout">
+          <section class="panel workflow-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Sequence Map</h3>
+                <p>Static visual aid for the full local LangGraph planning path.</p>
+              </div>
+            </div>
+            <div id="workflowDiagram" class="workflow-diagram"></div>
+          </section>
+
+          <section class="panel workflow-side-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Legend</h3>
+                <p>How to read the diagram.</p>
+              </div>
+            </div>
+            <div id="workflowLegend" class="workflow-legend"></div>
           </section>
         </section>
       </section>

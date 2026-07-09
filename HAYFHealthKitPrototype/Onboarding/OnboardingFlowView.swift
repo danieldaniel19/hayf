@@ -1746,13 +1746,20 @@ struct OnboardingFlowView: View {
     private func generateFitnessStrategy() async {
         aiGenerationFailure = nil
         do {
-            let prepared = try await planningAIProvider.prepareInitialStrategyAfterBlueprint(
-                healthSnapshot: pendingHealthSnapshot,
-                acceptedBlueprint: acceptedBlueprintArtifact(from: currentAthleteBlueprint),
-                onboardingContext: JSONValue.isoEncoded(OnboardingAICompactContext(intent: currentIntent, draft: draft)),
-                deviceTimezone: TimeZone.current.identifier,
-                acceptedAt: Date()
-            )
+            let prepared: PlanningPreparedStrategyOutput
+            if let preparedPlanningGraphRunID {
+                prepared = try await planningAIProvider.waitForPreparedStrategy(graphRunID: preparedPlanningGraphRunID)
+            } else {
+                let started = try await planningAIProvider.startPrepareInitialStrategyAfterBlueprint(
+                    healthSnapshot: pendingHealthSnapshot,
+                    acceptedBlueprint: acceptedBlueprintArtifact(from: currentAthleteBlueprint),
+                    onboardingContext: JSONValue.isoEncoded(OnboardingAICompactContext(intent: currentIntent, draft: draft)),
+                    deviceTimezone: TimeZone.current.identifier,
+                    acceptedAt: Date()
+                )
+                preparedPlanningGraphRunID = started.graphRunID
+                prepared = try await planningAIProvider.waitForPreparedStrategy(graphRunID: started.graphRunID)
+            }
             fitnessStrategy = try FitnessStrategyOutput.decode(from: prepared.strategy)
             preparedFitnessStrategyID = prepared.fitnessStrategyID
             preparedPlanningGraphRunID = prepared.graphRunID
@@ -1760,7 +1767,9 @@ struct OnboardingFlowView: View {
         } catch {
             fitnessStrategy = nil
             preparedFitnessStrategyID = nil
-            preparedPlanningGraphRunID = nil
+            if let graphError = error as? PlanningGraphRunError, case .failed = graphError {
+                preparedPlanningGraphRunID = nil
+            }
             aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingStrategy, error: error)
         }
     }
@@ -1832,13 +1841,20 @@ struct OnboardingFlowView: View {
                         acceptedAt: acceptedAt
                     )
                 } else {
-                    let prepared = try await planningAIProvider.prepareInitialStrategyAfterBlueprint(
-                        healthSnapshot: healthSnapshot,
-                        acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
-                        onboardingContext: JSONValue.isoEncoded(OnboardingAICompactContext(intent: currentIntent, draft: draft)),
-                        deviceTimezone: TimeZone.current.identifier,
-                        acceptedAt: acceptedAt
-                    )
+                    let prepared: PlanningPreparedStrategyOutput
+                    if let preparedPlanningGraphRunID {
+                        prepared = try await planningAIProvider.waitForPreparedStrategy(graphRunID: preparedPlanningGraphRunID)
+                    } else {
+                        let started = try await planningAIProvider.startPrepareInitialStrategyAfterBlueprint(
+                            healthSnapshot: healthSnapshot,
+                            acceptedBlueprint: acceptedBlueprintArtifact(from: acceptedBlueprint),
+                            onboardingContext: JSONValue.isoEncoded(OnboardingAICompactContext(intent: currentIntent, draft: draft)),
+                            deviceTimezone: TimeZone.current.identifier,
+                            acceptedAt: acceptedAt
+                        )
+                        preparedPlanningGraphRunID = started.graphRunID
+                        prepared = try await planningAIProvider.waitForPreparedStrategy(graphRunID: started.graphRunID)
+                    }
                     preparedFitnessStrategyID = prepared.fitnessStrategyID
                     preparedPlanningGraphRunID = prepared.graphRunID
                     _ = try await planningAIProvider.acceptPreparedStrategyAndCreateInitialPlan(
