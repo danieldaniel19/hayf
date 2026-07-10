@@ -69,10 +69,16 @@ Function: `supabase/functions/planning-ai/index.ts`
 
 Public tasks:
 
-- `bootstrap_after_onboarding`
+- `prepare_initial_strategy_after_blueprint`
+- `start_prepare_initial_strategy_after_blueprint`
+- `accept_prepared_strategy_and_create_initial_plan`
+- `get_planning_graph_run_status`
 - `sync_healthkit_and_reconcile`
 - `refresh_plan_window`
+- `refresh_workout_weather_forecasts`
+- `generate_weekly_plan_targets`
 - `record_plan_edit`
+- `record_weekly_plan_constraint`
 - `recommend_workout_replacements`
 - `replace_workout`
 - `recommend_workout_additions`
@@ -84,20 +90,18 @@ Public tasks:
 
 The function is authenticated for app tasks. The scheduled task requires service-role authorization.
 
-### Bootstrap
+Deprecated compatibility task:
 
-`bootstrap_after_onboarding`:
+- `accept_strategy_and_create_initial_plan` is intentionally rejected by the backend. Use the prepared Training Architecture flow.
 
-- loads `profiles` and `onboarding_profiles`
-- generates an active block from onboarding intent
-- generates current week plus next week
-- creates full workout prescriptions and one-line fueling summaries
-- writes block, phases, weekly rhythms, planned workouts, event log, and AI trace
-- fails with a retryable error if AI plan generation fails
+### Initial Planning
 
-Important QA fix:
+Initial post-blueprint planning is split into durable architecture and plan artifacts:
 
-- The onboarding row must be fetched as a single object, not an array. Otherwise planning cannot reliably read `onboarding.intent`.
+- `prepare_initial_strategy_after_blueprint` / `start_prepare_initial_strategy_after_blueprint` build the Training Architecture graph and prepared Fitness Strategy.
+- `accept_prepared_strategy_and_create_initial_plan` activates the prepared strategy and runs the two-week plan graph.
+- `training_architectures` is the required coaching contract for all active plan generation and replan review.
+- Initial and rolling plan generation persist `ai_graph_runs` with `graph_name = two_week_plan`.
 
 ### HealthKit Sync
 
@@ -110,8 +114,9 @@ Important QA fix:
 - marks matched planned workouts `done`
 - inserts unmatched actual workouts as `planned_workouts.source = healthkit_detected` and `status = done`
 - creates `workout_debrief_requests` for matched or detected actual workouts so Today / Workout Detail can ask for feedback later
-- creates initial active-block goal targets when needed and evaluates goal status after sync
-- creates one batched `replan_proposal` if any unexpected actuals were detected
+- evaluates target status after sync
+- sends unexpected actuals and meaningful matched-workout disparities through the master-coach pending review path instead of creating empty repair proposals directly
+- triggers the migrated two-week plan refresh when missed workouts require a regenerated window
 
 The first sync can be slower because it imports many recent workouts and writes events. Later syncs should be much lighter because HealthKit UUID upsert makes it idempotent.
 
@@ -176,7 +181,10 @@ First Profile mock:
 `refresh_plan_window`:
 
 - ensures the visible two-week window exists
-- uses the latest snapshots, events, and proposals as context
+- uses the active Training Architecture, Fitness Strategy, latest snapshots, events, proposals, and weekly target constraints as graph context
+- runs the two-week plan graph for every non-skipped generation
+- persists `ai_graph_runs`, graph node outputs, tool calls, validation, and model metadata
+- links refreshed `weekly_plans` to `training_architecture_id`
 - avoids overwriting user-moved/user-deleted/done rows
 - skips user-triggered refresh if the two-week window already exists
 - records health-data freshness in `plan_events.payload_json`
@@ -200,6 +208,7 @@ First Profile mock:
 
 - with no adjustment signal, marks the workout `checked_in`
 - with a low-energy/text distress signal, creates an adjustment proposal for the current workout
+- includes Training Architecture metadata on the adjustment proposal
 - later-workout repairs remain proposals
 
 ## iOS Integration
@@ -225,8 +234,9 @@ Files:
 
 1. builds a HealthKit feature snapshot if connected
 2. upserts `onboarding_profiles`
-3. calls `bootstrap_after_onboarding`
-4. only publishes onboarding completion after bootstrap returns
+3. prepares the Training Architecture and Fitness Strategy
+4. accepts the prepared strategy and creates the initial two-week plan
+5. only publishes onboarding completion after initial plan creation returns
 
 This avoids a race where authenticated Home appears and tries sync/refresh before an active block exists.
 

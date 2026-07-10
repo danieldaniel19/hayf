@@ -368,9 +368,11 @@ Remain sidecar audit and repair artifacts, not hierarchy nodes.
 
 ## Immediate Post-Acceptance Flow
 
-The future replacement for `bootstrap_after_onboarding` should be something like `create_initial_strategy_after_blueprint`.
+The active onboarding path is no longer `bootstrap_after_onboarding`.
 
-The iOS app should not know whether LangGraph is involved. It should call one authenticated backend task and receive product artifacts or a retryable failure.
+The app prepares the hidden coaching structure with `prepare_initial_strategy_after_blueprint` or its async wrapper `start_prepare_initial_strategy_after_blueprint`, then creates the first visible plan with `accept_prepared_strategy_and_create_initial_plan`. The older `accept_strategy_and_create_initial_plan` task is deprecated compatibility only and is rejected by the backend.
+
+The iOS app should not know whether LangGraph is involved. It should call authenticated backend tasks and receive product artifacts or a retryable failure.
 
 After the user accepts the first Athlete Blueprint:
 
@@ -404,6 +406,34 @@ After the user accepts the first Athlete Blueprint:
    - next week as `draft`
 10. Generate workouts for those visible weeks.
 11. Persist events and AI generation traces.
+
+## Active Planning And Replan Touchpoints
+
+The durable Training Architecture is required for every active plan-generation or replan-review touchpoint. It is loaded from `fitness_strategies.training_architecture_id` and treated as the coaching contract for the current strategy.
+
+Concrete plan generation uses the two-week plan graph:
+
+- initial plan generation after strategy acceptance
+- explicit `refresh_plan_window`
+- cron-driven `scheduled_refresh_due_windows`, through the refresh path
+- missed-workout refresh after HealthKit sync, through the refresh path
+
+Each non-skipped generation persists an `ai_graph_runs` row with `graph_name = two_week_plan`, including node outputs, tool calls, validation, and model metadata. Refreshed `weekly_plans` remain linked to the active `training_architecture_id`.
+
+Bounded replans use master-coach review instead of regenerating the architecture:
+
+- manual move, delete, replace, add, and weekly availability changes
+- unexpected HealthKit actual workouts
+- meaningful matched-workout disparities
+
+The master coach receives the active Fitness Strategy, compact Training Architecture context, visible weeks, protected user or actual facts, event history, and proposals. It may return no mutation when the edited plan is acceptable, or a small proposal that repairs the surrounding two-week execution window. Specialist consultations are historical inputs already consolidated into the Training Architecture; they are not re-run during v1 replans.
+
+Deterministic non-generation paths stay deterministic:
+
+- applying a proposal only applies stored mutations
+- weather refresh only updates weather-sensitive workout context
+- check-in dose adjustment may create a bounded same-workout proposal with Training Architecture metadata
+- weekly target generation remains a target engine, but consumes Training Architecture context and must not invent modalities outside it
 
 ## Compact Planning Packet
 

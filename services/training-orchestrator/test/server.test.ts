@@ -74,6 +74,12 @@ describe("training orchestrator HTTP adapter", () => {
     assert.ok(body.plan.rhythms.every((rhythm: Record<string, any>) => (
       rhythm.workouts.every((workout: Record<string, string>) => ["cycling", "strength"].includes(workout.activityType.toLowerCase()))
     )));
+    const workouts = body.plan.rhythms.flatMap((rhythm: Record<string, any>) => rhythm.workouts);
+    assert.ok(workouts.every((workout: Record<string, any>) => workout.prescription?.schemaVersion === 1));
+    assert.ok(workouts.some((workout: Record<string, any>) => (
+      workout.activityType === "strength" &&
+      workout.prescription.main.blocks.some((block: Record<string, any>) => block.kind === "strengthExercise" && block.alternatives.length > 0)
+    )));
   });
 
   it("serves explicit graph metadata for the inspector", async () => {
@@ -133,6 +139,29 @@ describe("training orchestrator HTTP adapter", () => {
       assert.equal(typeof body.latencyMS, "number");
       assert.ok(body.request.input);
       assert.ok(body.output.rhythms.length === 2);
+    } finally {
+      delete process.env.HAYF_OBSERVABILITY_TRACE_LEVEL;
+    }
+  });
+
+  it("applies observability prompt and model overrides to model-backed tool calls", async () => {
+    process.env.HAYF_OBSERVABILITY_TRACE_LEVEL = "full";
+    try {
+      const body = await postJSON("/observability/tool-test", {
+        toolName: "synthesize_training_architecture",
+        fixture: { planningPacket: basePacket() },
+        toolOverrides: {
+          synthesize_training_architecture: {
+            model: "gpt-override",
+            systemPrompt: "Override Training Architect prompt for local eval.",
+          },
+        },
+      });
+
+      assert.equal(body.ok, true);
+      assert.equal(body.request.model, "gpt-override");
+      assert.equal(body.raw.system_prompt, "Override Training Architect prompt for local eval.");
+      assert.ok(body.request.input[0].content.includes("Override Training Architect"));
     } finally {
       delete process.env.HAYF_OBSERVABILITY_TRACE_LEVEL;
     }

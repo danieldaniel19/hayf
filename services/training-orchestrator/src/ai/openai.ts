@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { type GraphToolCall, type JsonObject, type KnowledgeSourceRef } from "../contracts.js";
 
 type StructuredJSONArgs<T> = {
@@ -16,11 +17,23 @@ type StructuredJSONResult<T> = {
   toolCall: GraphToolCall;
 };
 
+export type ToolOverride = {
+  model?: string;
+  systemPrompt?: string;
+};
+
 const openAIURL = "https://api.openai.com/v1/responses";
+const overrideStore = new AsyncLocalStorage<Record<string, ToolOverride>>();
+
+export function runWithToolOverrides<T>(overrides: Record<string, ToolOverride> | undefined, fn: () => Promise<T>) {
+  return overrideStore.run(overrides ?? {}, fn);
+}
 
 export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise<StructuredJSONResult<T>> {
   const started = Date.now();
-  const model = process.env.OPENAI_MODEL?.trim() || "gpt-5-mini";
+  const override = overrideStore.getStore()?.[args.toolName];
+  const model = override?.model?.trim() || process.env.OPENAI_MODEL?.trim() || "gpt-5-mini";
+  const system = override?.systemPrompt?.trim() || args.system;
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   const fullTrace = process.env.HAYF_OBSERVABILITY_TRACE_LEVEL === "full";
 
@@ -33,14 +46,15 @@ export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise
           tool_name: args.toolName,
           tool_version: "test-openai-stub",
           graph_node_name: args.graphNodeName,
-          input: fullTrace ? fullInput("test", args) : { model: "test", ...args.inputSummary },
+          input: fullTrace ? fullInput(model, args, system) : { model, ...args.inputSummary },
           output: data as JsonObject,
           status: "succeeded",
           latency_ms: Date.now() - started,
           provider: "openai",
-          model: "test",
+          model,
           fullTrace,
           args,
+          system,
         }),
       };
     }
@@ -56,7 +70,7 @@ export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise
     body: JSON.stringify({
       model,
       input: [
-        { role: "system", content: args.system },
+        { role: "system", content: system },
         { role: "user", content: JSON.stringify(args.input) },
       ],
       text: {
@@ -82,7 +96,7 @@ export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise
       tool_name: args.toolName,
       tool_version: "openai-responses-json-schema-v1",
       graph_node_name: args.graphNodeName,
-      input: fullTrace ? fullInput(model, args) : { model, ...args.inputSummary },
+      input: fullTrace ? fullInput(model, args, system) : { model, ...args.inputSummary },
       output: data as JsonObject,
       status: "succeeded",
       latency_ms: Date.now() - started,
@@ -90,6 +104,7 @@ export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise
       model,
       fullTrace,
       args,
+      system,
     }),
   };
 }
@@ -106,6 +121,7 @@ function buildToolCall<T>(value: {
   model: string;
   fullTrace: boolean;
   args: StructuredJSONArgs<T>;
+  system: string;
 }): GraphToolCall {
   return {
     tool_name: value.tool_name,
@@ -119,11 +135,11 @@ function buildToolCall<T>(value: {
     model: value.model,
     ...(value.fullTrace
       ? {
-        system_prompt: value.args.system,
+        system_prompt: value.system,
         request_json: {
           model: value.model,
           input: [
-            { role: "system", content: value.args.system },
+            { role: "system", content: value.system },
             { role: "user", content: JSON.stringify(value.args.input) },
           ],
         },
@@ -134,12 +150,12 @@ function buildToolCall<T>(value: {
   };
 }
 
-function fullInput<T>(model: string, args: StructuredJSONArgs<T>): JsonObject {
+function fullInput<T>(model: string, args: StructuredJSONArgs<T>, system: string): JsonObject {
   return {
     model,
     inputSummary: args.inputSummary,
     input: args.input,
-    systemPrompt: args.system,
+    systemPrompt: system,
     schema: args.schema,
     knowledgeRefs: args.knowledgeRefs ?? [],
   };

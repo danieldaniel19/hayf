@@ -171,9 +171,23 @@ describe("fitnessStrategyGraph and twoWeekPlanGraph", () => {
     assert.equal(plan.artifact.rhythms.length, 2);
     assert.equal(plan.artifact.rhythms[0]?.weekStartDate, packet.planning_constraints.start_date);
     assert.equal(plan.artifact.rhythms[0]?.workouts.length, architecture.weekly_budget.target_sessions);
+    assert.ok(plan.nodes.some((node) => node.node_name === "enrich_prescriptions"));
+    assert.ok(plan.tool_calls.some((tool) => tool.tool_name === "enrich_workout_prescriptions"));
     assert.ok(plan.artifact.rhythms.every((rhythm) => (
       rhythm.workouts.every((workout) => architecture.priority_order.includes(workout.activityType.toLowerCase()))
     )));
+    const workouts = plan.artifact.rhythms.flatMap((rhythm) => rhythm.workouts);
+    assert.ok(workouts.every((workout) => workout.prescription.schemaVersion === 1));
+    assert.ok(workouts.every((workout) => workout.prescription.warmup.steps.length > 0));
+    assert.ok(workouts.every((workout) => workout.prescription.main.blocks.length > 0));
+    const strength = workouts.find((workout) => workout.activityType === "strength");
+    assert.ok(strength);
+    const strengthBlocks = strength.prescription.main.blocks.filter((block) => block.kind === "strengthExercise");
+    assert.ok(strengthBlocks.length > 0);
+    assert.ok(strengthBlocks.every((block) => block.alternatives.length > 0));
+    const endurance = workouts.find((workout) => workout.activityType === "running" || workout.activityType === "cycling");
+    assert.ok(endurance);
+    assert.ok(endurance.prescription.main.blocks.some((block) => block.kind === "steady" || block.kind === "interval"));
   });
 });
 

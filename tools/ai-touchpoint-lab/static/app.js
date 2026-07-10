@@ -3,10 +3,18 @@ const state = {
   mockFixtures: [],
   graphs: [],
   graphFixtures: [],
+  graphRuns: [],
   selectedGraph: null,
   selectedNode: null,
+  selectedGraphRunID: null,
+  graphMetadata: null,
+  evals: [],
+  lastPromptRun: null,
+  selectedGraphTool: null,
   lastGraphRun: null,
   graphReadableValue: null,
+  graphReadableTitle: "Graph Result",
+  graphReadableSubtitle: "",
   defaultModel: "gpt-5-mini",
   selected: null,
   dirty: false,
@@ -238,8 +246,15 @@ const els = {
   systemPromptInput: document.querySelector("#systemPromptInput"),
   userRulesInput: document.querySelector("#userRulesInput"),
   mockFixtureInput: document.querySelector("#mockFixtureInput"),
+  fixtureSummary: document.querySelector("#fixtureSummary"),
   fixtureNameInput: document.querySelector("#fixtureNameInput"),
   fixtureInput: document.querySelector("#fixtureInput"),
+  promptReadableOutput: document.querySelector("#promptReadableOutput"),
+  promptRequestSummary: document.querySelector("#promptRequestSummary"),
+  evalRatingInput: document.querySelector("#evalRatingInput"),
+  evalNotesInput: document.querySelector("#evalNotesInput"),
+  saveEvalButton: document.querySelector("#saveEvalButton"),
+  evalHistory: document.querySelector("#evalHistory"),
   resultOutput: document.querySelector("#resultOutput"),
   diffOutput: document.querySelector("#diffOutput"),
   saveButton: document.querySelector("#saveButton"),
@@ -260,6 +275,9 @@ const els = {
   graphEyebrow: document.querySelector("#graphEyebrow"),
   graphTitle: document.querySelector("#graphTitle"),
   graphPurpose: document.querySelector("#graphPurpose"),
+  graphTraceBanner: document.querySelector("#graphTraceBanner"),
+  graphRunsTable: document.querySelector("#graphRunsTable"),
+  refreshGraphRunsButton: document.querySelector("#refreshGraphRunsButton"),
   refreshGraphsButton: document.querySelector("#refreshGraphsButton"),
   runGraphButton: document.querySelector("#runGraphButton"),
   graphMap: document.querySelector("#graphMap"),
@@ -268,14 +286,17 @@ const els = {
   nodeDetails: document.querySelector("#nodeDetails"),
   testToolButton: document.querySelector("#testToolButton"),
   graphFixtureInput: document.querySelector("#graphFixtureInput"),
+  graphFixtureSummary: document.querySelector("#graphFixtureSummary"),
   graphFixtureNameInput: document.querySelector("#graphFixtureNameInput"),
   graphFixtureJSONInput: document.querySelector("#graphFixtureJSONInput"),
+  graphOverrideToolInput: document.querySelector("#graphOverrideToolInput"),
+  graphOverrideModelInput: document.querySelector("#graphOverrideModelInput"),
+  graphOverrideSystemPromptInput: document.querySelector("#graphOverrideSystemPromptInput"),
   saveGraphFixtureButton: document.querySelector("#saveGraphFixtureButton"),
   graphRunIDInput: document.querySelector("#graphRunIDInput"),
   loadGraphRunButton: document.querySelector("#loadGraphRunButton"),
   graphRunStatus: document.querySelector("#graphRunStatus"),
   graphTimeline: document.querySelector("#graphTimeline"),
-  graphResultOutput: document.querySelector("#graphResultOutput"),
   readableGraphOutputButton: document.querySelector("#readableGraphOutputButton"),
   readableGraphModal: document.querySelector("#readableGraphModal"),
   readableGraphTitle: document.querySelector("#readableGraphTitle"),
@@ -301,6 +322,7 @@ async function loadCatalog() {
   const firstGroup = Object.keys(state.catalog)[0];
   const first = state.catalog[firstGroup]?.[0];
   if (first) selectTouchpoint(firstGroup, first.id);
+  await loadEvalHistory();
   setStatus("Ready");
 }
 
@@ -327,10 +349,12 @@ function wireEvents() {
   els.showDiffButton.addEventListener("click", refreshDiff);
   els.refreshDiffButton.addEventListener("click", refreshDiff);
   els.saveFixtureButton.addEventListener("click", saveFixture);
+  els.saveEvalButton.addEventListener("click", saveEval);
   els.touchpointModeButton.addEventListener("click", () => setMode("touchpoints"));
   els.graphModeButton.addEventListener("click", () => setMode("graphs"));
   els.workflowModeButton.addEventListener("click", () => setMode("workflow"));
   els.refreshGraphsButton.addEventListener("click", loadGraphInspector);
+  els.refreshGraphRunsButton.addEventListener("click", loadGraphRuns);
   els.runGraphButton.addEventListener("click", runSelectedGraph);
   els.saveGraphFixtureButton.addEventListener("click", saveGraphFixture);
   els.loadGraphRunButton.addEventListener("click", loadGraphRunByID);
@@ -350,6 +374,7 @@ function wireEvents() {
     if (!fixture) return;
     els.fixtureInput.value = JSON.stringify(fixture.fixture, null, 2);
     els.fixtureNameInput.value = slugify(fixture.name);
+    renderFixtureSummary();
     setStatus(`Loaded ${fixture.name}`);
   });
   els.graphFixtureInput.addEventListener("change", () => {
@@ -358,7 +383,11 @@ function wireEvents() {
     selectGraph(fixture.graphName);
     els.graphFixtureJSONInput.value = JSON.stringify(fixture.fixture, null, 2);
     els.graphFixtureNameInput.value = slugify(fixture.name ?? fixture.filename);
+    renderGraphFixtureSummary();
     setStatus(`Loaded ${fixture.name}`);
+  });
+  els.graphOverrideToolInput.addEventListener("change", () => {
+    state.selectedGraphTool = els.graphOverrideToolInput.value || null;
   });
 }
 
@@ -478,9 +507,11 @@ async function loadGraphInspector() {
       requestJSON("/api/graphs"),
       requestJSON("/api/graph-fixtures"),
     ]);
+    state.graphMetadata = graphsPayload;
     state.graphs = mergePlannedGraphs(graphsPayload.graphs ?? PLANNED_GRAPHS);
     state.graphFixtures = graphFixturesWithMocks(fixturesPayload.fixtures ?? []);
     renderGraphs();
+    renderTraceBanner();
     renderGraphFixtures();
     if (!state.selectedGraph && state.graphs.length) {
       selectGraph("prepare_initial_strategy");
@@ -488,6 +519,7 @@ async function loadGraphInspector() {
       selectGraph(state.selectedGraph.name);
     }
     renderPlannedTimeline();
+    await loadGraphRuns();
   } catch (error) {
     state.graphs = state.graphs.length ? state.graphs : PLANNED_GRAPHS;
     state.graphFixtures = graphFixturesWithMocks(state.graphFixtures);
@@ -495,7 +527,59 @@ async function loadGraphInspector() {
     if (!state.selectedGraph) selectGraph("prepare_initial_strategy");
     els.graphRunStatus.textContent = `Using planned graph; live metadata unavailable (${error.message}).`;
     setGraphResult(null);
+    renderTraceBanner(error.message);
     renderPlannedTimeline();
+  }
+}
+
+function renderTraceBanner(errorMessage = "") {
+  const traceLevel = state.graphMetadata?.traceLevel ?? "compact";
+  if (errorMessage) {
+    els.graphTraceBanner.className = "trace-banner warning";
+    els.graphTraceBanner.textContent = `Live graph metadata unavailable: ${errorMessage}`;
+    return;
+  }
+  const full = traceLevel === "full";
+  els.graphTraceBanner.className = `trace-banner ${full ? "success" : "warning"}`;
+  els.graphTraceBanner.textContent = full
+    ? "Full trace mode is enabled. Prompt, schema, request payload, output, and knowledge refs can appear in node/tool detail."
+    : "Compact trace mode is enabled. Run the training orchestrator with HAYF_OBSERVABILITY_TRACE_LEVEL=full to inspect exact prompts and schemas.";
+}
+
+async function loadGraphRuns() {
+  try {
+    const graphName = state.selectedGraph?.name;
+    const durableGraph = graphName && graphName !== "prepare_initial_strategy" ? graphName : "all";
+    const payload = await requestJSON(`/api/graph-runs?limit=25&graphName=${encodeURIComponent(durableGraph)}`);
+    state.graphRuns = payload.runs ?? [];
+    renderGraphRuns();
+  } catch (error) {
+    state.graphRuns = [];
+    els.graphRunsTable.innerHTML = `<p class="muted-copy">${escapeHTML(error.message)}</p>`;
+  }
+}
+
+function renderGraphRuns() {
+  if (!state.graphRuns.length) {
+    els.graphRunsTable.innerHTML = `<p class="muted-copy">No recent simulator runs found for this graph yet.</p>`;
+    return;
+  }
+  els.graphRunsTable.innerHTML = state.graphRuns.map((run) => (
+    `<article class="run-row ${run.graphRunID === state.selectedGraphRunID ? "active" : ""}">` +
+    `<div class="run-card-main">` +
+    `<strong title="${escapeHTML(run.goal ?? "")}">${escapeHTML(run.goal ?? "No goal title")}</strong>` +
+    `<span>${escapeHTML(shortDateTime(run.createdAt))} · ${escapeHTML(run.graphName)}</span>` +
+    `</div>` +
+    `<div class="run-card-meta">` +
+    `${statusBadge(run.status)}` +
+    `<span>${escapeHTML([run.provider, run.model].filter(Boolean).join(" · ") || "n/a")}</span>` +
+    `<span>${escapeHTML(run.durationMS == null ? "n/a" : `${run.durationMS} ms`)}</span>` +
+    `</div>` +
+    `<button type="button" data-graph-run-id="${escapeHTML(run.graphRunID)}">Open</button>` +
+    `</article>`
+  )).join("");
+  for (const button of els.graphRunsTable.querySelectorAll("[data-graph-run-id]")) {
+    button.addEventListener("click", () => loadGraphRun(button.dataset.graphRunId));
   }
 }
 
@@ -540,11 +624,13 @@ function selectGraph(name) {
   renderGraphMap();
   renderNodeDetails();
   renderGraphFixtures();
+  renderGraphOverrideTools();
   if (!state.lastGraphRun) renderPlannedTimeline();
 
   for (const button of document.querySelectorAll("[data-graph]")) {
     button.classList.toggle("active", button.dataset.graph === graph.name);
   }
+  loadGraphRuns();
 }
 
 function renderGraphMap() {
@@ -567,6 +653,7 @@ function renderGraphMap() {
       state.selectedNode = node;
       renderGraphMap();
       renderNodeDetails();
+      renderGraphOverrideTools();
     });
     row.append(number, button);
     els.graphMap.append(row);
@@ -597,17 +684,28 @@ function renderNodeDetails() {
   els.testToolButton.textContent = node.toolCalls.length ? "Test First Tool" : "Test Tool";
   const latestNode = latestGraphNodeOutput(node.id);
   const latestTools = latestToolCalls(node);
+  const latestNodeValue = latestNode?.output ?? latestNode?.structured_output_json ?? latestNode;
+  state.graphReadableValue = latestNodeValue ?? latestTools[0] ?? null;
+  state.graphReadableTitle = node.label;
+  state.graphReadableSubtitle = latestNodeValue ? "Latest node output" : latestTools.length ? "Latest model trace" : "Planned node";
+  els.readableGraphOutputButton.disabled = !state.graphReadableValue;
   els.nodeDetails.innerHTML = [
-    detailBlock("Purpose", `<span>${escapeHTML(node.purpose)}</span>`),
-    detailBlock("Contracts", `<span>${escapeHTML(node.inputContract)} → ${escapeHTML(node.outputContract)}</span>`),
+    detailBlock("Node Role", [
+      `<p class="readable-copy lead-copy">${escapeHTML(node.purpose)}</p>`,
+      fieldGrid([
+        ["Kind", nodeStageLabel(node)],
+        ["Input", node.inputContract],
+        ["Output", node.outputContract],
+      ]),
+    ].join("")),
     detailBlock("Tool calls", toolButtons(node.toolCalls)),
     detailBlock("Knowledge refs", pillRow(node.knowledgeRefs)),
     detailBlock("How to use this", `<span>${escapeHTML(nodeHelpText(node))}</span>`),
     latestNode
-      ? detailBlock("Latest node output", `<pre class="output">${escapeHTML(formatJSON(latestNode.output ?? latestNode.structured_output_json ?? latestNode))}</pre>`)
+      ? detailBlock("Latest node output", readableHTML(latestNodeValue) + advancedJSONSection("Advanced node JSON", latestNode))
       : detailBlock("Latest node output", "<span>No run output yet.</span>"),
     latestTools.length
-      ? detailBlock("Latest model trace", latestTools.map((tool) => `<pre class="output">${escapeHTML(formatJSON(tool))}</pre>`).join(""))
+      ? detailBlock("Latest model trace", latestTools.map((tool) => graphToolCard(tool)).join(""))
       : detailBlock("Latest model trace", "<span>No model call captured yet.</span>"),
   ].join("");
   for (const button of els.nodeDetails.querySelectorAll("[data-tool-name]")) {
@@ -629,6 +727,7 @@ function renderGraphFixtures() {
       els.graphFixtureJSONInput.value = JSON.stringify(defaultGraphFixture(), null, 2);
       els.graphFixtureNameInput.value = "default-planning-packet";
     }
+    renderGraphFixtureSummary();
     return;
   }
 
@@ -647,6 +746,43 @@ function renderGraphFixtures() {
     els.graphFixtureJSONInput.value = JSON.stringify(first.fixture, null, 2);
     els.graphFixtureNameInput.value = slugify(first.name);
   }
+  renderGraphFixtureSummary();
+}
+
+function renderGraphOverrideTools() {
+  const tools = state.selectedNode?.toolCalls ?? [];
+  els.graphOverrideToolInput.innerHTML = "";
+  if (!tools.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No model tool on selected node";
+    els.graphOverrideToolInput.append(option);
+    state.selectedGraphTool = null;
+    return;
+  }
+  for (const tool of tools) {
+    const option = document.createElement("option");
+    option.value = tool;
+    option.textContent = tool;
+    els.graphOverrideToolInput.append(option);
+  }
+  if (!state.selectedGraphTool || !tools.includes(state.selectedGraphTool)) {
+    state.selectedGraphTool = tools[0];
+  }
+  els.graphOverrideToolInput.value = state.selectedGraphTool;
+}
+
+function collectGraphToolOverrides(forTool = state.selectedGraphTool) {
+  const toolName = forTool || els.graphOverrideToolInput.value;
+  const model = els.graphOverrideModelInput.value.trim();
+  const systemPrompt = els.graphOverrideSystemPromptInput.value.trim();
+  if (!toolName || (!model && !systemPrompt)) return {};
+  return {
+    [toolName]: {
+      ...(model ? { model } : {}),
+      ...(systemPrompt ? { systemPrompt } : {}),
+    },
+  };
 }
 
 async function runSelectedGraph() {
@@ -658,13 +794,17 @@ async function runSelectedGraph() {
       body: {
         graphName: state.selectedGraph.name,
         fixture: parseJSONField(els.graphFixtureJSONInput, "Graph fixture JSON"),
+        toolOverrides: collectGraphToolOverrides(),
       },
     });
     state.lastGraphRun = payload;
     els.graphRunStatus.textContent = `${payload.graphName} complete`;
-    setGraphResult(payload.artifact ?? payload.artifacts ?? payload);
     renderTimeline(payload);
     renderNodeDetails();
+    setGraphResult(payload.artifact ?? payload.artifacts ?? payload, "", {
+      title: `${payload.graphName ?? state.selectedGraph.label} output`,
+      subtitle: "Graph run artifact",
+    });
     setStatus("Graph run complete");
   } catch (error) {
     showGraphError(error);
@@ -679,7 +819,10 @@ async function loadGraphRunByID() {
     showGraphError(new Error("Paste a graph run ID first."));
     return;
   }
+  await loadGraphRun(graphRunID);
+}
 
+async function loadGraphRun(graphRunID) {
   try {
     setBusy(true, "Loading graph run");
     const payload = await requestJSON("/api/graph-run-status", {
@@ -691,18 +834,23 @@ async function loadGraphRunByID() {
     });
     const output = payload.output ?? payload;
     const graphName = output.graphName ?? output.graph_name;
+    state.selectedGraphRunID = graphRunID;
     if (graphName) {
       const matchingGraph = state.graphs.find((graph) => graph.name === graphName);
       if (matchingGraph) selectGraph(matchingGraph.name);
     }
     state.lastGraphRun = output;
     els.graphRunStatus.textContent = `${graphName ?? "Graph run"} ${output.status ?? "loaded"}`;
+    renderTimeline(output);
+    renderNodeDetails();
+    renderGraphRuns();
     setGraphResult(output.output ?? {
       trainingArchitecture: output.trainingArchitecture,
       fitnessStrategy: output.strategy,
+    }, "", {
+      title: `${graphName ?? "Graph run"} output`,
+      subtitle: `Loaded run ${graphRunID}`,
     });
-    renderTimeline(output);
-    renderNodeDetails();
     setStatus("Graph run loaded");
   } catch (error) {
     showGraphError(error);
@@ -720,9 +868,13 @@ async function testSelectedTool(toolName = state.selectedNode?.toolCalls?.[0]) {
       body: {
         toolName,
         fixture: parseJSONField(els.graphFixtureJSONInput, "Graph fixture JSON"),
+        toolOverrides: collectGraphToolOverrides(toolName),
       },
     });
-    setGraphResult(payload);
+    setGraphResult(payload, "", {
+      title: payload.toolName ?? toolName,
+      subtitle: `${payload.graphNodeName ?? state.selectedNode?.id ?? "tool"} test`,
+    });
     els.graphRunStatus.textContent = `${payload.toolName} ${payload.status}`;
     setStatus("Tool test complete");
   } catch (error) {
@@ -765,13 +917,17 @@ function renderTimeline(payload) {
     item.innerHTML = `<strong>${index + 1}. ${escapeHTML(nodeName)}</strong><span>${escapeHTML(node.status ?? "succeeded")}</span>`;
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Show output";
+    button.textContent = "Inspect";
     button.addEventListener("click", () => {
-      setGraphResult(node);
       const matched = state.selectedGraph?.nodes.find((candidate) => candidate.id === nodeName);
       if (matched) {
-        inspectGraphNode(matched, { scroll: true });
+        inspectGraphNode(matched, { scroll: false });
       }
+      setGraphResult(node.output ?? node.structured_output_json ?? node, "", {
+        title: matched?.label ?? nodeName,
+        subtitle: `${node.status ?? "succeeded"} node output`,
+      });
+      document.querySelector(".node-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     item.append(button);
     els.graphTimeline.append(item);
@@ -782,9 +938,18 @@ function renderTimeline(payload) {
     item.innerHTML = `<strong>${escapeHTML(tool.tool_name ?? tool.toolName ?? "tool")}</strong><span>${escapeHTML(tool.graph_node_name ?? tool.graphNodeName ?? "model call")} · ${escapeHTML(String(tool.latency_ms ?? tool.latencyMS ?? "n/a"))} ms</span>`;
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Show trace";
+    button.textContent = "Inspect";
     button.addEventListener("click", () => {
-      setGraphResult(tool);
+      const toolNode = tool.graph_node_name ?? tool.graphNodeName;
+      const matched = state.selectedGraph?.nodes.find((candidate) => candidate.id === toolNode);
+      if (matched) {
+        inspectGraphNode(matched, { scroll: false });
+      }
+      setGraphResult(tool, "", {
+        title: tool.tool_name ?? tool.toolName ?? "Model call",
+        subtitle: `${toolNode ?? "model call"} trace`,
+      });
+      document.querySelector(".node-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     item.append(button);
     els.graphTimeline.append(item);
@@ -848,7 +1013,12 @@ function selectTouchpoint(group, id) {
   els.systemPromptInput.value = entry.systemPrompt ?? "";
   els.userRulesInput.value = entry.userRules ?? "";
   renderMockFixtures();
+  renderEvalHistory();
   els.resultOutput.textContent = "";
+  els.promptReadableOutput.innerHTML = "";
+  els.promptRequestSummary.innerHTML = "";
+  els.saveEvalButton.disabled = true;
+  state.lastPromptRun = null;
   setStatus("Ready");
 
   for (const button of document.querySelectorAll(".touchpoint-button")) {
@@ -878,6 +1048,7 @@ function renderMockFixtures() {
       2,
     );
     els.fixtureNameInput.value = "";
+    renderFixtureSummary();
     return;
   }
 
@@ -892,6 +1063,7 @@ function renderMockFixtures() {
   els.mockFixtureInput.value = "0";
   els.fixtureInput.value = JSON.stringify(fixtures[0].fixture, null, 2);
   els.fixtureNameInput.value = slugify(fixtures[0].name);
+  renderFixtureSummary();
 }
 
 function currentMockFixtures() {
@@ -899,6 +1071,70 @@ function currentMockFixtures() {
   return state.mockFixtures.filter((fixture) =>
     fixture.group === state.selected.group && fixture.id === state.selected.id
   );
+}
+
+function renderFixtureSummary() {
+  const fixture = safeParseJSON(els.fixtureInput.value) ?? {};
+  els.fixtureSummary.innerHTML = summaryCards(fixtureSummary(fixture));
+}
+
+function renderGraphFixtureSummary() {
+  const fixture = safeParseJSON(els.graphFixtureJSONInput.value) ?? {};
+  const packet = fixture.planningPacket ?? fixture.planning_packet ?? fixture;
+  const goal = packet.goal_context ?? {};
+  const constraints = packet.planning_constraints ?? {};
+  els.graphFixtureSummary.innerHTML = summaryCards({
+    Goal: goal.normalized_goal?.title ?? "No goal title",
+    Kind: goal.goal_kind ?? "n/a",
+    Modalities: (goal.selected_modality_order ?? constraints.feasible_modalities ?? []).join(", ") || "n/a",
+    Frequency: constraints.frequency ?? "n/a",
+  });
+}
+
+function fixtureSummary(fixture) {
+  const context = fixture?.context ?? fixture ?? {};
+  const summary = fixture?.summary ?? {};
+  return {
+    Task: fixture?.task ?? summary.task ?? state.selected?.id ?? "n/a",
+    Goal: summary.title ?? context.normalizedGoal?.title ?? context.goal?.title ?? context.goal_context?.normalized_goal?.title ?? "No goal title",
+    Modalities: (summary.selectedModalities ?? context.selectedModalities ?? context.onboardingSignals?.selectedModalities ?? context.goal_context?.selected_modality_order ?? []).join(", ") || "n/a",
+    Frequency: summary.frequency ?? context.frequency ?? context.planning_constraints?.frequency ?? "n/a",
+    Candidates: String(summary.candidateCount ?? fixture?.candidates?.length ?? 0),
+  };
+}
+
+function summaryCards(entries) {
+  return Object.entries(entries).map(([label, value]) => (
+    `<div class="summary-card"><span>${escapeHTML(label)}</span><strong>${escapeHTML(value ?? "n/a")}</strong></div>`
+  )).join("");
+}
+
+async function loadEvalHistory() {
+  try {
+    const payload = await requestJSON("/api/evals");
+    state.evals = payload.evals ?? [];
+    renderEvalHistory();
+  } catch (error) {
+    els.evalHistory.innerHTML = `<p class="muted-copy">${escapeHTML(error.message)}</p>`;
+  }
+}
+
+function renderEvalHistory() {
+  const selection = state.selected;
+  const evals = selection
+    ? state.evals.filter((item) => item.group === selection.group && item.touchpointID === selection.id).slice(0, 8)
+    : state.evals.slice(0, 8);
+  if (!evals.length) {
+    els.evalHistory.innerHTML = `<p class="muted-copy">No saved evals for this touchpoint yet.</p>`;
+    return;
+  }
+  els.evalHistory.innerHTML = evals.map((item) => (
+    `<div class="eval-row">` +
+    `<span class="rating rating-${escapeHTML(item.rating)}">${escapeHTML(item.rating)}</span>` +
+    `<strong>${escapeHTML(shortDateTime(item.createdAt))}</strong>` +
+    `<p>${escapeHTML(item.notes || item.fixtureSummary?.title || item.fixtureSummary?.Task || "No notes")}</p>` +
+    `</div>`
+  )).join("");
 }
 
 async function saveCurrent() {
@@ -941,10 +1177,58 @@ async function runCurrent() {
         fixture: parseJSONField(els.fixtureInput, "Fixture JSON"),
       },
     });
+    state.lastPromptRun = payload;
     els.resultOutput.textContent = formatJSON(payload);
+    renderPromptRun(payload);
+    els.saveEvalButton.disabled = false;
     setStatus(
       payload.ok ? `Run complete in ${payload.latencyMS} ms` : "Run failed",
     );
+  } catch (error) {
+    showError(error);
+  } finally {
+    setBusy(false);
+  }
+}
+
+function renderPromptRun(payload) {
+  const output = payload.parsedOutput ?? payload.outputText ?? payload.error ?? payload.raw;
+  els.promptReadableOutput.innerHTML = readablePromptOutput(output, payload);
+  els.promptRequestSummary.innerHTML = summaryCards({
+    Model: payload.requestSummary?.model ?? "n/a",
+    Schema: payload.requestSummary?.schemaName ?? "none",
+    Latency: payload.latencyMS == null ? "n/a" : `${payload.latencyMS} ms`,
+    Status: payload.ok ? "ok" : `failed ${payload.status ?? ""}`.trim(),
+  });
+}
+
+async function saveEval() {
+  const selection = requireSelection();
+  if (!selection || !state.lastPromptRun) return;
+  try {
+    setBusy(true, "Saving eval");
+    const fixture = parseJSONField(els.fixtureInput, "Fixture JSON");
+    const payload = await requestJSON("/api/evals", {
+      method: "POST",
+      body: {
+        ...selection,
+        touchpointID: selection.id,
+        rating: els.evalRatingInput.value,
+        notes: els.evalNotesInput.value,
+        config: collectConfig(),
+        fixture,
+        request: state.lastPromptRun.request,
+        requestSummary: state.lastPromptRun.requestSummary,
+        output: state.lastPromptRun.parsedOutput ?? state.lastPromptRun.outputText,
+        raw: state.lastPromptRun.raw,
+        latencyMS: state.lastPromptRun.latencyMS,
+        status: state.lastPromptRun.status,
+      },
+    });
+    state.evals = payload.evals ?? [];
+    els.evalNotesInput.value = "";
+    renderEvalHistory();
+    setStatus("Eval saved");
   } catch (error) {
     showError(error);
   } finally {
@@ -1010,6 +1294,30 @@ function parseJSONField(element, label) {
   }
 }
 
+function safeParseJSON(value) {
+  try {
+    return value?.trim() ? JSON.parse(value) : {};
+  } catch {
+    return null;
+  }
+}
+
+function shortDateTime(value) {
+  if (!value) return "n/a";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "n/a";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function statusBadge(status) {
+  return `<span class="status-pill status-${escapeHTML(status ?? "unknown")}">${escapeHTML(status ?? "unknown")}</span>`;
+}
+
 function findEntry(group, id) {
   return state.catalog?.[group]?.find((entry) => entry.id === id);
 }
@@ -1043,16 +1351,38 @@ function formatJSON(value) {
   return JSON.stringify(value, null, 2);
 }
 
-function setGraphResult(value, fallbackText = "") {
+function setGraphResult(value, fallbackText = "", options = {}) {
   state.graphReadableValue = value;
-  els.graphResultOutput.textContent = value ? formatJSON(value) : fallbackText;
+  state.graphReadableTitle = options.title ?? readableTitle(value);
+  state.graphReadableSubtitle = options.subtitle ?? readableSubtitle(value);
   els.readableGraphOutputButton.disabled = !value;
+  if (!value) {
+    if (fallbackText) {
+      els.nodeTitle.textContent = "Graph Inspector";
+      els.nodeKind.textContent = "Error";
+      els.nodeDetails.innerHTML = readableSection(
+        "Run Error",
+        `<p class="readable-copy">${escapeHTML(fallbackText)}</p>`,
+      );
+    }
+    return;
+  }
+  els.nodeTitle.textContent = state.graphReadableTitle;
+  els.nodeKind.textContent = state.graphReadableSubtitle;
+  els.nodeDetails.innerHTML = [
+    graphResultContext(value),
+    readableHTML(value),
+    advancedJSONSection("Advanced JSON", value),
+  ].join("");
 }
 
 function openReadableGraphModal() {
   if (!state.graphReadableValue) return;
-  els.readableGraphTitle.textContent = readableTitle(state.graphReadableValue);
-  els.readableGraphContent.innerHTML = readableHTML(state.graphReadableValue);
+  els.readableGraphTitle.textContent = state.graphReadableTitle || readableTitle(state.graphReadableValue);
+  els.readableGraphContent.innerHTML = [
+    readableHTML(state.graphReadableValue),
+    advancedJSONSection("Advanced JSON", state.graphReadableValue),
+  ].join("");
   els.readableGraphModal.classList.remove("hidden");
 }
 
@@ -1061,20 +1391,182 @@ function closeReadableGraphModal() {
 }
 
 function readableTitle(value) {
+  if (!value) return "Graph Inspector";
   if (value.toolName) return value.toolName;
   if (value.tool_name) return value.tool_name;
   if (value.plannedNode?.label) return value.plannedNode.label;
   if (value.graphName) return value.graphName;
+  if (value.priority_order || value.modality_roles) return "Training Architecture";
+  if (value.read || value.strategyRead || value.strategyTargets || value.targets) return "Fitness Strategy";
   return "Graph Result";
+}
+
+function readableSubtitle(value) {
+  if (!value || typeof value !== "object") return "Readable output";
+  if (value.status) return `${value.status} · readable output`;
+  if (value.tool_name || value.toolName) return "Model call trace";
+  if (value.priority_order || value.modality_roles) return "Architecture synthesis";
+  if (value.read || value.strategyRead || value.strategyTargets || value.targets) return "Strategy artifact";
+  return "Readable output";
+}
+
+function graphResultContext(value) {
+  if (!value || typeof value !== "object") return "";
+  const request = value.request_json ?? value.request ?? value.input;
+  const entries = [
+    ["Tool", value.tool_name ?? value.toolName],
+    ["Node", value.graph_node_name ?? value.graphNodeName ?? value.node_name ?? value.nodeName],
+    ["Model", value.model ?? request?.model],
+    ["Status", value.status],
+    ["Latency", value.latency_ms ?? value.latencyMS ? `${value.latency_ms ?? value.latencyMS} ms` : null],
+  ];
+  return entries.some(([, entry]) => entry !== undefined && entry !== null && entry !== "")
+    ? readableSection("Run Context", fieldGrid(entries))
+    : "";
 }
 
 function readableHTML(value) {
   if (value.toolName && value.output) return readableToolTest(value);
   if (value.tool_name && value.output) return readableToolCall(value);
   if (value.plannedNode) return readablePlannedNode(value);
-  if (value.trainingArchitecture || value.fitnessStrategy) return readableArtifactBundle(value);
-  if (value.priority_order || value.modality_roles) return readableArchitecture(value);
+  if (value.trainingArchitecture || value.fitnessStrategy || value.strategy) return readableArtifactBundle(value);
+  if (isArchitectureArtifact(value)) return readableArchitecture(value);
+  if (isFitnessStrategyArtifact(value)) return readableFitnessStrategy(value);
+  if (isValidationArtifact(value)) return readableValidation(value);
   return readableGeneric(value);
+}
+
+function readablePromptOutput(value, payload = {}) {
+  if (payload.error) {
+    return readableSection("Run Error", `<p class="readable-copy">${escapeHTML(payload.error)}</p>`);
+  }
+  if (!value) {
+    return readableSection("Output", `<p class="readable-copy">No structured output text returned.</p>`);
+  }
+  if (value.readback) {
+    return readableSection("Readback", `<p class="readable-copy lead-copy">${escapeHTML(value.readback)}</p>`);
+  }
+  if (isArchitectureArtifact(value)) return readableArchitecture(value);
+  if (isFitnessStrategyArtifact(value)) return readableFitnessStrategy(value);
+  if (isValidationArtifact(value)) return readableValidation(value);
+  if (value && typeof value === "object" && ("recommended_role" in value || "archetype_proposals" in value)) {
+    return specialistSection(value);
+  }
+  if (Array.isArray(value.candidates) && value.candidates.some((candidate) => "timeframeWeeks" in candidate)) {
+    return readableSection("Goal Candidates", cardList(value.candidates.map((candidate) => ({
+      title: candidate.title,
+      meta: `${candidate.timeframeWeeks ?? "?"} weeks`,
+      body: candidate.rationale,
+      footer: candidate.tracking,
+    }))));
+  }
+  if (value.coachRead || value.athleteArchetype || value.goalFit) {
+    return [
+      readableSection("Coach Read", `<p class="readable-copy lead-copy">${escapeHTML(value.coachRead ?? "")}</p>`),
+      readableSection("Athlete", fieldGrid([
+        ["Archetype", value.athleteArchetype?.label],
+        ["Training state", value.currentTrainingState?.label],
+        ["Baseline", value.physicalBaseline?.label],
+        ["Goal fit", value.goalFit?.headline],
+      ])),
+      readableSection("Findings", readableList((value.historyFindings ?? []).map((item) => `${item.title}: ${item.summary}`))),
+      value.goalFit?.summary ? readableSection("Goal Fit", `<p class="readable-copy">${escapeHTML(value.goalFit.summary)}</p>`) : "",
+    ].join("");
+  }
+  if (Array.isArray(value.strategyTargets)) {
+    return readableSection("Strategy Targets", cardList(value.strategyTargets.map((target) => ({
+      title: target.title,
+      meta: [target.proposedDisplayValue, target.family, target.modality].filter(Boolean).join(" · "),
+      body: target.summary,
+      footer: target.rationale,
+    }))));
+  }
+  if (value.strategyRead || value.goalTargetContext || value.strategyPillars) {
+    return [
+      readableSection("Strategy Read", `<p class="readable-copy lead-copy">${escapeHTML(value.strategyRead ?? "")}</p>`),
+      readableSection("Goal Context", fieldGrid([
+        ["Title", value.goalTargetContext?.title],
+        ["Summary", value.goalTargetContext?.summary],
+      ])),
+      readableSection("Pillars", readableList((value.strategyPillars ?? []).map((pillar) => `${pillar.title}: ${pillar.summary}`))),
+      value.operatingRhythm ? readableSection("Operating Rhythm", `<p class="readable-copy">${escapeHTML(value.operatingRhythm.summary)}</p>${readableList(value.operatingRhythm.anchors)}`) : "",
+    ].join("");
+  }
+  if (Array.isArray(value.candidates)) {
+    return readableSection("Candidates", cardList(value.candidates.map((candidate) => ({
+      title: candidate.title,
+      meta: [candidate.activityType, `${candidate.durationMinutes ?? "?"} min`, candidate.intensityLabel].filter(Boolean).join(" · "),
+      body: candidate.purpose,
+      footer: candidate.rationale ?? candidate.weeklyImpact,
+    }))));
+  }
+  if (value.candidate) {
+    return readableSection("Candidate", cardList([{
+      title: value.candidate.title,
+      meta: [value.candidate.activityType, `${value.candidate.durationMinutes ?? "?"} min`, value.candidate.intensityLabel].filter(Boolean).join(" · "),
+      body: value.candidate.purpose,
+      footer: value.candidate.rationale ?? value.candidate.weeklyImpact,
+    }]));
+  }
+  if (Array.isArray(value.weeks)) {
+    return readableSection("Weekly Targets", cardList(value.weeks.flatMap((week) =>
+      (week.targets ?? []).map((target) => ({
+        title: target.title,
+        meta: [week.weeklyPlanID, target.proposedDisplayValue, target.family].filter(Boolean).join(" · "),
+        body: target.summary,
+        footer: target.rationale,
+      }))
+    )));
+  }
+  if (value.block || value.rhythms) {
+    return readableSection("Plan", readableObjectSummary({
+      title: value.block?.title,
+      goal: value.block?.goalText,
+      weeks: value.rhythms?.length,
+      phases: value.phases?.length,
+    })) + readableSection("Week Objectives", readableList((value.rhythms ?? []).map((week) => `${week.weekStartDate}: ${week.objective}`)));
+  }
+  return readableGeneric(value);
+}
+
+function isArchitectureArtifact(value) {
+  return Boolean(value && typeof value === "object" && (value.priority_order || value.modality_roles || value.approved_archetypes));
+}
+
+function isFitnessStrategyArtifact(value) {
+  return Boolean(value && typeof value === "object" && (
+    value.read ||
+    value.strategyRead ||
+    value.targets ||
+    value.strategyTargets ||
+    value.pillars ||
+    value.strategyPillars ||
+    value.phases ||
+    value.phaseOutline ||
+    value.goalTargetContext
+  ));
+}
+
+function isValidationArtifact(value) {
+  return Boolean(value && typeof value === "object" && (
+    "valid" in value ||
+    value.validation ||
+    value.errors ||
+    value.issues ||
+    value.warnings
+  ));
+}
+
+function cardList(items) {
+  if (!items.length) return "<span>No items</span>";
+  return `<div class="readable-card-list">${items.map((item) => (
+    `<article class="readable-card">` +
+    `<strong>${escapeHTML(item.title ?? "Untitled")}</strong>` +
+    `${item.meta ? `<span>${escapeHTML(item.meta)}</span>` : ""}` +
+    `${item.body ? `<p>${escapeHTML(item.body)}</p>` : ""}` +
+    `${item.footer ? `<small>${escapeHTML(item.footer)}</small>` : ""}` +
+    `</article>`
+  )).join("")}</div>`;
 }
 
 function readableToolTest(value) {
@@ -1087,22 +1579,42 @@ function readableToolTest(value) {
       ["Latency", `${value.latencyMS ?? "n/a"} ms`],
     ])),
     promptSection(value.request),
-    specialistSection(output),
-    rawSection("Raw output", output),
+    readablePromptOutput(output),
   ].join("");
 }
 
 function readableToolCall(value) {
+  const output = value.output ?? value.output_json ?? {};
   return [
     readableSection("Run", fieldGrid([
-      ["Tool", value.tool_name],
-      ["Node", value.graph_node_name],
+      ["Tool", value.tool_name ?? value.toolName],
+      ["Node", value.graph_node_name ?? value.graphNodeName],
       ["Status", value.status],
-      ["Latency", `${value.latency_ms ?? "n/a"} ms`],
+      ["Latency", `${value.latency_ms ?? value.latencyMS ?? "n/a"} ms`],
     ])),
     promptSection(value.request_json ?? value.input),
-    specialistSection(value.output ?? {}),
-    rawSection("Raw output", value.output ?? value),
+    readablePromptOutput(output),
+  ].join("");
+}
+
+function graphToolCard(tool) {
+  const request = tool.request_json ?? tool.request ?? tool.input;
+  const output = tool.output_json ?? tool.output;
+  const knowledgeRefs = tool.knowledge_refs ?? tool.knowledgeRefs ?? request?.knowledgeRefs ?? [];
+  return [
+    `<article class="graph-tool-card">`,
+    fieldGrid([
+      ["Tool", tool.tool_name ?? tool.toolName],
+      ["Node", tool.graph_node_name ?? tool.graphNodeName],
+      ["Model", tool.model ?? request?.model],
+      ["Status", tool.status],
+      ["Latency", `${tool.latency_ms ?? tool.latencyMS ?? "n/a"} ms`],
+    ]),
+    promptSection(request),
+    readableSection("Knowledge Files", knowledgeList(knowledgeRefs)),
+    readableSection("Output", readablePromptOutput(output)),
+    `<details class="advanced-block"><summary>Raw trace</summary><pre class="output readable-pre">${escapeHTML(formatJSON(tool))}</pre></details>`,
+    `</article>`,
   ].join("");
 }
 
@@ -1146,37 +1658,115 @@ function specialistSection(output) {
 
 function readableArchitecture(value) {
   return [
+    value.goal_read ? readableSection("Goal Read", fieldGrid([
+      ["Summary", value.goal_read.summary],
+      ["Goal kind", value.goal_read.goal_kind],
+      ["Success", value.goal_read.success_definition],
+    ])) : "",
     readableSection("Architecture", fieldGrid([
-      ["Priority order", (value.priority_order ?? []).join(" > ")],
+      ["Priority order", joinHuman(value.priority_order, " > ")],
       ["Conflict status", value.conflict_assessment?.status],
       ["Weekly target", value.weekly_budget?.target_sessions ? `${value.weekly_budget.target_sessions} sessions` : null],
       ["Hard sessions", value.weekly_budget?.hard_sessions],
+      ["Recovery sessions", value.weekly_budget?.recovery_sessions],
+      ["Minimum viable", value.weekly_budget?.minimum_viable_sessions ? `${value.weekly_budget.minimum_viable_sessions} sessions` : null],
     ])),
-    readableSection("Modality Roles", readableList((value.modality_roles ?? []).map((role) =>
-      `${role.modality}: ${role.role} — ${role.rationale}`
-    ))),
+    value.conflict_assessment ? readableSection("Conflict Assessment", [
+      `<p class="readable-copy">${escapeHTML(value.conflict_assessment.summary ?? "No conflict summary.")}</p>`,
+      readableList(value.conflict_assessment.required_tradeoffs),
+    ].join("")) : "",
+    readableSection("Modality Roles", cardList((value.modality_roles ?? []).map((role) => ({
+      title: role.modality,
+      meta: role.role,
+      body: role.rationale,
+    })))),
     readableSection("Approved Archetypes", archetypeList(value.approved_archetypes)),
-    readableSection("Recovery Rules", readableList(value.recovery_envelope?.spacing_rules)),
-    readableSection("Raw artifact", `<pre class="output readable-pre">${escapeHTML(formatJSON(value))}</pre>`),
+    value.deferred_specialist_recommendations?.length
+      ? readableSection("Deferred Recommendations", dispositionList(value.deferred_specialist_recommendations))
+      : "",
+    value.rejected_specialist_recommendations?.length
+      ? readableSection("Rejected Recommendations", dispositionList(value.rejected_specialist_recommendations))
+      : "",
+    readableSection("Recovery Rules", readableList([
+      ...(value.recovery_envelope?.spacing_rules ?? []),
+      value.recovery_envelope?.bad_day_floor ? `Bad day floor: ${value.recovery_envelope.bad_day_floor}` : null,
+      value.recovery_envelope?.max_hard_days_per_week ? `Max hard days per week: ${value.recovery_envelope.max_hard_days_per_week}` : null,
+    ].filter(Boolean))),
+    readableSection("Minimum Effective Dose", readableList(value.minimum_effective_dose_rules)),
+    readableSection("Progression Rules", readableList(value.progression_rules)),
+    readableSection("Interference Rules", readableList(value.interference_rules)),
+    readableSection("Knowledge Files", knowledgeList(value.source_knowledge_refs)),
   ].join("");
 }
 
 function readableArtifactBundle(value) {
   return [
     value.trainingArchitecture ? readableArchitecture(value.trainingArchitecture) : "",
-    value.fitnessStrategy ? readableSection("Fitness Strategy", readableObjectSummary(value.fitnessStrategy)) : "",
+    value.fitnessStrategy ? readableFitnessStrategy(value.fitnessStrategy) : "",
+    value.strategy ? readableFitnessStrategy(value.strategy) : "",
+  ].join("");
+}
+
+function readableFitnessStrategy(value) {
+  const read = value.read ?? value.strategyRead;
+  const targets = value.targets ?? value.strategyTargets ?? [];
+  const pillars = value.pillars ?? value.strategyPillars ?? [];
+  const phases = value.phases ?? value.phaseOutline ?? [];
+  return [
+    read ? readableSection("Strategy Read", `<p class="readable-copy lead-copy">${escapeHTML(read)}</p>`) : "",
+    value.goalTargetContext ? readableSection("Goal Context", fieldGrid([
+      ["Title", value.goalTargetContext.title],
+      ["Summary", value.goalTargetContext.summary ?? value.goalTargetContextSummary],
+    ])) : "",
+    value.snapshotItems?.length ? readableSection("Snapshot", cardList(value.snapshotItems.map((item) => ({
+      title: item.label ?? item.id,
+      meta: item.value,
+      body: item.systemImage,
+    })))) : "",
+    targets.length ? readableSection("Targets", targetList(targets)) : "",
+    phases.length ? readableSection("Phases", phaseList(phases)) : "",
+    value.fitReasons?.length ? readableSection("Fit Reasons", cardList(value.fitReasons.map((reason) => ({
+      title: reason.title ?? reason.id,
+      meta: reason.systemImage,
+      body: reason.summary,
+    })))) : "",
+    pillars.length ? readableSection("Pillars", cardList(pillars.map((pillar) => ({
+      title: pillar.title ?? pillar.id,
+      body: pillar.summary,
+    })))) : "",
+    value.operatingRhythm ? readableSection("Operating Rhythm", [
+      `<p class="readable-copy">${escapeHTML(value.operatingRhythm.summary ?? value.operatingRhythmSummary ?? "")}</p>`,
+      readableList(value.operatingRhythm.anchors),
+    ].join("")) : "",
+  ].join("");
+}
+
+function readableValidation(value) {
+  const validation = value.validation && typeof value.validation === "object" ? value.validation : value;
+  return [
+    readableSection("Validation", fieldGrid([
+      ["Valid", validation.valid],
+      ["Status", value.status],
+      ["Summary", validation.summary ?? value.summary],
+    ])),
+    readableSection("Issues", readableList(validation.errors ?? value.errors ?? value.issues)),
+    validation.warnings || value.warnings
+      ? readableSection("Warnings", readableList(validation.warnings ?? value.warnings))
+      : "",
   ].join("");
 }
 
 function readableGeneric(value) {
-  return readableSection("Readable Summary", readableObjectSummary(value)) +
-    rawSection("Raw data", value);
+  return readableSection(genericTitle(value), readableObjectSummary(value));
 }
 
 function promptSection(request) {
   const input = Array.isArray(request?.input) ? request.input : [];
-  const system = input.find((part) => part.role === "system")?.content;
-  const user = input.find((part) => part.role === "user")?.content;
+  const system = input.find((part) => part.role === "system")?.content ?? request?.systemPrompt;
+  const user = input.find((part) => part.role === "user")?.content ?? request?.input;
+  if (!system && !user) {
+    return readableSection("Prompt", `<p class="readable-copy">Compact trace only. Enable full trace to see the exact prompt and request payload.</p>`);
+  }
   return readableSection("Prompt", [
     system ? `<div class="readable-field"><span>System</span><p class="readable-copy">${escapeHTML(system)}</p></div>` : "",
     user ? `<details><summary>User payload</summary><pre class="output readable-pre">${escapeHTML(prettyPayload(user))}</pre></details>` : "",
@@ -1191,7 +1781,7 @@ function fieldGrid(entries) {
   const fields = entries
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
     .map(([label, value]) => (
-      `<div class="readable-field"><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>`
+      `<div class="readable-field"><span>${escapeHTML(label)}</span><strong>${escapeHTML(formatReadableValue(value))}</strong></div>`
     ))
     .join("");
   return fields ? `<div class="readable-grid">${fields}</div>` : "<span>No data</span>";
@@ -1199,35 +1789,149 @@ function fieldGrid(entries) {
 
 function readableList(items) {
   if (!Array.isArray(items) || items.length === 0) return "<span>None</span>";
-  return `<ul class="readable-list">${items.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>`;
+  return `<ul class="readable-list">${items.map((item) => `<li>${escapeHTML(sentenceFromValue(item))}</li>`).join("")}</ul>`;
 }
 
 function archetypeList(archetypes) {
   if (!Array.isArray(archetypes) || archetypes.length === 0) return "<span>None</span>";
   return `<ul class="readable-list">${archetypes.map((item) => (
-    `<li><strong>${escapeHTML(item.id ?? item.title ?? "Archetype")}</strong><br>` +
-    `${escapeHTML(item.purpose ?? "")}<br>` +
-    `<span>${escapeHTML([item.intensity_domain, item.fatigue_cost, durationLabel(item)].filter(Boolean).join(" · "))}</span></li>`
+    `<li><strong>${escapeHTML(item.id ?? item.archetype_id ?? item.title ?? "Archetype")}</strong><br>` +
+    `${escapeHTML(item.purpose ?? item.reason ?? item.rationale ?? "")}<br>` +
+    `<span>${escapeHTML([item.modality, item.intensity_domain, item.fatigue_cost, item.phase_hint, durationLabel(item)].filter(Boolean).join(" · "))}</span></li>`
   )).join("")}</ul>`;
 }
 
 function knowledgeList(refs) {
   if (!Array.isArray(refs) || refs.length === 0) return "<span>None</span>";
   return `<ul class="readable-list">${refs.map((ref) => (
-    `<li><strong>${escapeHTML(ref.id)}</strong><br><span>${escapeHTML(ref.title ?? "")} ${escapeHTML(ref.version ?? "")}</span></li>`
+    `<li><strong>${escapeHTML(ref.id ?? ref)}</strong><br><span>${escapeHTML([ref.title, ref.version].filter(Boolean).join(" · "))}</span>${ref.path ? `<br><code>${escapeHTML(`services/training-orchestrator/src/knowledge/packs/${ref.path}`)}</code>` : ""}</li>`
   )).join("")}</ul>`;
 }
 
-function readableObjectSummary(value) {
+function readableObjectSummary(value, depth = 0) {
   if (!value || typeof value !== "object") return `<p class="readable-copy">${escapeHTML(value ?? "No data")}</p>`;
+  if (Array.isArray(value)) {
+    if (!value.length) return "<span>None</span>";
+    if (value.every((item) => typeof item !== "object" || item === null)) return readableList(value);
+    return cardList(value.map((item, index) => objectToCard(item, `Item ${index + 1}`)));
+  }
   const entries = Object.entries(value).filter(([, entry]) =>
     typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean"
   );
-  return entries.length ? fieldGrid(entries) : `<pre class="output readable-pre">${escapeHTML(formatJSON(value))}</pre>`;
+  const scalarGrid = entries.length ? fieldGrid(entries.map(([key, entry]) => [humanLabel(key), entry])) : "";
+  if (depth > 0) {
+    return scalarGrid || `<p class="readable-copy">${escapeHTML(objectCardBody(value) || `Object with ${Object.keys(value).length} fields.`)}</p>`;
+  }
+  const nested = Object.entries(value)
+    .filter(([, entry]) => entry && typeof entry === "object")
+    .slice(0, 8)
+    .map(([key, entry]) => (
+      `<div class="readable-nested"><strong>${escapeHTML(humanLabel(key))}</strong>${readableObjectSummary(entry, depth + 1)}</div>`
+    ))
+    .join("");
+  return scalarGrid || nested ? [scalarGrid, nested].join("") : "<span>No readable fields.</span>";
 }
 
-function rawSection(title, value) {
-  return readableSection(title, `<pre class="output readable-pre">${escapeHTML(formatJSON(value))}</pre>`);
+function advancedJSONSection(title, value) {
+  return `<details class="advanced-block advanced-json"><summary>${escapeHTML(title)}</summary><pre class="output readable-pre">${escapeHTML(formatJSON(value))}</pre></details>`;
+}
+
+function targetList(targets) {
+  return cardList((targets ?? []).map((target) => ({
+    title: target.title ?? target.id ?? "Target",
+    meta: [
+      target.displayValue ?? target.proposedDisplayValue,
+      target.direction,
+      target.unit,
+      target.family,
+      target.modality,
+      target.metricCategory,
+    ].filter(Boolean).join(" · "),
+    body: target.summary,
+    footer: target.rationale,
+  })));
+}
+
+function phaseList(phases) {
+  return cardList((phases ?? []).map((phase) => ({
+    title: phase.name ?? phase.title ?? phase.id ?? "Phase",
+    meta: phase.targetSummary,
+    body: phase.objective ?? phase.summary,
+    footer: Array.isArray(phase.targets)
+      ? phase.targets.map((target) => target.title ?? target.id).filter(Boolean).join(", ")
+      : null,
+  })));
+}
+
+function dispositionList(items) {
+  return cardList((items ?? []).map((item) => ({
+    title: item.archetype_id ?? item.id ?? item.modality ?? "Recommendation",
+    meta: [item.modality, item.phase_hint].filter(Boolean).join(" · "),
+    body: item.reason ?? item.rationale,
+  })));
+}
+
+function genericTitle(value) {
+  if (Array.isArray(value)) return "Items";
+  if (!value || typeof value !== "object") return "Output";
+  if (value.status || value.valid !== undefined) return "Status";
+  return "Output Summary";
+}
+
+function joinHuman(value, separator = ", ") {
+  return Array.isArray(value) ? value.map(formatReadableValue).join(separator) : formatReadableValue(value);
+}
+
+function formatReadableValue(value) {
+  if (Array.isArray(value)) return value.map(formatReadableValue).join(", ");
+  if (!value || typeof value !== "object") return String(value ?? "n/a");
+  return value.title ?? value.name ?? value.label ?? value.id ?? value.summary ?? objectCardBody(value) ?? `Object with ${Object.keys(value).length} fields`;
+}
+
+function sentenceFromValue(value) {
+  if (!value || typeof value !== "object") return String(value ?? "");
+  const title = value.title ?? value.name ?? value.label ?? value.id ?? value.modality ?? value.archetype_id;
+  const body = objectCardBody(value);
+  return [title, body].filter(Boolean).join(": ");
+}
+
+function objectToCard(value, fallbackTitle) {
+  if (!value || typeof value !== "object") {
+    return { title: fallbackTitle, body: String(value ?? "") };
+  }
+  return {
+    title: value.title ?? value.name ?? value.label ?? value.id ?? value.modality ?? value.archetype_id ?? fallbackTitle,
+    meta: [
+      value.status,
+      value.role,
+      value.kind,
+      value.direction,
+      value.displayValue ?? value.proposedDisplayValue,
+      value.phase_hint,
+    ].filter(Boolean).join(" · "),
+    body: objectCardBody(value),
+    footer: Array.isArray(value.knowledge_refs)
+      ? value.knowledge_refs.map((ref) => ref.id ?? ref).filter(Boolean).join(", ")
+      : null,
+  };
+}
+
+function objectCardBody(value) {
+  return value.summary ??
+    value.rationale ??
+    value.reason ??
+    value.purpose ??
+    value.objective ??
+    value.read ??
+    value.description ??
+    null;
+}
+
+function humanLabel(value) {
+  return String(value)
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function prettyPayload(value) {
@@ -1254,6 +1958,7 @@ function slugify(value) {
 
 function showError(error) {
   els.resultOutput.textContent = error.message;
+  els.promptReadableOutput.innerHTML = readableSection("Error", `<p class="readable-copy">${escapeHTML(error.message)}</p>`);
   els.resultOutput.classList.add("error");
   setStatus("Error");
   window.setTimeout(() => els.resultOutput.classList.remove("error"), 1400);
@@ -1264,10 +1969,8 @@ function showGraphError(error) {
     ? "Graph API route not found. Restart the AI Touchpoint Lab server so /api/graphs, /api/graph-run, and /api/graph-tool-test are loaded."
     : error.message;
   setGraphResult(null, message);
-  els.graphResultOutput.classList.add("error");
   els.graphRunStatus.textContent = "Error";
   setStatus("Error");
-  window.setTimeout(() => els.graphResultOutput.classList.remove("error"), 1400);
 }
 
 function setStatus(text) {
@@ -1278,7 +1981,9 @@ function setBusy(isBusy, label = "Working") {
   els.saveButton.disabled = isBusy;
   els.runButton.disabled = isBusy;
   els.saveFixtureButton.disabled = isBusy;
+  els.saveEvalButton.disabled = isBusy || !state.lastPromptRun;
   els.runGraphButton.disabled = isBusy;
+  els.refreshGraphRunsButton.disabled = isBusy;
   els.saveGraphFixtureButton.disabled = isBusy;
   els.loadGraphRunButton.disabled = isBusy;
   els.testToolButton.disabled = isBusy || !state.selectedNode?.toolCalls.length;
@@ -1329,22 +2034,8 @@ function inspectGraphNode(node, options = {}) {
   state.selectedNode = node;
   renderGraphMap();
   renderNodeDetails();
+  renderGraphOverrideTools();
   if (!state.lastGraphRun) renderPlannedTimeline();
-  setGraphResult({
-    plannedNode: {
-      id: node.id,
-      label: node.label,
-      stage: nodeStageLabel(node),
-      purpose: node.purpose,
-      toolCalls: node.toolCalls,
-      inputContract: node.inputContract,
-      outputContract: node.outputContract,
-      knowledgeRefs: node.knowledgeRefs,
-    },
-    nextStep: node.toolCalls?.length
-      ? `Use one of the tool buttons in the node drawer to test ${node.toolCalls[0]}.`
-      : "Run the graph to capture this node's live output.",
-  });
   if (options.scroll) {
     document.querySelector(".node-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }

@@ -307,6 +307,8 @@ type TrainingProfile = {
 type PlanningScope = {
   goal: Record<string, any>;
   strategy: Record<string, any>;
+  trainingArchitectureID: string | null;
+  trainingArchitecture: Record<string, any> | null;
   timezone: string;
   homeLocationLabel: string | null;
   weatherSensitive: boolean;
@@ -484,10 +486,14 @@ const planSchema: Record<string, unknown> = {
                   additionalProperties: false,
                   required: ["warmup", "main", "cooldown", "successCriteria"],
                   properties: {
-                    warmup: { type: "string" },
-                    main: { type: "array", items: { type: "string" } },
-                    cooldown: { type: "string" },
+                    schemaVersion: { type: "integer" },
+                    summary: { type: "string" },
+                    warmup: { type: ["string", "object"] },
+                    main: { type: ["array", "object"], items: { type: "string" } },
+                    cooldown: { type: ["string", "object"] },
                     successCriteria: { type: "string" },
+                    equipment: { type: "array", items: { type: "string" } },
+                    constraintsApplied: { type: "array", items: { type: "string" } },
                   },
                 },
                 fuelingSummary: { type: "string" },
@@ -624,10 +630,14 @@ const pendingPlanReviewSchema: Record<string, unknown> = {
                 additionalProperties: false,
                 required: ["warmup", "main", "cooldown", "successCriteria"],
                 properties: {
-                  warmup: { type: ["string", "null"] },
-                  main: { type: ["string", "null"] },
-                  cooldown: { type: ["string", "null"] },
+                  schemaVersion: { type: ["integer", "null"] },
+                  summary: { type: ["string", "null"] },
+                  warmup: { type: ["string", "object", "null"] },
+                  main: { type: ["string", "array", "object", "null"], items: { type: "string" } },
+                  cooldown: { type: ["string", "object", "null"] },
                   successCriteria: { type: ["string", "null"] },
+                  equipment: { type: ["array", "null"], items: { type: "string" } },
+                  constraintsApplied: { type: ["array", "null"], items: { type: "string" } },
                 },
               },
               fueling_summary: { type: ["string", "null"] },
@@ -679,10 +689,14 @@ const replacementSchema: Record<string, unknown> = {
             additionalProperties: false,
             required: ["warmup", "main", "cooldown", "successCriteria"],
             properties: {
-              warmup: { type: "string" },
-              main: { type: "string" },
-              cooldown: { type: "string" },
+              schemaVersion: { type: "integer" },
+              summary: { type: "string" },
+              warmup: { type: ["string", "object"] },
+              main: { type: ["string", "array", "object"], items: { type: "string" } },
+              cooldown: { type: ["string", "object"] },
               successCriteria: { type: "string" },
+              equipment: { type: "array", items: { type: "string" } },
+              constraintsApplied: { type: "array", items: { type: "string" } },
             },
           },
           fuelingSummary: { type: "string" },
@@ -730,10 +744,14 @@ const workoutCandidateSchema: Record<string, unknown> = {
           additionalProperties: false,
           required: ["warmup", "main", "cooldown", "successCriteria"],
           properties: {
-            warmup: { type: "string" },
-            main: { type: "string" },
-            cooldown: { type: "string" },
+            schemaVersion: { type: "integer" },
+            summary: { type: "string" },
+            warmup: { type: ["string", "object"] },
+            main: { type: ["string", "array", "object"], items: { type: "string" } },
+            cooldown: { type: ["string", "object"] },
             successCriteria: { type: "string" },
+            equipment: { type: "array", items: { type: "string" } },
+            constraintsApplied: { type: "array", items: { type: "string" } },
           },
         },
         fuelingSummary: { type: "string" },
@@ -1009,6 +1027,8 @@ async function acceptStrategyAndCreateInitialPlan(
   const planningScope: PlanningScope = {
     goal,
     strategy,
+    trainingArchitectureID: null,
+    trainingArchitecture: null,
     timezone,
     homeLocationLabel: profile?.main_city ?? null,
     weatherSensitive: onboardingHasWeatherBlocker(onboarding),
@@ -1024,10 +1044,7 @@ async function acceptStrategyAndCreateInitialPlan(
       context_json: strategy.context_json ?? {},
     },
   };
-  const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? [], {
-    createDetectedProposal: false,
-    createDisparityProposal: false,
-  });
+  const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? []);
   await generateAndPersistWeeklyTargets(admin, {
     userID,
     goal,
@@ -1035,6 +1052,7 @@ async function acceptStrategyAndCreateInitialPlan(
     weeklyPlans,
     healthSnapshot: requestBody.healthSnapshot ?? null,
     acceptedStrategy,
+    trainingArchitecture: null,
     model,
   });
   await markCurrentWorkoutForStrategy(admin, userID, strategy.id, acceptedLocalDate);
@@ -1367,14 +1385,14 @@ async function finishInitialStrategyPreparation(
 }
 
 function runInBackground(promise: Promise<unknown>) {
-  const edgeRuntime = (globalThis as any).EdgeRuntime;
-  if (edgeRuntime?.waitUntil) {
-    edgeRuntime.waitUntil(promise);
-    return;
-  }
-  promise.catch((error) => {
+  const guarded = promise.catch((error) => {
     console.error("Background planning task failed", error);
   });
+  const edgeRuntime = (globalThis as any).EdgeRuntime;
+  if (edgeRuntime?.waitUntil) {
+    edgeRuntime.waitUntil(guarded);
+    return;
+  }
 }
 
 async function acceptPreparedStrategyAndCreateInitialPlan(
@@ -1430,41 +1448,6 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
   const draftWeekStart = addDays(committedWeekStart, 7);
   const ownerStartDate = isoDate(committedWeekStart > acceptedLocalDate ? committedWeekStart : acceptedLocalDate);
   const acceptedStrategy = objectAt(strategy.context_json ?? {}, "acceptedStrategy") ?? {};
-
-  await supersedeActivePlanningRows(admin, userID);
-  await throwOnError(
-    admin
-      .from("user_goals")
-      .update({
-        status: "active",
-        source_onboarding_profile_id: onboarding?.id ?? goal.source_onboarding_profile_id ?? null,
-      })
-      .eq("id", goal.id)
-      .eq("user_id", userID),
-  );
-  await throwOnError(
-    admin
-      .from("fitness_strategies")
-      .update({
-        status: "active",
-        context_json: {
-          ...(strategy.context_json ?? {}),
-          acceptedAt: acceptedAt.toISOString(),
-          planOwnerStartDate: ownerStartDate,
-        },
-      })
-      .eq("id", strategy.id)
-      .eq("user_id", userID),
-  );
-  if (trainingArchitecture?.id) {
-    await throwOnError(
-      admin
-        .from("training_architectures")
-        .update({ status: "active" })
-        .eq("id", trainingArchitecture.id)
-        .eq("user_id", userID),
-    );
-  }
 
   const context = {
     profile,
@@ -1559,6 +1542,8 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
   const planningScope: PlanningScope = {
     goal,
     strategy: { ...strategy, status: "active" },
+    trainingArchitectureID: trainingArchitecture?.id ?? null,
+    trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
     timezone,
     homeLocationLabel: profile?.main_city ?? null,
     weatherSensitive: onboardingHasWeatherBlocker(onboarding),
@@ -1574,10 +1559,7 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
       context_json: strategy.context_json ?? {},
     },
   };
-  const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? [], {
-    createDetectedProposal: false,
-    createDisparityProposal: false,
-  });
+  const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? []);
   await generateAndPersistWeeklyTargets(admin, {
     userID,
     goal,
@@ -1585,6 +1567,7 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
     weeklyPlans,
     healthSnapshot: requestBody.healthSnapshot ?? null,
     acceptedStrategy,
+    trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
     model,
   });
   await markCurrentWorkoutForStrategy(admin, userID, strategy.id, acceptedLocalDate);
@@ -1595,6 +1578,41 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
       fitnessStrategyID: strategy.id,
     });
     await evaluatePlanningTargets(admin, userID, strategy.id, requestBody.healthSnapshot);
+  }
+
+  await supersedeActivePlanningRows(admin, userID);
+  await throwOnError(
+    admin
+      .from("user_goals")
+      .update({
+        status: "active",
+        source_onboarding_profile_id: onboarding?.id ?? goal.source_onboarding_profile_id ?? null,
+      })
+      .eq("id", goal.id)
+      .eq("user_id", userID),
+  );
+  await throwOnError(
+    admin
+      .from("fitness_strategies")
+      .update({
+        status: "active",
+        context_json: {
+          ...(strategy.context_json ?? {}),
+          acceptedAt: acceptedAt.toISOString(),
+          planOwnerStartDate: ownerStartDate,
+        },
+      })
+      .eq("id", strategy.id)
+      .eq("user_id", userID),
+  );
+  if (trainingArchitecture?.id) {
+    await throwOnError(
+      admin
+        .from("training_architectures")
+        .update({ status: "active" })
+        .eq("id", trainingArchitecture.id)
+        .eq("user_id", userID),
+    );
   }
 
   const event = await createPlanEvent(admin, {
@@ -1720,11 +1738,8 @@ async function syncHealthKitAndReconcile(
     await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot);
   }
 
-  const actualSync = await reconcileActualWorkouts(admin, userID, scope, requestBody.actualWorkouts ?? [], {
-    createDetectedProposal: false,
-    createDisparityProposal: true,
-  });
-  const { synced, matched, detected, dedupedDetected, detectedEvents } = actualSync;
+  const actualSync = await reconcileActualWorkouts(admin, userID, scope, requestBody.actualWorkouts ?? []);
+  const { synced, matched, detected, dedupedDetected, detectedEvents, disparityEvents } = actualSync;
   const missedWorkouts = await markMissedWorkouts(admin, userID, scope.strategy.id, requestBody.syncWindow?.endDate);
 
   const event = await createPlanEvent(admin, {
@@ -1741,22 +1756,6 @@ async function syncHealthKitAndReconcile(
       syncWindow: requestBody.syncWindow ?? null,
     },
   });
-
-  if (detectedEvents.length > 0) {
-    await createReplanProposal(admin, {
-      userID,
-      fitnessStrategyID: scope.strategy.id,
-      triggerEventID: event.id,
-      reason: detectedEvents.length === 1
-        ? "Unexpected HealthKit workout detected. Review whether the rest of the week should change."
-        : `${detectedEvents.length} unexpected HealthKit workouts detected. Review whether the current rhythm should change.`,
-      mutations: [],
-      metadata: {
-        detectedWorkoutEventIDs: detectedEvents.map((detectedEvent) => detectedEvent.eventID),
-        detectedPlannedWorkoutIDs: detectedEvents.map((detectedEvent) => detectedEvent.plannedWorkoutID),
-      },
-    });
-  }
 
   let refreshOutput: Record<string, unknown> | null = null;
   if (missedWorkouts.length > 0) {
@@ -1783,7 +1782,17 @@ async function syncHealthKitAndReconcile(
   );
   await evaluateWeeklyTargetsForPlans(admin, userID, visiblePlans.map((plan: Record<string, any>) => plan.id));
 
-  return { userID, eventID: event.id, synced, matched, detected, dedupedDetected, missed: missedWorkouts.length, refreshOutput };
+  let reviewOutput: Record<string, unknown> | null = null;
+  if (detectedEvents.length > 0 || disparityEvents.length > 0) {
+    reviewOutput = await createRepairProposalForPendingEdits(
+      admin,
+      userID,
+      requestBody,
+      planningAITouchpoint("pending_plan_review").model,
+    );
+  }
+
+  return { userID, eventID: event.id, synced, matched, detected, dedupedDetected, missed: missedWorkouts.length, refreshOutput, reviewOutput };
 }
 
 async function refreshPlanWindow(
@@ -1911,6 +1920,7 @@ async function generateWeeklyPlanTargetsForVisiblePlan(
     weeklyPlans,
     healthSnapshot: latestSnapshot?.snapshot_json ?? null,
     acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+    trainingArchitecture: scope.trainingArchitecture,
     model,
   });
   const event = await createPlanEvent(admin, {
@@ -1942,6 +1952,7 @@ async function ensureWeeklyTargetsForPlans(
     goal: Record<string, any>;
     strategy: Record<string, any>;
     weeklyPlans: Record<string, any>[];
+    trainingArchitecture?: Record<string, any> | null;
     model: string;
   },
 ) {
@@ -1962,6 +1973,7 @@ async function ensureWeeklyTargetsForPlans(
     goal: args.goal,
     strategy: args.strategy,
     weeklyPlans: args.weeklyPlans,
+    trainingArchitecture: args.trainingArchitecture ?? null,
     healthSnapshot: latestSnapshot?.snapshot_json ?? null,
     acceptedStrategy: args.strategy.context_json?.acceptedStrategy ?? null,
     model: args.model,
@@ -1997,10 +2009,9 @@ async function pendingManualReviewState(
   const checkpoint = await latestManualReviewResolutionCheckpoint(admin, userID, strategyID);
   let eventQuery = admin
     .from("plan_events")
-    .select("id")
+    .select("id,event_type,weekly_plan_id,payload_json")
     .eq("user_id", userID)
     .eq("fitness_strategy_id", strategyID)
-    .in("weekly_plan_id", weeklyPlanIDs)
     .in("event_type", pendingReviewEditEventTypes())
     .order("created_at", { ascending: false })
     .limit(50);
@@ -2008,7 +2019,9 @@ async function pendingManualReviewState(
     eventQuery = eventQuery.gt("created_at", checkpoint.created_at);
   }
 
-  const pendingEvents = await list(eventQuery);
+  const pendingEvents = (await list(eventQuery)).filter((event: Record<string, any>) =>
+    pendingReviewEventAppliesToVisibleWindow(event, weeklyPlanIDs)
+  );
   return {
     hasPending: Boolean(pendingProposal) || pendingEvents.length > 0,
     pendingEditCount: pendingEvents.length,
@@ -2085,6 +2098,7 @@ async function refreshPlanWindowForUser(
   force = false,
 ) {
   const scope = await loadActivePlanningScope(admin, userID);
+  const trainingArchitecture = requireTrainingArchitecture(scope, "refresh_plan_window");
   const timezone = scope.timezone || "UTC";
   const start = parseDateOnly(windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
   const window = twoWeekWindow(start);
@@ -2109,6 +2123,7 @@ async function refreshPlanWindowForUser(
       goal: scope.goal,
       strategy: scope.strategy,
       weeklyPlans: existingWeeklyPlans,
+      trainingArchitecture: scope.trainingArchitecture,
       model,
     });
   }
@@ -2120,6 +2135,7 @@ async function refreshPlanWindowForUser(
       eventType: "window_refreshed",
       payload: {
         trigger,
+        trainingArchitectureID: scope.trainingArchitectureID,
         skipped: true,
         reason: "pending_manual_review",
         window,
@@ -2148,6 +2164,7 @@ async function refreshPlanWindowForUser(
       eventType: "window_refreshed",
       payload: {
         trigger,
+        trainingArchitectureID: scope.trainingArchitectureID,
         skipped: true,
         reason: "visible_two_week_window_already_exists",
         window,
@@ -2212,6 +2229,17 @@ async function refreshPlanWindowForUser(
     goal: scope.goal,
     strategy: scope.strategy,
     block: scope.block,
+    acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+    trainingArchitecture,
+    planGenerationPolicy: planGenerationPolicy(null, trainingArchitecture),
+    healthSnapshot: latestSnapshot?.snapshot_json ?? null,
+    deviceTimezone: timezone,
+    startDate: isoDate(start),
+    planOwnerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
+    weeklyPlanStatuses: [
+      { weekStartDate: lifecycle.currentWeekStart, status: "committed" },
+      { weekStartDate: lifecycle.nextWeekStart, status: "draft" },
+    ],
     weeklyPlans,
     latestSnapshot,
     events,
@@ -2223,7 +2251,50 @@ async function refreshPlanWindowForUser(
   };
   const healthDataFreshness = healthFreshness(latestSnapshot);
 
-  let generated = sanitizeGeneratedPlan(await runPlanGeneration("refresh_plan_window", context, model), null, start, timezone);
+  const planGraphRun = await createAIGraphRun(admin, {
+    userID,
+    graphName: "two_week_plan",
+    triggeringTask: "refresh_plan_window",
+    blueprintRevisionID: scope.strategy.source_blueprint_revision_id ?? scope.goal.source_blueprint_revision_id ?? null,
+    userGoalID: scope.goal.id ?? scope.strategy.user_goal_id ?? null,
+    fitnessStrategyID: scope.strategy.id,
+    trainingArchitectureID: scope.trainingArchitectureID,
+    input: {
+      strategyID: scope.strategy.id,
+      trainingArchitectureID: scope.trainingArchitectureID,
+      window,
+      trigger,
+      force,
+      context,
+    },
+  });
+
+  let planOrchestration: TwoWeekPlanOrchestrationOutput;
+  try {
+    planOrchestration = await runTwoWeekPlanOrchestration(context, model);
+    await completeAIGraphRun(admin, planGraphRun.id, {
+      status: "succeeded",
+      output: {
+        plan: planOrchestration.plan,
+        validation: planOrchestration.validation,
+      },
+      model: planOrchestration.model,
+    });
+    await insertAIGraphNodeOutputs(admin, planGraphRun.id, userID, planOrchestration.nodes);
+    await insertAIToolCalls(admin, planGraphRun.id, userID, planOrchestration.toolCalls);
+  } catch (error) {
+    await completeAIGraphRun(admin, planGraphRun.id, {
+      status: "failed",
+      errorSummary: errorMessage(error),
+      model: {
+        provider: Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim() ? "hayf-training-orchestrator" : "supabase-planning-ai",
+        requestedModel: model,
+      },
+    });
+    throw error;
+  }
+
+  let generated = sanitizeGeneratedPlan(planOrchestration.plan, null, start, timezone);
   generated = alignGeneratedPlanToWeeklyTargets(generated, weeklyTargetConstraints);
   if (shouldOnlyGenerateMissingDraft) {
     generated = {
@@ -2269,6 +2340,7 @@ async function refreshPlanWindowForUser(
   const refreshedWeeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
     userID,
     strategyID: scope.strategy.id,
+    trainingArchitectureID: scope.trainingArchitectureID,
     rhythms: generated.rhythms,
     source: "replanned",
     committedWeekStart: isoDate(start),
@@ -2283,6 +2355,7 @@ async function refreshPlanWindowForUser(
     weeklyPlans: refreshedWeeklyPlans,
     healthSnapshot: latestSnapshot?.snapshot_json ?? null,
     acceptedStrategy: scope.strategy.context_json?.acceptedStrategy ?? null,
+    trainingArchitecture,
     model,
   });
   await markCurrentWorkoutForStrategy(admin, userID, scope.strategy.id, dateOnlyInTimezone(new Date(), timezone));
@@ -2293,6 +2366,8 @@ async function refreshPlanWindowForUser(
     payload: {
       trigger,
       usedFallback: false,
+      graphRunID: planGraphRun.id,
+      trainingArchitectureID: scope.trainingArchitectureID,
       window,
       healthDataFreshness,
       duplicateGeneratedWorkouts: duplicateGeneratedWorkouts + duplicateGeneratedWorkoutsAfterInsert,
@@ -2304,6 +2379,8 @@ async function refreshPlanWindowForUser(
     model,
     usedFallback: false,
     fitnessStrategyID: scope.strategy.id,
+    trainingArchitectureID: scope.trainingArchitectureID,
+    graphRunID: planGraphRun.id,
     eventID: event.id,
     plan: generated,
   };
@@ -2390,7 +2467,7 @@ async function recordPlanEdit(
     ? null
     : await buildPlanEditRepair(admin, userID, scope, workout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
-    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair, scope)
     : null;
   if (!proposal || repairPolicy === "deferred") {
     await expirePendingReplanProposals(admin, userID, scope.strategy.id);
@@ -2530,6 +2607,7 @@ async function buildPlanEditRepair(
   model: string,
   timezone: string,
 ): Promise<EditRepairPlan | null> {
+  requireTrainingArchitecture(scope, "plan edit repair");
   const block = scope.block;
   const affectedDates = [editedWorkout.scheduled_date];
   if (edit.type === "move_workout" || edit.type === "replace_workout" || edit.type === "add_workout") affectedDates.push(edit.scheduled_date);
@@ -2594,6 +2672,7 @@ async function buildPlanEditRepair(
   try {
     draft = await runEditRepairDraft(
       {
+        masterCoachContext: masterCoachContextForScope(scope),
         editedWorkout: compactWorkoutForRepair(editedWorkout),
         edit,
         risks,
@@ -2711,6 +2790,7 @@ async function createPlanEditRepairProposal(
   fitnessStrategyID: string,
   triggerEventID: string,
   repair: EditRepairPlan,
+  scope: PlanningScope,
 ) {
   return createReplanProposal(admin, {
     userID,
@@ -2720,6 +2800,8 @@ async function createPlanEditRepairProposal(
     mutations: repair.mutations,
     metadata: {
       type: "plan_edit_repair",
+      trainingArchitectureID: scope.trainingArchitectureID,
+      masterCoachContext: masterCoachContextForScope(scope),
       summary: repair.summary,
       risks: repair.risks.map((risk) => ({
         kind: risk.kind,
@@ -2729,6 +2811,71 @@ async function createPlanEditRepairProposal(
       })),
     },
   });
+}
+
+function masterCoachContextForScope(scope: PlanningScope) {
+  const architecture = scope.trainingArchitecture;
+  if (!architecture) {
+    return {
+      mode: "master_coach_replan",
+      specialistPolicy: "Master coach only. Do not request, simulate, or re-run specialists during replans.",
+      trainingArchitectureID: scope.trainingArchitectureID,
+      trainingArchitectureAvailable: false,
+      guidance: [
+        "Use the active fitness strategy and current two-week plan as the governing contract.",
+        "The user's edits are accepted facts.",
+        "Return no repair when the edited plan remains acceptable.",
+      ],
+    };
+  }
+
+  return {
+    mode: "master_coach_replan",
+    specialistPolicy: "Specialist consultations are historical inputs already consolidated into this architecture. Do not request, simulate, or re-run specialists during replans.",
+    trainingArchitectureID: scope.trainingArchitectureID,
+    trainingArchitectureAvailable: true,
+    priorityOrder: compactStringArray(architecture.priority_order),
+    modalityRoles: Array.isArray(architecture.modality_roles)
+      ? architecture.modality_roles.map((role: Record<string, any>) => ({
+        modality: role.modality ?? null,
+        role: role.role ?? null,
+        rationale: role.rationale ?? null,
+      }))
+      : [],
+    weeklyBudget: architecture.weekly_budget ?? null,
+    recoveryEnvelope: architecture.recovery_envelope ?? null,
+    minimumEffectiveDoseRules: compactStringArray(architecture.minimum_effective_dose_rules),
+    progressionRules: compactStringArray(architecture.progression_rules),
+    interferenceRules: compactStringArray(architecture.interference_rules),
+    conflictAssessment: architecture.conflict_assessment ?? null,
+    plannerConstraints: architecture.planner_constraints ?? null,
+    approvedArchetypes: Array.isArray(architecture.approved_archetypes)
+      ? architecture.approved_archetypes.slice(0, 12).map((archetype: Record<string, any>) => ({
+        id: archetype.id ?? null,
+        modality: archetype.modality ?? null,
+        purpose: archetype.purpose ?? null,
+        targetAdaptation: archetype.target_adaptation ?? null,
+        intensityDomain: archetype.intensity_domain ?? null,
+        typicalDurationMinutes: archetype.typical_duration_minutes ?? null,
+        fatigueCost: archetype.fatigue_cost ?? null,
+        plannerConstraints: compactStringArray(archetype.planner_constraints),
+      }))
+      : [],
+    guidance: [
+      "Preserve the Training Architecture unless the user later changes the goal through a dedicated strategy flow.",
+      "The user's edits are accepted facts.",
+      "Repair only the surrounding two-week execution window.",
+      "Return no repair when the edited plan remains acceptable.",
+      "If the current architecture cannot support a broad change in v1, avoid regeneration and propose either no mutation or the smallest safe adjustment.",
+    ],
+  };
+}
+
+function requireTrainingArchitecture(scope: PlanningScope, task: string) {
+  if (!scope.trainingArchitecture || !scope.trainingArchitectureID) {
+    throw new Error(`${task} requires an active Training Architecture. Re-run post-blueprint planning for this strategy.`);
+  }
+  return scope.trainingArchitecture;
 }
 
 function detectPlanEditRisks(args: {
@@ -3350,6 +3497,7 @@ async function recommendWorkoutReplacements(
   );
 
   const context = {
+    masterCoachContext: masterCoachContextForScope(scope),
     block: scope.block,
     strategy: scope.strategy,
     workoutToReplace: workout,
@@ -3563,7 +3711,7 @@ async function replaceWorkout(
     ? null
     : await buildPlanEditRepair(admin, userID, scope, workout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
-    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair, scope)
     : null;
   if (!proposal || repairPolicy === "deferred") {
     await expirePendingReplanProposals(admin, userID, scope.strategy.id);
@@ -3689,7 +3837,7 @@ async function addWorkout(
     ? null
     : await buildPlanEditRepair(admin, userID, scope, addedWorkout, edit, model, requestBody.deviceTimezone || scope.timezone || "UTC");
   const proposal = repair && repairPolicy === "immediate"
-    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair, scope)
     : null;
   if (!proposal || repairPolicy === "deferred") {
     await expirePendingReplanProposals(admin, userID, scope.strategy.id);
@@ -3782,6 +3930,7 @@ async function createRepairProposalForRecentEdit(
   }
 
   const scope = await loadActivePlanningScope(admin, userID);
+  requireTrainingArchitecture(scope, "create_repair_proposal_for_recent_edit");
   const event = await single(
     admin
       .from("plan_events")
@@ -3806,7 +3955,7 @@ async function createRepairProposalForRecentEdit(
   );
 
   const proposal = repair
-    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair)
+    ? await createPlanEditRepairProposal(admin, userID, scope.strategy.id, event.id, repair, scope)
     : null;
   if (!proposal) {
     await expirePendingReplanProposals(admin, userID, scope.strategy.id);
@@ -3843,6 +3992,7 @@ async function createRepairProposalForPendingEdits(
   model: string,
 ) {
   const scope = await loadActivePlanningScope(admin, userID);
+  requireTrainingArchitecture(scope, "create_repair_proposal_for_pending_edits");
   const timezone = requestBody.deviceTimezone || scope.timezone || "UTC";
   const start = parseDateOnly(requestBody.windowStart) ?? firstCommittedWeekStart(new Date(), timezone);
   const window = twoWeekWindow(start);
@@ -3881,14 +4031,15 @@ async function createRepairProposalForPendingEdits(
     .select()
     .eq("user_id", userID)
     .eq("fitness_strategy_id", scope.strategy.id)
-    .in("weekly_plan_id", weeklyPlanIDs)
     .in("event_type", pendingReviewEditEventTypes())
     .order("created_at", { ascending: true })
     .limit(50);
   if (checkpoint?.created_at) {
     eventQuery = eventQuery.gt("created_at", checkpoint.created_at);
   }
-  const pendingEvents = await list(eventQuery);
+  const pendingEvents = (await list(eventQuery)).filter((event: Record<string, any>) =>
+    pendingReviewEventAppliesToVisibleWindow(event, weeklyPlanIDs)
+  );
 
   if (pendingEvents.length === 0) {
     return { userID, model: "deterministic", reviewed: false, pendingEditCount: 0, proposalID: null, proposal: null };
@@ -3919,6 +4070,7 @@ async function createRepairProposalForPendingEdits(
 
   const today = todayInTimezone(timezone);
   const reviewContext = {
+      masterCoachContext: masterCoachContextForScope(scope),
       strategy: {
         id: scope.strategy.id,
         title: scope.strategy.title,
@@ -3991,6 +4143,7 @@ async function createRepairProposalForPendingEdits(
       eventType: "plan_review_completed",
       payload: {
         window,
+        trainingArchitectureID: scope.trainingArchitectureID,
         reviewedEventIDs,
         editCount: pendingEvents.length,
         reason: draft.reason,
@@ -4022,6 +4175,8 @@ async function createRepairProposalForPendingEdits(
     mutations,
     metadata: {
       type: "pending_plan_edit_review",
+      trainingArchitectureID: scope.trainingArchitectureID,
+      masterCoachContext: masterCoachContextForScope(scope),
       window,
       reviewedEventIDs,
       editCount: pendingEvents.length,
@@ -4122,7 +4277,20 @@ async function reconstructPlanEditFromEvent(
 }
 
 function pendingReviewEditEventTypes() {
-  return ["workout_moved", "workout_deleted", "workout_added", "weekly_plan_constraint_recorded"];
+  return ["workout_moved", "workout_deleted", "workout_added", "weekly_plan_constraint_recorded", "extra_workout_detected", "actual_matched"];
+}
+
+function pendingReviewEventAppliesToVisibleWindow(event: Record<string, any>, weeklyPlanIDs: string[]) {
+  if (event.event_type === "extra_workout_detected") {
+    return event.weekly_plan_id
+      ? weeklyPlanIDs.includes(String(event.weekly_plan_id))
+      : true;
+  }
+  if (event.event_type === "actual_matched") {
+    return event.payload_json?.matchDisparity?.needsReview === true &&
+      Boolean(event.weekly_plan_id && weeklyPlanIDs.includes(String(event.weekly_plan_id)));
+  }
+  return Boolean(event.weekly_plan_id && weeklyPlanIDs.includes(String(event.weekly_plan_id)));
 }
 
 async function latestPlanReviewCheckpoint(admin: SupabaseAdminClient, userID: string, strategyID: string) {
@@ -4573,6 +4741,11 @@ async function checkInToWorkout(
         },
       },
     ],
+    metadata: {
+      type: "checkin_dose_adjustment",
+      trainingArchitectureID: scope.trainingArchitectureID,
+      masterCoachContext: masterCoachContextForScope(scope),
+    },
   });
 
   return {
@@ -4789,16 +4962,8 @@ async function runInitialStrategyOrchestration(
     throw new Error("TRAINING_ORCHESTRATOR_REQUIRED is true but TRAINING_ORCHESTRATOR_URL is not configured.");
   }
   if (serviceURL) {
-    const response = await fetch(`${serviceURL.replace(/\/$/, "")}/planning/prepare-initial-strategy`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")
-          ? { Authorization: `Bearer ${Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")}` }
-          : {}),
-      },
-      body: JSON.stringify({ planningPacket }),
-    });
+    const url = `${serviceURL.replace(/\/$/, "")}/planning/prepare-initial-strategy`;
+    const response = await fetchTrainingOrchestrator(url, { planningPacket });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload?.error ?? "Training orchestrator request failed");
@@ -4881,16 +5046,8 @@ async function runTwoWeekPlanOrchestration(
     throw new Error("TRAINING_ORCHESTRATOR_REQUIRED is true but TRAINING_ORCHESTRATOR_URL is not configured.");
   }
   if (serviceURL) {
-    const response = await fetch(`${serviceURL.replace(/\/$/, "")}/planning/two-week-plan`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")
-          ? { Authorization: `Bearer ${Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")}` }
-          : {}),
-      },
-      body: JSON.stringify({ context }),
-    });
+    const url = `${serviceURL.replace(/\/$/, "")}/planning/two-week-plan`;
+    const response = await fetchTrainingOrchestrator(url, { context });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload?.error ?? "Two-week plan graph request failed");
@@ -4918,6 +5075,25 @@ async function runTwoWeekPlanOrchestration(
       model,
     },
   };
+}
+
+async function fetchTrainingOrchestrator(url: string, body: Record<string, unknown>) {
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")
+          ? { Authorization: `Bearer ${Deno.env.get("TRAINING_ORCHESTRATOR_API_KEY")}` }
+          : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(
+      `Training orchestrator is unreachable at ${url}. Start it with tools/local-langgraph/start-orchestrator.sh. ${errorMessage(error)}`,
+    );
+  }
 }
 
 function trainingOrchestratorRequired() {
@@ -5833,6 +6009,7 @@ async function loadWorkoutPlanningContext(
   );
 
   return {
+    masterCoachContext: masterCoachContextForScope(scope),
     block: scope.block,
     strategy: scope.strategy,
     homeLocationLabel: scope.homeLocationLabel,
@@ -6845,7 +7022,7 @@ function generatedWorkoutKey(workout: GeneratedWorkout) {
 }
 
 const workoutTaxonomyRules =
-  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Walks use Walk or Recovery Walk; never convert an explicit walk request into a hike unless the user also says hike. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery. Always include estimatedDistanceKilometers and estimatedElevationMeters in workout candidate JSON, using null when unknown or not applicable. For user-authored hikes and rides, parse route distance/elevation when provided. Do not invent elevation for routine AI-planned rides such as 1h Base Ride, Recovery Ride, Tempo Ride, or Intervals Ride; only include ride elevation when the user supplied it or route context explicitly exists. Hike and ride intensity should account for objective route load: long distance or large elevation can upgrade Zone 2/easy work to mid/high.";
+  "Workout title taxonomy: do not include emojis in stored titles. Prefer short descriptive titles over rigid taxonomy labels, for example Strength support, Strength maintenance, Easy aerobic ride, Controlled tempo ride, Cycling intervals, Easy aerobic run, or Controlled tempo run. Preserve user-authored route/event names. Walks use Walk or Recovery Walk; never convert an explicit walk request into a hike unless the user also says hike. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery. Always include estimatedDistanceKilometers and estimatedElevationMeters in workout candidate JSON, using null when unknown or not applicable. For user-authored hikes and rides, parse route distance/elevation when provided. Do not invent elevation for routine AI-planned rides unless the user supplied it or route context explicitly exists. Hike and ride intensity should account for objective route load: long distance or large elevation can upgrade Zone 2/easy work to mid/high.";
 
 function workoutCardFields(input: {
   scheduledDate: string;
@@ -6925,6 +7102,9 @@ function normalizedWorkoutTitle(
   intensityLabel: string,
   purpose: string,
 ) {
+  const cleanTitle = compactCardWorkoutTitle(title);
+  if (preservesPlannerWorkoutTitle(cleanTitle)) return cleanTitle;
+
   const activity = normalizeActivity(activityType);
   const text = `${activityType} ${title} ${intensityLabel} ${purpose}`.toLowerCase();
   const duration = Number(durationMinutes);
@@ -6967,6 +7147,16 @@ function normalizedWorkoutTitle(
   if (/mobility|yoga|pilates|stretch|core|prehab/.test(text)) return "Mobility";
   if (/recover|restorative|\brest\b/.test(text)) return "Recovery";
   return compactCardWorkoutTitle(title || titleCase(activityType));
+}
+
+function preservesPlannerWorkoutTitle(title: string) {
+  const normalized = title.trim().toLowerCase();
+  if (!normalized || normalized === "workout") return false;
+  if (/\b(day|stage)\s*\d+\b/.test(normalized)) return true;
+  if (/\b(support|maintenance|build|aerobic|endurance|tempo|interval|strength|ride|run|mobility|recovery)\b/.test(normalized)) {
+    return title.split(/\s+/).filter(Boolean).length <= 6;
+  }
+  return false;
 }
 
 function distanceEligibleActivity(activityType: string, title: string, purpose = "") {
@@ -7336,6 +7526,7 @@ async function generateAndPersistWeeklyTargets(
     weeklyPlans: Record<string, any>[];
     healthSnapshot: Record<string, any> | null;
     acceptedStrategy: Record<string, unknown> | null;
+    trainingArchitecture?: Record<string, any> | null;
     model: string;
   },
 ) {
@@ -7369,6 +7560,7 @@ async function generateAndPersistWeeklyTargets(
     weeklyPlans: visiblePlans,
     workouts,
     strategyTargets,
+    trainingArchitecture: args.trainingArchitecture ?? null,
     healthSnapshot: args.healthSnapshot,
   });
 
@@ -7403,6 +7595,7 @@ async function generateAndPersistWeeklyTargets(
     weeklyPlans: visiblePlans,
     workouts,
     generated,
+    allowedModalities: weeklyTargetAllowedModalities(args.trainingArchitecture ?? null),
   });
 
   await throwOnError(
@@ -7429,6 +7622,7 @@ function weeklyTargetGenerationContext(args: {
   weeklyPlans: Record<string, any>[];
   workouts: Record<string, any>[];
   strategyTargets: Record<string, any>[];
+  trainingArchitecture: Record<string, any> | null;
   healthSnapshot: Record<string, any> | null;
 }) {
   return {
@@ -7447,6 +7641,19 @@ function weeklyTargetGenerationContext(args: {
       targetDate: args.strategy.target_date,
       acceptedStrategy: compactWeeklyAcceptedStrategy(args.acceptedStrategy),
     },
+    trainingArchitecture: args.trainingArchitecture
+      ? {
+        priorityOrder: compactStringArray(args.trainingArchitecture.priority_order),
+        modalityRoles: Array.isArray(args.trainingArchitecture.modality_roles)
+          ? args.trainingArchitecture.modality_roles.map((role: Record<string, any>) => ({
+            modality: role.modality ?? null,
+            role: role.role ?? null,
+          }))
+          : [],
+        weeklyBudget: args.trainingArchitecture.weekly_budget ?? null,
+        plannerConstraints: args.trainingArchitecture.planner_constraints ?? null,
+      }
+      : null,
     strategyTargets: args.strategyTargets.map((target) => ({
       title: target.title,
       summary: target.description,
@@ -7492,6 +7699,7 @@ function weeklyTargetGenerationContext(args: {
       "Targets must be measurable and computable from planned workouts, completed workouts, matched HealthKit workouts, in-app exercise logs, or explicit body/performance entries.",
       "Good weekly targets include completing planned sessions, completing a modality count, weekly minutes/distance, active days, support modality presence, no gap longer than N days, load guardrails, body-weight logging, or pace/power values when data supports them.",
       "Bad weekly targets include feeling good, reviewing recovery, selecting a next goal, adjusting a plan, confidence improved, or any subjective reflection.",
+      "When trainingArchitecture is present, targets must not introduce modalities outside its priorityOrder or modalityRoles.",
     ],
     healthSnapshotSummary: args.healthSnapshot
       ? {
@@ -7581,6 +7789,7 @@ function validatedWeeklyTargetRows(args: {
   weeklyPlans: Record<string, any>[];
   workouts: Record<string, any>[];
   generated: WeeklyTargetGenerationOutput;
+  allowedModalities: Set<string> | null;
 }) {
   const rows: Record<string, unknown>[] = [];
   const weekByID = new Map(args.weeklyPlans.map((plan) => [plan.id, plan]));
@@ -7590,7 +7799,7 @@ function validatedWeeklyTargetRows(args: {
     const proposals = generatedByWeek.get(plan.id) ?? [];
     const accepted = proposals
       .filter((proposal) => weekByID.has(plan.id))
-      .map((proposal) => weeklyTargetRowFromProposal(args.userID, plan, planWorkouts, proposal))
+      .map((proposal) => weeklyTargetRowFromProposal(args.userID, plan, planWorkouts, proposal, args.allowedModalities))
       .filter(Boolean) as Record<string, unknown>[];
     const finalRows = accepted.length > 0
       ? accepted.slice(0, 3)
@@ -7608,11 +7817,13 @@ function weeklyTargetRowFromProposal(
   plan: Record<string, any>,
   workouts: Record<string, any>[],
   proposal: WeeklyTargetProposal,
+  allowedModalities: Set<string> | null,
 ) {
   const family = normalizedWeeklyTargetFamily(proposal.family);
   if (!family || hasBadTargetLanguage(`${proposal.title} ${proposal.summary}`)) return null;
 
   const modality = normalizedWeeklyModality(proposal.modality, workouts, family);
+  if (modality && allowedModalities && !allowedModalities.has(modality)) return null;
   const targetValue = normalizedWeeklyTargetValue(proposal.targetValue, family, modality, workouts);
   if (targetValue === null) return null;
 
@@ -7653,6 +7864,21 @@ function weeklyTargetRowFromProposal(
     source: "planning_engine",
     status: "needs_review",
   };
+}
+
+function weeklyTargetAllowedModalities(trainingArchitecture: Record<string, any> | null) {
+  if (!trainingArchitecture) return null;
+  const values = [
+    ...compactStringArray(trainingArchitecture.priority_order),
+    ...(Array.isArray(trainingArchitecture.modality_roles)
+      ? trainingArchitecture.modality_roles.map((role: Record<string, any>) => String(role.modality ?? ""))
+      : []),
+    ...(Array.isArray(trainingArchitecture.approved_archetypes)
+      ? trainingArchitecture.approved_archetypes.map((archetype: Record<string, any>) => String(archetype.modality ?? ""))
+      : []),
+  ];
+  const modalities = new Set(values.map(normalizeActivity).filter(Boolean));
+  return modalities.size > 0 ? modalities : null;
 }
 
 function normalizedWeeklyTargetFamily(family: string | undefined): WeeklyTargetFamily | null {
@@ -8746,10 +8972,22 @@ async function loadActivePlanningScope(admin: SupabaseAdminClient, userID: strin
   );
   const profile = await maybeSingle(admin.from("profiles").select("main_city").eq("id", userID));
   const onboarding = await maybeSingle(admin.from("onboarding_profiles").select("selected_answers").eq("id", userID));
+  const trainingArchitecture = strategy.training_architecture_id
+    ? await maybeSingle(
+      admin
+        .from("training_architectures")
+        .select("id,architecture_json")
+        .eq("id", strategy.training_architecture_id)
+        .eq("user_id", userID)
+        .maybeSingle(),
+    )
+    : null;
   const timezone = strategy.context_json?.timezone || "UTC";
   return {
     goal,
     strategy,
+    trainingArchitectureID: trainingArchitecture?.id ?? strategy.training_architecture_id ?? null,
+    trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
     timezone,
     homeLocationLabel: profile?.main_city ?? null,
     weatherSensitive: onboardingHasWeatherBlocker(onboarding),
@@ -8836,15 +9074,12 @@ async function reconcileActualWorkouts(
   userID: string,
   scope: PlanningScope,
   actualWorkouts: ActualWorkoutInput[],
-  options: {
-    createDetectedProposal: boolean;
-    createDisparityProposal: boolean;
-  },
 ) {
   let synced = 0;
   let matched = 0;
   let detected = 0;
   const detectedEvents: Array<{ eventID: string; plannedWorkoutID: string; actual: ActualWorkoutInput }> = [];
+  const disparityEvents: Array<{ eventID: string; plannedWorkoutID: string; actual: ActualWorkoutInput; disparity: WorkoutMatchDisparity }> = [];
   const syncedDates = new Set<string>();
 
   for (const actual of uniqueActualWorkouts(actualWorkouts)) {
@@ -8919,23 +9154,8 @@ async function reconcileActualWorkouts(
         },
       });
       await createWorkoutDebriefRequest(admin, userID, null, match.workout.id, upserted.id);
-      if (options.createDisparityProposal && match.disparity?.needsReview) {
-        await createReplanProposal(admin, {
-          userID,
-          fitnessStrategyID: scope.strategy.id,
-          weeklyPlanID: match.workout.weekly_plan_id ?? null,
-          triggerEventID: matchEvent.id,
-          reason: "Completed workout differed meaningfully from the planned session. Review whether the rest of the week should change.",
-          mutations: [],
-          metadata: {
-            type: "actual_workout_disparity",
-            plannedWorkoutID: match.workout.id,
-            actualWorkoutID: upserted.id,
-            plannedWorkout: compactPlannedWorkout(match.workout),
-            actualWorkout: compactActualWorkout(actual),
-            disparity: match.disparity,
-          },
-        });
+      if (match.disparity?.needsReview) {
+        disparityEvents.push({ eventID: matchEvent.id, plannedWorkoutID: match.workout.id, actual, disparity: match.disparity });
       }
       if (staleDetectedWorkoutID) {
         await throwOnError(
@@ -8979,23 +9199,7 @@ async function reconcileActualWorkouts(
   }
 
   const dedupedDetected = await cleanupDuplicateDetectedWorkouts(admin, userID, Array.from(syncedDates));
-  if (options.createDetectedProposal && detectedEvents.length > 0) {
-    await createReplanProposal(admin, {
-      userID,
-      fitnessStrategyID: scope.strategy.id,
-      triggerEventID: null,
-      reason: detectedEvents.length === 1
-        ? "Unexpected HealthKit workout detected. Review whether the rest of the week should change."
-        : `${detectedEvents.length} unexpected HealthKit workouts detected. Review whether the current rhythm should change.`,
-      mutations: [],
-      metadata: {
-        detectedWorkoutEventIDs: detectedEvents.map((detectedEvent) => detectedEvent.eventID),
-        detectedPlannedWorkoutIDs: detectedEvents.map((detectedEvent) => detectedEvent.plannedWorkoutID),
-      },
-    });
-  }
-
-  return { synced, matched, detected, dedupedDetected, detectedEvents };
+  return { synced, matched, detected, dedupedDetected, detectedEvents, disparityEvents };
 }
 
 async function actualMatchForStrategy(

@@ -7,6 +7,7 @@ import {
   type TrainingArchitecture,
   type TwoWeekPlanArtifact,
 } from "./contracts.js";
+import { runWithToolOverrides, type ToolOverride } from "./ai/openai.js";
 import { invokeFitnessStrategyGraph } from "./graphs/fitness-strategy.js";
 import { invokeTrainingArchitectureGraph } from "./graphs/training-architecture.js";
 import { invokeTwoWeekPlanGraph } from "./graphs/two-week-plan.js";
@@ -100,9 +101,10 @@ export const OBSERVABILITY_GRAPHS: ObservabilityGraph[] = [
     label: "Two-Week Plan",
     purpose: "Compile two visible planning weeks from the validated architecture and accepted strategy.",
     nodes: [
-      node("generate_plan", "Generate Plan", "model", "Build the planner input contract and compile one committed week plus one draft week.", ["compile_two_week_plan"], "PlanningPacket + TrainingArchitecture + FitnessStrategyArtifact", "TwoWeekPlanArtifact", sharedKnowledgeRefs),
+      node("generate_plan", "Generate Plan", "model", "Build the planner input contract and compile one committed week plus one draft week.", ["compile_two_week_plan"], "PlanningPacket + TrainingArchitecture + FitnessStrategyArtifact", "DraftTwoWeekPlanArtifact", sharedKnowledgeRefs),
+      node("enrich_prescriptions", "Enrich Prescriptions", "model", "Add structured workout-card prescription details without changing the calendar plan.", ["enrich_workout_prescriptions"], "DraftTwoWeekPlanArtifact + TrainingArchitecture constraints", "TwoWeekPlanArtifact", sharedKnowledgeRefs),
     ],
-    edges: [edge("__start__", "generate_plan"), edge("generate_plan", "__end__")],
+    edges: [edge("__start__", "generate_plan"), edge("generate_plan", "enrich_prescriptions"), edge("enrich_prescriptions", "__end__")],
   },
   {
     name: "prepare_initial_strategy",
@@ -130,42 +132,44 @@ export function observabilityGraphs() {
 }
 
 export async function runObservabilityGraph(body: JsonObject): Promise<ObservabilityRunResult> {
-  const graphName = graphNameFrom(body.graphName ?? body.graph_name);
-  const fixture = recordAt(body, "fixture") ?? body;
-  const packet = packetFrom(fixture);
+  return runWithToolOverrides(toolOverridesFrom(body), async () => {
+    const graphName = graphNameFrom(body.graphName ?? body.graph_name);
+    const fixture = recordAt(body, "fixture") ?? body;
+    const packet = packetFrom(fixture);
 
-  if (graphName === "training_architecture") {
-    const result = await invokeTrainingArchitectureGraph(packet);
-    return resultFor(graphName, result);
-  }
+    if (graphName === "training_architecture") {
+      const result = await invokeTrainingArchitectureGraph(packet);
+      return resultFor(graphName, result);
+    }
 
-  if (graphName === "fitness_strategy") {
-    const architecture = recordAt(fixture, "trainingArchitecture") as TrainingArchitecture | null
-      ?? (await invokeTrainingArchitectureGraph(packet)).artifact;
-    const result = await invokeFitnessStrategyGraph(packet, architecture);
-    return resultFor(graphName, result);
-  }
+    if (graphName === "fitness_strategy") {
+      const architecture = recordAt(fixture, "trainingArchitecture") as TrainingArchitecture | null
+        ?? (await invokeTrainingArchitectureGraph(packet)).artifact;
+      const result = await invokeFitnessStrategyGraph(packet, architecture);
+      return resultFor(graphName, result);
+    }
 
-  if (graphName === "two_week_plan") {
-    const architecture = recordAt(fixture, "trainingArchitecture") as TrainingArchitecture | null
-      ?? (await invokeTrainingArchitectureGraph(packet)).artifact;
-    const strategy = recordAt(fixture, "fitnessStrategy") as FitnessStrategyArtifact | null
-      ?? (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
-    const result = await invokeTwoWeekPlanGraph(packet, architecture, strategy);
-    return resultFor(graphName, result);
-  }
+    if (graphName === "two_week_plan") {
+      const architecture = recordAt(fixture, "trainingArchitecture") as TrainingArchitecture | null
+        ?? (await invokeTrainingArchitectureGraph(packet)).artifact;
+      const strategy = recordAt(fixture, "fitnessStrategy") as FitnessStrategyArtifact | null
+        ?? (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+      const result = await invokeTwoWeekPlanGraph(packet, architecture, strategy);
+      return resultFor(graphName, result);
+    }
 
-  const architecture = await invokeTrainingArchitectureGraph(packet);
-  const strategy = await invokeFitnessStrategyGraph(packet, architecture.artifact);
-  return {
-    graphName,
-    artifacts: {
-      trainingArchitecture: architecture.artifact,
-      fitnessStrategy: strategy.artifact,
-    },
-    nodes: [...architecture.nodes, ...strategy.nodes],
-    toolCalls: [...architecture.tool_calls, ...strategy.tool_calls],
-  };
+    const architecture = await invokeTrainingArchitectureGraph(packet);
+    const strategy = await invokeFitnessStrategyGraph(packet, architecture.artifact);
+    return {
+      graphName,
+      artifacts: {
+        trainingArchitecture: architecture.artifact,
+        fitnessStrategy: strategy.artifact,
+      },
+      nodes: [...architecture.nodes, ...strategy.nodes],
+      toolCalls: [...architecture.tool_calls, ...strategy.tool_calls],
+    };
+  });
 }
 
 export async function runObservabilityToolTest(body: JsonObject) {
@@ -174,6 +178,7 @@ export async function runObservabilityToolTest(body: JsonObject) {
   const result = await runObservabilityGraph({
     graphName: graphForTool(toolName),
     fixture: recordAt(body, "fixture") ?? {},
+    toolOverrides: recordAt(body, "toolOverrides") ?? recordAt(body, "tool_overrides") ?? {},
   });
   const toolCall = result.toolCalls.find((call) => toolMatches(call.tool_name, toolName));
   if (!toolCall) {
@@ -202,6 +207,7 @@ function resultFor<T>(graphName: GraphName, result: GraphResult<T>): Observabili
 
 function graphForTool(toolName: string): GraphName {
   if (toolName === "compile_two_week_plan") return "two_week_plan";
+  if (toolName === "enrich_workout_prescriptions") return "two_week_plan";
   if (toolName === "generate_fitness_strategy" || toolName === "generate_fitness_strategy_targets") return "fitness_strategy";
   return "training_architecture";
 }
@@ -213,6 +219,23 @@ function toolMatches(actual: string, expected: string) {
     return new RegExp(`^${pattern}$`).test(actual);
   }
   return false;
+}
+
+function toolOverridesFrom(body: JsonObject): Record<string, ToolOverride> {
+  const raw = recordAt(body, "toolOverrides") ?? recordAt(body, "tool_overrides") ?? {};
+  const overrides: Record<string, ToolOverride> = {};
+  for (const [toolName, value] of Object.entries(raw)) {
+    if (!isRecord(value)) continue;
+    const model = stringAt(value, "model")?.trim();
+    const systemPrompt = stringAt(value, "systemPrompt")?.trim() ?? stringAt(value, "system_prompt")?.trim();
+    if (model || systemPrompt) {
+      overrides[toolName] = {
+        ...(model ? { model } : {}),
+        ...(systemPrompt ? { systemPrompt } : {}),
+      };
+    }
+  }
+  return overrides;
 }
 
 function packetFrom(value: JsonObject): PlanningPacket {

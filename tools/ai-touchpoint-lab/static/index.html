@@ -127,8 +127,8 @@
           <section class="panel test-panel">
             <div class="panel-heading">
               <div>
-                <h3>Test Run</h3>
-                <p>Fixture JSON is sent as the user context.</p>
+                <h3>Prompt Bench</h3>
+                <p>Run the current prompt against mock context and save eval notes.</p>
               </div>
               <button id="runButton" type="button">Run</button>
             </div>
@@ -138,23 +138,52 @@
               <select id="mockFixtureInput"></select>
             </label>
 
+            <div id="fixtureSummary" class="summary-grid"></div>
+
             <label>
               Fixture name
               <input id="fixtureNameInput" type="text" placeholder="happy-path">
             </label>
-            <label>
-              Fixture JSON
-              <textarea
-                id="fixtureInput"
-                class="json-field tall"
-                spellcheck="false"
-              ></textarea>
-            </label>
+            <details class="advanced-block">
+              <summary>Advanced fixture JSON</summary>
+              <label>
+                Fixture JSON
+                <textarea
+                  id="fixtureInput"
+                  class="json-field tall"
+                  spellcheck="false"
+                ></textarea>
+              </label>
+            </details>
             <div class="actions left">
               <button id="saveFixtureButton" type="button">Save Fixture</button>
             </div>
 
-            <pre id="resultOutput" class="output" aria-live="polite"></pre>
+            <div id="promptReadableOutput" class="readable-content compact-readable" aria-live="polite"></div>
+            <div id="promptRequestSummary" class="summary-grid"></div>
+            <div class="eval-controls">
+              <label>
+                Eval
+                <select id="evalRatingInput">
+                  <option value="good">Good answer</option>
+                  <option value="mixed">Mixed answer</option>
+                  <option value="bad">Bad answer</option>
+                </select>
+              </label>
+              <label>
+                Notes
+                <textarea id="evalNotesInput" class="notes-field" placeholder="What made this answer good or bad?"></textarea>
+              </label>
+              <button id="saveEvalButton" type="button" disabled>Save Eval</button>
+            </div>
+            <details class="advanced-block">
+              <summary>Raw run JSON</summary>
+              <pre id="resultOutput" class="output" aria-live="polite"></pre>
+            </details>
+            <div>
+              <h3 class="compact-title">Recent Evals</h3>
+              <div id="evalHistory" class="eval-history"></div>
+            </div>
           </section>
         </section>
 
@@ -179,7 +208,86 @@
           </div>
         </header>
 
-        <section class="graph-grid">
+        <section id="graphTraceBanner" class="trace-banner"></section>
+
+        <details class="panel graph-bench-panel">
+          <summary>
+            <span>
+              <strong>Local Test Bench</strong>
+              <small>Fixtures and temporary prompt/model overrides for this browser session.</small>
+            </span>
+          </summary>
+          <div class="graph-bench-content">
+            <section class="bench-column">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h3>Fixture</h3>
+                  <p>Run mock user context through the selected graph.</p>
+                </div>
+                <button id="saveGraphFixtureButton" type="button">Save Fixture</button>
+              </div>
+              <label>
+                Graph fixture
+                <select id="graphFixtureInput"></select>
+              </label>
+              <div id="graphFixtureSummary" class="summary-grid"></div>
+              <label>
+                Fixture name
+                <input id="graphFixtureNameInput" type="text" placeholder="planning-packet">
+              </label>
+              <details class="advanced-block">
+                <summary>Advanced graph fixture JSON</summary>
+                <label>
+                  Fixture JSON
+                  <textarea
+                    id="graphFixtureJSONInput"
+                    class="json-field tall"
+                    spellcheck="false"
+                  ></textarea>
+                </label>
+              </details>
+            </section>
+
+            <section class="bench-column">
+              <div class="panel-heading compact-heading">
+                <div>
+                  <h3>Selected Tool Override</h3>
+                  <p>Local test only. Does not save source prompts.</p>
+                </div>
+              </div>
+              <label>
+                Tool
+                <select id="graphOverrideToolInput"></select>
+              </label>
+              <label>
+                Model override
+                <input id="graphOverrideModelInput" type="text" placeholder="gpt-5-mini">
+              </label>
+              <label>
+                System prompt override
+                <textarea id="graphOverrideSystemPromptInput" class="prompt-field compact-prompt" spellcheck="true"></textarea>
+              </label>
+              <details class="advanced-block">
+                <summary>Load run by ID</summary>
+                <div class="run-lookup">
+                  <div class="panel-heading compact-heading">
+                    <div>
+                      <h3>Manual Lookup</h3>
+                      <p>Use only when the run is not listed in recent simulator runs.</p>
+                    </div>
+                    <button id="loadGraphRunButton" type="button">Load Run</button>
+                  </div>
+                  <label>
+                    Graph run ID
+                    <input id="graphRunIDInput" type="text" placeholder="dab4c072-fb51-437b-95b0-9770938e5ece">
+                  </label>
+                </div>
+              </details>
+            </section>
+          </div>
+        </details>
+
+        <section class="graph-inspector-layout">
           <section class="panel graph-map-panel">
             <div class="panel-heading">
               <div>
@@ -196,65 +304,36 @@
                 <h3 id="nodeTitle">Node</h3>
                 <p id="nodeKind">Select a node.</p>
               </div>
-              <button id="testToolButton" type="button">Test Tool</button>
+              <div class="actions">
+                <button id="readableGraphOutputButton" type="button" disabled>Focus View</button>
+                <button id="testToolButton" type="button">Test Tool</button>
+              </div>
             </div>
             <div id="nodeDetails" class="node-details"></div>
           </section>
-        </section>
 
-        <section class="graph-grid lower">
-          <section class="panel test-panel">
+          <aside class="graph-side-stack">
+            <section class="panel graph-timeline-panel">
             <div class="panel-heading">
               <div>
-                <h3>Graph Run</h3>
-                <p>Fixture JSON is sent to the orchestrator.</p>
+                  <h3>Run Timeline</h3>
+                  <p id="graphRunStatus">No run yet.</p>
               </div>
-              <button id="saveGraphFixtureButton" type="button">Save Fixture</button>
             </div>
+              <div id="graphTimeline" class="timeline"></div>
+            </section>
 
-            <label>
-              Graph fixture
-              <select id="graphFixtureInput"></select>
-            </label>
-            <label>
-              Fixture name
-              <input id="graphFixtureNameInput" type="text" placeholder="planning-packet">
-            </label>
-            <label>
-              Fixture JSON
-              <textarea
-                id="graphFixtureJSONInput"
-                class="json-field tall"
-                spellcheck="false"
-              ></textarea>
-            </label>
-
-            <div class="run-lookup">
-              <div class="panel-heading compact-heading">
+            <section class="panel graph-runs-panel">
+              <div class="panel-heading">
                 <div>
-                  <h3>App Run</h3>
-                  <p>Load a graph run created by the simulator.</p>
+                  <h3>Recent Simulator Runs</h3>
+                  <p>Open app-created graph runs without pasting IDs.</p>
                 </div>
-                <button id="loadGraphRunButton" type="button">Load Run</button>
+                <button id="refreshGraphRunsButton" type="button">Refresh</button>
               </div>
-              <label>
-                Graph run ID
-                <input id="graphRunIDInput" type="text" placeholder="dab4c072-fb51-437b-95b0-9770938e5ece">
-              </label>
-            </div>
-          </section>
-
-          <section class="panel diff-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>Run Timeline</h3>
-                <p id="graphRunStatus">No run yet.</p>
-              </div>
-              <button id="readableGraphOutputButton" type="button" disabled>Readable View</button>
-            </div>
-            <div id="graphTimeline" class="timeline"></div>
-            <pre id="graphResultOutput" class="output"></pre>
-          </section>
+              <div id="graphRunsTable" class="run-table"></div>
+            </section>
+          </aside>
         </section>
       </section>
 

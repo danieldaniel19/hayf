@@ -278,6 +278,90 @@ export type StrategyTarget = {
   displayValue: string | null;
 };
 
+export type SimpleWorkoutPrescription = {
+  warmup: string;
+  main: string[];
+  cooldown: string;
+  successCriteria: string;
+};
+
+export type WorkoutPrescriptionStepGroup = {
+  title: string;
+  description: string;
+  durationMinutes: number | null;
+  steps: string[];
+};
+
+export type WorkoutPrescriptionMainBlock =
+  | {
+      kind: "interval";
+      title: string;
+      description: string;
+      repeats: number;
+      workDuration: string;
+      recoveryDuration: string;
+      target: string;
+      notes: string;
+    }
+  | {
+      kind: "steady";
+      title: string;
+      description: string;
+      durationMinutes: number | null;
+      distanceKilometers: number | null;
+      elevationMeters: number | null;
+      target: string;
+      terrainNotes: string | null;
+    }
+  | {
+      kind: "strengthExercise";
+      title: string;
+      description: string;
+      exerciseName: string;
+      machineOrEquipment: string;
+      sets: number;
+      reps: string;
+      restSeconds: number;
+      effortTarget: string;
+      coachingCue: string;
+      alternatives: Array<{
+        exerciseName: string;
+        equipment: string;
+        notes: string;
+      }>;
+    }
+  | {
+      kind: "mobilityRecovery";
+      title: string;
+      description: string;
+      durationMinutes: number;
+      movementFocus: string;
+      steps: string[];
+    };
+
+export type RichWorkoutPrescription = {
+  schemaVersion: 1;
+  summary: string;
+  warmup: WorkoutPrescriptionStepGroup;
+  main: {
+    title: string;
+    description: string;
+    blocks: WorkoutPrescriptionMainBlock[];
+  };
+  cooldown: WorkoutPrescriptionStepGroup;
+  successCriteria: string;
+  equipment: string[];
+  constraintsApplied: string[];
+};
+
+export type DraftTwoWeekPlanArtifact = Omit<TwoWeekPlanArtifact, "rhythms"> & {
+  rhythms: Array<Omit<TwoWeekPlanArtifact["rhythms"][number], "workouts"> & {
+    workouts: Array<Omit<TwoWeekPlanArtifact["rhythms"][number]["workouts"][number], "prescription"> & {
+      prescription: SimpleWorkoutPrescription;
+    }>;
+  }>;
+};
+
 export type TwoWeekPlanArtifact = {
   block: {
     kind: PlanningPacket["goal_context"]["goal_kind"];
@@ -316,12 +400,7 @@ export type TwoWeekPlanArtifact = {
       durationMinutes: number;
       intensityLabel: string;
       purpose: string;
-      prescription: {
-        warmup: string;
-        main: string[];
-        cooldown: string;
-        successCriteria: string;
-      };
+      prescription: RichWorkoutPrescription;
       fuelingSummary: string;
     }>;
   }>;

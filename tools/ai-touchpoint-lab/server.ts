@@ -7,12 +7,14 @@ import {
   type ReasoningEffort,
   type TextVerbosity,
 } from "../../supabase/functions/_shared/ai-touchpoint-catalog.ts";
+import { touchpointResponseMetadata } from "../../supabase/functions/_shared/ai-touchpoint-schemas.ts";
 import { MOCK_TOUCHPOINT_FIXTURES } from "./mock-fixtures.ts";
 
 const LAB_DIR = new URL("./", import.meta.url);
 const REPO_ROOT = new URL("../../", import.meta.url);
 const STATIC_DIR = new URL("./static/", import.meta.url);
 const FIXTURE_DIR = new URL("./fixtures/", import.meta.url);
+const EVAL_DIR = new URL("./evals/", import.meta.url);
 const CATALOG_PATH = new URL(
   "../../supabase/functions/_shared/ai-touchpoint-catalog.ts",
   import.meta.url,
@@ -58,6 +60,7 @@ type GraphFixtureSaveRequest = {
 };
 
 type GraphName = "training_architecture" | "fitness_strategy" | "two_week_plan" | "prepare_initial_strategy";
+type DurableGraphName = Exclude<GraphName, "prepare_initial_strategy">;
 
 export function cloneCatalog(
   catalog: AITouchpointCatalog,
@@ -176,6 +179,8 @@ export function buildOpenAIRequestBody(
   const task = isRecord(fixture) && typeof fixture.task === "string"
     ? fixture.task
     : entry.id;
+  const metadata = touchpointResponseMetadata(entry.group, entry.id);
+  const userRules = materializeUserRules(entry.userRules);
   const payload: Record<string, unknown> = {
     ...(entry.parameters ?? {}),
     model: entry.model ?? DEFAULT_AI_MODEL,
@@ -190,13 +195,23 @@ export function buildOpenAIRequestBody(
           task,
           context,
           candidates,
-          rules: entry.userRules,
+          rules: userRules,
         }),
       },
     ],
   };
 
-  if (entry.text && Object.keys(entry.text).length > 0) {
+  if (metadata) {
+    payload.text = {
+      ...(entry.text ?? {}),
+      format: {
+        type: "json_schema",
+        name: metadata.formatName,
+        strict: true,
+        schema: metadata.schema,
+      },
+    };
+  } else if (entry.text && Object.keys(entry.text).length > 0) {
     payload.text = entry.text;
   }
   if (entry.reasoning) {
@@ -206,11 +221,34 @@ export function buildOpenAIRequestBody(
   return payload;
 }
 
+export function summarizeFixtureForClient(fixture: unknown) {
+  const context = isRecord(fixture) && isRecord(fixture.context) ? fixture.context : isRecord(fixture) ? fixture : {};
+  const normalizedGoal = objectAt(context, "normalizedGoal") ?? objectAt(context, "normalized_goal")
+    ?? objectAt(objectAt(context, "goal") ?? {}, "normalized_goal_json")
+    ?? objectAt(objectAt(context, "goal_context") ?? {}, "normalized_goal");
+  const task = isRecord(fixture) && typeof fixture.task === "string" ? fixture.task : null;
+  const title = stringAt(normalizedGoal, "title") ?? stringAt(context, "title") ?? stringAt(objectAt(context, "goal") ?? {}, "title");
+  const selectedModalities = stringArrayAt(context, "selectedModalities")
+    .concat(stringArrayAt(context, "selected_modality_order"))
+    .concat(stringArrayAt(objectAt(context, "onboardingSignals") ?? {}, "selectedModalities"));
+  const frequency = stringAt(context, "frequency") ?? stringAt(objectAt(context, "planning_constraints") ?? {}, "frequency");
+  const candidateCount = isRecord(fixture) && Array.isArray(fixture.candidates) ? fixture.candidates.length : 0;
+  return {
+    task,
+    title,
+    selectedModalities: Array.from(new Set(selectedModalities)),
+    frequency,
+    candidateCount,
+    topLevelKeys: Object.keys(context).slice(0, 12),
+  };
+}
+
 export function validateGraphRunRequest(value: unknown) {
   if (!isRecord(value)) throw new Error("Graph run request must be a JSON object");
   const graphName = validateGraphName(value.graphName ?? value.graph_name);
   const fixture = isRecord(value.fixture) ? value.fixture : {};
-  return { graphName, fixture };
+  const toolOverrides = isRecord(value.toolOverrides) ? value.toolOverrides : isRecord(value.tool_overrides) ? value.tool_overrides : {};
+  return { graphName, fixture, toolOverrides };
 }
 
 export function validateGraphFixtureDraft(value: unknown) {
@@ -253,16 +291,32 @@ export async function handleRequest(req: Request): Promise<Response> {
       });
     }
     if (req.method === "GET" && url.pathname === "/api/mock-fixtures") {
-      return json({ fixtures: MOCK_TOUCHPOINT_FIXTURES });
+      return json({
+        fixtures: MOCK_TOUCHPOINT_FIXTURES.map((fixture) => ({
+          ...fixture,
+          summary: summarizeFixtureForClient(fixture.fixture),
+        })),
+      });
     }
     if (req.method === "GET" && url.pathname === "/api/diff") {
       return json({ diff: await gitDiff() });
+    }
+    if (req.method === "GET" && url.pathname === "/api/evals") {
+      return json({ evals: await listEvalRecords() });
+    }
+    if (req.method === "POST" && url.pathname === "/api/evals") {
+      const body = await req.json();
+      const saved = await saveEvalRecord(body);
+      return json({ ok: true, eval: saved, evals: await listEvalRecords() });
     }
     if (req.method === "GET" && url.pathname === "/api/fixtures") {
       return json({ fixtures: await listFixtures() });
     }
     if (req.method === "GET" && url.pathname === "/api/graphs") {
       return json(await orchestratorJSON("/observability/graphs"));
+    }
+    if (req.method === "GET" && url.pathname === "/api/graph-runs") {
+      return json({ runs: await listGraphRuns(url) });
     }
     if (req.method === "GET" && url.pathname === "/api/graph-fixtures") {
       return json({ fixtures: await listGraphFixtures() });
@@ -344,13 +398,18 @@ async function runOpenAITest(body: TestRequest) {
 
   const payload = await response.json();
   const latencyMS = Date.now() - startedAt;
+  const outputText = extractOutputText(payload);
+  const parsedOutput = parseStructuredOutput(outputText);
   if (!response.ok) {
     return {
       ok: false,
       status: response.status,
       latencyMS,
       request: redactRequest(requestBody),
+      requestSummary: summarizeOpenAIRequest(requestBody),
+      fixtureSummary: summarizeFixtureForClient(body.fixture),
       error: payload?.error?.message ?? "OpenAI request failed",
+      parsedOutput,
       raw: payload,
     };
   }
@@ -360,7 +419,10 @@ async function runOpenAITest(body: TestRequest) {
     status: response.status,
     latencyMS,
     request: redactRequest(requestBody),
-    outputText: extractOutputText(payload),
+    requestSummary: summarizeOpenAIRequest(requestBody),
+    fixtureSummary: summarizeFixtureForClient(body.fixture),
+    outputText,
+    parsedOutput,
     raw: payload,
   };
 }
@@ -496,6 +558,66 @@ async function saveGraphFixture(body: GraphFixtureSaveRequest) {
   return filename;
 }
 
+export async function listEvalRecords() {
+  await Deno.mkdir(EVAL_DIR, { recursive: true });
+  const records = [];
+  for await (const entry of Deno.readDir(EVAL_DIR)) {
+    if (!entry.isFile || !entry.name.endsWith(".json")) continue;
+    const record = JSON.parse(await Deno.readTextFile(new URL(entry.name, EVAL_DIR)));
+    records.push({
+      filename: entry.name,
+      id: typeof record.id === "string" ? record.id : entry.name.replace(/\.json$/, ""),
+      createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
+      group: record.group,
+      touchpointID: record.touchpointID,
+      label: record.label,
+      rating: record.rating,
+      notes: record.notes,
+      fixtureSummary: record.fixtureSummary ?? {},
+      latencyMS: record.latencyMS ?? null,
+    });
+  }
+  return records.sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))).slice(0, 100);
+}
+
+export async function saveEvalRecord(body: unknown) {
+  if (!isRecord(body)) throw new Error("Eval save body must be an object");
+  const group = body.group;
+  const touchpointID = typeof body.touchpointID === "string" ? body.touchpointID : typeof body.id === "string" ? body.id : "";
+  if (!isKnownTouchpoint(group, touchpointID)) {
+    throw new Error("Unknown touchpoint for eval");
+  }
+  const rating = typeof body.rating === "string" ? body.rating : "";
+  if (!["good", "bad", "mixed"].includes(rating)) {
+    throw new Error("Eval rating must be good, mixed, or bad");
+  }
+  const createdAt = new Date().toISOString();
+  const evalID = `${createdAt.replace(/[:.]/g, "-")}-${group}-${touchpointID}-${rating}`;
+  const record = {
+    id: evalID,
+    createdAt,
+    group,
+    touchpointID,
+    label: stringAt(catalogState[group][touchpointID], "label") ?? touchpointID,
+    rating,
+    notes: typeof body.notes === "string" ? body.notes.trim() : "",
+    config: isRecord(body.config) ? body.config : {},
+    fixture: body.fixture ?? {},
+    fixtureSummary: summarizeFixtureForClient(body.fixture),
+    request: isRecord(body.request) ? body.request : {},
+    requestSummary: isRecord(body.requestSummary) ? body.requestSummary : {},
+    output: body.output ?? null,
+    raw: body.raw ?? null,
+    latencyMS: typeof body.latencyMS === "number" ? body.latencyMS : null,
+    status: body.status ?? null,
+  };
+  const evalURL = new URL(`${evalID}.json`, EVAL_DIR);
+  await assertAllowedEvalPath(evalURL);
+  await Deno.mkdir(EVAL_DIR, { recursive: true });
+  await Deno.writeTextFile(evalURL, `${JSON.stringify(record, null, 2)}\n`);
+  return record;
+}
+
 function validateGraphName(value: unknown): GraphName {
   if (
     value === "training_architecture" ||
@@ -560,6 +682,81 @@ async function planningGraphRunStatus(body: unknown) {
   return payload;
 }
 
+export function normalizeGraphRunSummary(row: Record<string, any>) {
+  const input = isRecord(row.input_json) ? row.input_json : {};
+  const output = isRecord(row.output_json) ? row.output_json : {};
+  const model = isRecord(row.model_json) ? row.model_json : {};
+  const goalContext = objectAt(input, "goal_context") ?? {};
+  const normalizedGoal = objectAt(goalContext, "normalized_goal") ?? {};
+  const trainingArchitecture = objectAt(output, "trainingArchitecture") ?? objectAt(output, "training_architecture") ?? {};
+  const architectureGoalRead = objectAt(trainingArchitecture, "goal_read") ?? {};
+  const fitnessStrategy = objectAt(output, "fitnessStrategy") ?? objectAt(output, "fitness_strategy") ?? {};
+  return {
+    id: row.id,
+    graphRunID: row.id,
+    graphName: row.graph_name,
+    triggeringTask: row.triggering_task ?? null,
+    status: row.status,
+    provider: stringAt(model, "provider") ?? stringAt(model, "runtime") ?? "unknown",
+    model: stringAt(model, "model") ?? stringAt(model, "defaultModel") ?? null,
+    goal: stringAt(normalizedGoal, "title") ?? stringAt(architectureGoalRead, "summary") ?? stringAt(fitnessStrategy, "read") ?? null,
+    selectedModalities: stringArrayAt(goalContext, "selected_modality_order"),
+    durationMS: durationMS(row.started_at, row.finished_at),
+    startedAt: row.started_at ?? null,
+    finishedAt: row.finished_at ?? null,
+    createdAt: row.created_at ?? null,
+    errorSummary: row.error_summary ?? null,
+    sourceUserGoalID: row.source_user_goal_id ?? null,
+    sourceFitnessStrategyID: row.source_fitness_strategy_id ?? null,
+    sourceTrainingArchitectureID: row.source_training_architecture_id ?? null,
+  };
+}
+
+async function listGraphRuns(url: URL) {
+  const supabaseURL = envValue("SUPABASE_URL")?.replace(/\/$/, "");
+  const anonKey = envValue("SUPABASE_ANON_KEY");
+  if (!supabaseURL || !anonKey) {
+    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY are required for recent graph runs.");
+  }
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 25), 1), 100);
+  const graphName = url.searchParams.get("graphName");
+  if (graphName && graphName !== "all") validateDurableGraphName(graphName);
+  const accessToken = envValue("SUPABASE_ACCESS_TOKEN") ?? await localSupabaseAccessToken(supabaseURL, anonKey);
+  const query = new URL(`${supabaseURL}/rest/v1/ai_graph_runs`);
+  query.searchParams.set("select", [
+    "id",
+    "graph_name",
+    "triggering_task",
+    "status",
+    "input_json",
+    "output_json",
+    "model_json",
+    "error_summary",
+    "started_at",
+    "finished_at",
+    "created_at",
+    "source_user_goal_id",
+    "source_fitness_strategy_id",
+    "source_training_architecture_id",
+  ].join(","));
+  query.searchParams.set("order", "created_at.desc");
+  query.searchParams.set("limit", String(limit));
+  if (graphName && graphName !== "all") {
+    query.searchParams.set("graph_name", `eq.${graphName}`);
+  }
+  const response = await fetch(query, {
+    headers: {
+      apikey: anonKey,
+      Authorization: `Bearer ${accessToken || anonKey}`,
+    },
+  });
+  const payload = await response.json().catch(() => []);
+  if (!response.ok) {
+    throw new Error(payload?.message ?? payload?.error ?? `Recent graph runs request failed: ${response.status}`);
+  }
+  return Array.isArray(payload) ? payload.map((row) => normalizeGraphRunSummary(row)) : [];
+}
+
 async function localSupabaseAccessToken(supabaseURL: string, anonKey: string) {
   const email = envValue("HAYF_LOCAL_AUTH_EMAIL");
   const password = envValue("HAYF_LOCAL_AUTH_PASSWORD");
@@ -592,6 +789,18 @@ async function assertAllowedFixturePath(url: URL) {
   }
 }
 
+async function assertAllowedEvalPath(url: URL) {
+  const evalDirPath = await Deno.realPath(new URL("./", EVAL_DIR)).catch(
+    () => fromFileUrl(EVAL_DIR),
+  );
+  const targetDir = await Deno.realPath(new URL("./", url)).catch(() =>
+    fromFileUrl(new URL("./", url))
+  );
+  if (!targetDir.startsWith(evalDirPath)) {
+    throw new Error("Eval path is outside the allowlisted directory");
+  }
+}
+
 async function denoCheck() {
   const command = new Deno.Command(Deno.execPath(), {
     args: [
@@ -619,6 +828,7 @@ async function gitDiff() {
       "diff",
       "--",
       "supabase/functions/_shared/ai-touchpoint-catalog.ts",
+      "supabase/functions/_shared/ai-touchpoint-schemas.ts",
       "supabase/functions/_shared/ai-touchpoints.ts",
       "tools/ai-touchpoint-lab",
     ],
@@ -728,6 +938,9 @@ function isKnownTouchpoint(
 }
 
 function extractOutputText(payload: Record<string, any>) {
+  if (typeof payload.output_text === "string") {
+    return payload.output_text;
+  }
   for (const output of payload.output ?? []) {
     for (const content of output.content ?? []) {
       if (content.type === "output_text" && typeof content.text === "string") {
@@ -738,9 +951,84 @@ function extractOutputText(payload: Record<string, any>) {
   return null;
 }
 
+function parseStructuredOutput(outputText: string | null) {
+  if (!outputText) return null;
+  try {
+    return JSON.parse(outputText);
+  } catch {
+    return null;
+  }
+}
+
+function summarizeOpenAIRequest(requestBody: Record<string, unknown>) {
+  const input = Array.isArray(requestBody.input) ? requestBody.input : [];
+  const user = input.find((part) => isRecord(part) && part.role === "user") as Record<string, unknown> | undefined;
+  const system = input.find((part) => isRecord(part) && part.role === "system") as Record<string, unknown> | undefined;
+  const text = isRecord(requestBody.text) ? requestBody.text : {};
+  const format = isRecord(text.format) ? text.format : {};
+  return {
+    model: requestBody.model ?? null,
+    reasoning: requestBody.reasoning ?? null,
+    text: text.verbosity ? { verbosity: text.verbosity } : null,
+    parameterKeys: Object.keys(requestBody).filter((key) => !["model", "input", "text", "reasoning"].includes(key)),
+    schemaName: format.name ?? null,
+    strict: format.strict ?? null,
+    systemPreview: typeof system?.content === "string" ? system.content.slice(0, 220) : null,
+    userPayload: typeof user?.content === "string" ? parseStructuredOutput(user.content) ?? user.content : null,
+  };
+}
+
 function redactRequest(requestBody: Record<string, unknown>) {
   return requestBody;
 }
+
+function materializeUserRules(userRules: string | undefined) {
+  if (!userRules) return userRules;
+  return userRules
+    .replaceAll("{workoutTaxonomyRules}", WORKOUT_TAXONOMY_RULES)
+    .replaceAll("{workoutCandidateRules}", WORKOUT_CANDIDATE_RULES);
+}
+
+function validateDurableGraphName(value: unknown): DurableGraphName {
+  if (
+    value === "training_architecture" ||
+    value === "fitness_strategy" ||
+    value === "two_week_plan"
+  ) {
+    return value;
+  }
+  throw new Error("Unknown durable graph");
+}
+
+function durationMS(startedAt: unknown, finishedAt: unknown) {
+  if (typeof startedAt !== "string" || typeof finishedAt !== "string") return null;
+  const started = new Date(startedAt).getTime();
+  const finished = new Date(finishedAt).getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) return null;
+  return Math.max(0, finished - started);
+}
+
+function objectAt(value: unknown, key: string) {
+  if (!isRecord(value)) return null;
+  return isRecord(value[key]) ? value[key] as Record<string, any> : null;
+}
+
+function stringAt(value: unknown, key: string) {
+  if (!isRecord(value)) return null;
+  const nested = value[key];
+  return typeof nested === "string" && nested.trim() ? nested : null;
+}
+
+function stringArrayAt(value: unknown, key: string) {
+  if (!isRecord(value) || !Array.isArray(value[key])) return [];
+  return value[key].filter((entry: unknown): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+const WORKOUT_CANDIDATE_RULES =
+  "Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words.";
+
+const WORKOUT_TAXONOMY_RULES =
+  "Workout title taxonomy: do not include emojis in stored titles. Rides use Base Ride, Long Ride, Intervals Ride, Recovery Ride, or Tempo Ride. Runs use Base Run, Long Run, Intervals Run, Recovery Run, or Tempo Run. Walks use Walk or Recovery Walk; never convert an explicit walk request into a hike unless the user also says hike. Hikes use Easy Hike, Long Hike, or Hard Hike unless preserving a user-authored route/event name. Planned strength must use split plus letter names such as Full Body A, Full Body B, Upper Body C, or Lower Body A; do not output generic Strength support for planned strength. Mobility/yoga/core-prehab is Mobility; restorative/rest is Recovery. Always include estimatedDistanceKilometers and estimatedElevationMeters in workout candidate JSON, using null when unknown or not applicable. For user-authored hikes and rides, parse route distance/elevation when provided. Do not invent elevation for routine AI-planned rides such as 1h Base Ride, Recovery Ride, Tempo Ride, or Intervals Ride; only include ride elevation when the user supplied it or route context explicitly exists. Hike and ride intensity should account for objective route load: long distance or large elevation can upgrade Zone 2/easy work to mid/high.";
 
 function contentType(path: string) {
   if (path.endsWith(".html")) return "text/html; charset=utf-8";

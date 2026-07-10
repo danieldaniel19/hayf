@@ -382,7 +382,98 @@ const weatherContext = {
   rationale: "Outdoor training is reasonable.",
 };
 
+const masterCoachContext = {
+  mode: "master_coach_replan",
+  specialistPolicy:
+    "Specialist consultations are historical inputs already consolidated into this architecture. Do not request, simulate, or re-run specialists during replans.",
+  trainingArchitectureID: "architecture_mock_run_base",
+  trainingArchitectureAvailable: true,
+  priorityOrder: ["running", "strength", "mobility"],
+  modalityRoles: [
+    {
+      modality: "running",
+      role: "primary_driver",
+      rationale: "Running is the main goal driver for the 10K base.",
+    },
+    {
+      modality: "strength",
+      role: "secondary_support",
+      rationale:
+        "Strength supports durability and body composition without becoming the main load.",
+    },
+    {
+      modality: "mobility",
+      role: "maintenance_exposure",
+      rationale: "Mobility protects the bad-day floor and recovery rhythm.",
+    },
+  ],
+  weeklyBudget: {
+    target_sessions: 4,
+    minimum_viable_sessions: 3,
+    hard_sessions: 1,
+    recovery_sessions: 1,
+  },
+  recoveryEnvelope: {
+    max_hard_days_per_week: 1,
+    spacing_rules: [
+      "Keep the long run away from moderate lower-body strength when possible.",
+      "Use mobility before adding intensity when the week gets crowded.",
+    ],
+    bad_day_floor: "20 minutes of mobility or an easy walk",
+  },
+  conflictAssessment: {
+    status: "manageable_tradeoff",
+    summary: "Running leads while strength stays protected but bounded.",
+    required_tradeoffs: [
+      "Do not chase strength volume at the expense of run consistency.",
+    ],
+  },
+  approvedArchetypes: [
+    {
+      id: "running_base",
+      modality: "running",
+      purpose: "Easy aerobic base",
+      targetAdaptation: "aerobic durability",
+      intensityDomain: "low",
+      typicalDurationMinutes: { min: 35, max: 60 },
+      fatigueCost: "moderate",
+      plannerConstraints: [
+        "Keep conversational unless explicitly marked quality.",
+      ],
+    },
+    {
+      id: "strength_full_body",
+      modality: "strength",
+      purpose: "Full-body strength support",
+      targetAdaptation: "durability and strength retention",
+      intensityDomain: "moderate",
+      typicalDurationMinutes: { min: 35, max: 50 },
+      fatigueCost: "moderate",
+      plannerConstraints: ["Leave reps in reserve near run quality days."],
+    },
+  ],
+  guidance: [
+    "Preserve the Training Architecture unless the user changes the goal through a dedicated strategy flow.",
+    "The user's edits are accepted facts.",
+    "Repair only the surrounding two-week execution window.",
+  ],
+};
+
+const missingArchitectureMasterCoachContext = {
+  mode: "master_coach_replan",
+  specialistPolicy:
+    "Master coach only. Do not request, simulate, or re-run specialists during replans.",
+  trainingArchitectureID: null,
+  trainingArchitectureAvailable: false,
+  guidance: [
+    "Use the active fitness strategy and current two-week plan as the governing contract.",
+    "The user's edits are accepted facts.",
+    "Return no repair when the edited plan remains acceptable.",
+  ],
+};
+
 const workoutPlanningContext = {
+  masterCoachContext,
   block: blockRow,
   strategy: strategyRow,
   homeLocationLabel: "Lisbon",
@@ -684,6 +775,7 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
     fixture: {
       task: "draft_plan_edit_repair",
       context: {
+        masterCoachContext: missingArchitectureMasterCoachContext,
         editedWorkout: plannedWorkouts[2],
         edit: {
           type: "move_workout",
@@ -722,6 +814,7 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
     fixture: {
       task: "create_repair_proposal_for_pending_edits",
       context: {
+        masterCoachContext,
         strategy: {
           id: strategyRow.id,
           title: strategyRow.title,
@@ -779,6 +872,7 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
     fixture: {
       task: "recommend_workout_replacements",
       context: {
+        masterCoachContext,
         block: blockRow,
         strategy: strategyRow,
         workoutToReplace: plannedWorkouts[0],
@@ -853,6 +947,19 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
           targetDate: strategyRow.target_date,
           acceptedStrategy,
         },
+        trainingArchitecture: {
+          priorityOrder: masterCoachContext.priorityOrder,
+          modalityRoles: masterCoachContext.modalityRoles.map((role) => ({
+            modality: role.modality,
+            role: role.role,
+          })),
+          weeklyBudget: masterCoachContext.weeklyBudget,
+          plannerConstraints: {
+            weekly_plan_rules: [
+              "Running leads while strength stays protected but bounded.",
+            ],
+          },
+        },
         strategyTargets: strategyTargets.map((target) => ({
           title: target.title,
           summary: target.summary,
@@ -893,6 +1000,7 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
         targetReferenceRules: [
           "Targets must be measurable and computable from planned workouts or completed workouts.",
           "Bad weekly targets include subjective reflection or plan-review tasks.",
+          "When trainingArchitecture is present, targets must not introduce modalities outside its priorityOrder or modalityRoles.",
         ],
         healthSnapshotSummary: {
           generatedAt: healthSnapshotSummary.generatedAt,

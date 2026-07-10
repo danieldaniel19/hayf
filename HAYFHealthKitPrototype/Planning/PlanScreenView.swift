@@ -17,6 +17,7 @@ struct PlanScreenView: View {
     @State private var pendingPlanReview: PlanPendingReview?
     @State private var planReviewConfirmationMessage: String?
     @State private var movingWorkout: PlanWorkout?
+    @State private var selectedWorkoutDetail: PlanWorkout?
     @State private var activeEditAnalysis: PlanEditAnalysis?
     @State private var workoutCandidateLoadID: UUID?
     @State private var selectedDayAction: PlanDayActionContext?
@@ -80,6 +81,9 @@ struct PlanScreenView: View {
                             },
                             replaceWorkout: { workout in
                                 showWorkoutPlanning(WorkoutPlanningContext(mode: .replace(workout: workout)))
+                            },
+                            showWorkoutDetail: { workout in
+                                selectedWorkoutDetail = workout
                             },
                             showDayActions: { group in
                                 selectedDayAction = PlanDayActionContext(group: group)
@@ -205,6 +209,13 @@ struct PlanScreenView: View {
             )
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
+        }
+        .fullScreenCover(item: $selectedWorkoutDetail) { workout in
+            WorkoutDetailScreen(
+                workout: workout,
+                fallbackLocationLabel: store.homeLocationLabel,
+                dismiss: { selectedWorkoutDetail = nil }
+            )
         }
     }
 
@@ -912,6 +923,7 @@ private struct PlanContentView: View {
     let cancelMoveWorkout: () -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
+    let showWorkoutDetail: (PlanWorkout) -> Void
     let showDayActions: (PlanWorkoutDayGroup) -> Void
     let reload: () async -> Void
 
@@ -937,6 +949,7 @@ private struct PlanContentView: View {
                     cancelMoveWorkout: cancelMoveWorkout,
                     deleteWorkout: deleteWorkout,
                     replaceWorkout: replaceWorkout,
+                    showWorkoutDetail: showWorkoutDetail,
                     showDayActions: showDayActions
                 )
                 if showsOpenMeteoAttribution {
@@ -1385,6 +1398,7 @@ private struct PlanWorkoutsPanel: View {
     let cancelMoveWorkout: () -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
+    let showWorkoutDetail: (PlanWorkout) -> Void
     let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
@@ -1428,6 +1442,7 @@ private struct PlanWorkoutsPanel: View {
                     beginMoveWorkout: beginMoveWorkout,
                     deleteWorkout: deleteWorkout,
                     replaceWorkout: replaceWorkout,
+                    showWorkoutDetail: showWorkoutDetail,
                     showDayActions: showDayActions
                 )
             }
@@ -1644,6 +1659,7 @@ private struct PlanWeekSection: View {
     let beginMoveWorkout: (PlanWorkout) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
+    let showWorkoutDetail: (PlanWorkout) -> Void
     let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
@@ -1688,6 +1704,7 @@ private struct PlanWeekSection: View {
                             beginMoveWorkout: beginMoveWorkout,
                             deleteWorkout: deleteWorkout,
                             replaceWorkout: replaceWorkout,
+                            showWorkoutDetail: showWorkoutDetail,
                             showDayActions: showDayActions
                         )
 
@@ -1801,6 +1818,7 @@ private struct PlanWorkoutDayRow: View {
     let beginMoveWorkout: (PlanWorkout) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
     let replaceWorkout: (PlanWorkout) -> Void
+    let showWorkoutDetail: (PlanWorkout) -> Void
     let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
@@ -1842,7 +1860,8 @@ private struct PlanWorkoutDayRow: View {
                                 isDisabled: isAnalyzingEdit || isMoveTarget,
                                 moveWorkout: { beginMoveWorkout(workout) },
                                 deleteWorkout: { deleteWorkout(workout) },
-                                replaceWorkout: { replaceWorkout(workout) }
+                                replaceWorkout: { replaceWorkout(workout) },
+                                showWorkoutDetail: { showWorkoutDetail(workout) }
                             )
                         }
                     }
@@ -2048,6 +2067,7 @@ private struct PlanWorkoutCard: View {
     let moveWorkout: () -> Void
     let deleteWorkout: () -> Void
     let replaceWorkout: () -> Void
+    let showWorkoutDetail: () -> Void
 
     @State private var horizontalOffset: CGFloat = 0
     @State private var dragStartOffset: CGFloat = 0
@@ -2112,6 +2132,10 @@ private struct PlanWorkoutCard: View {
                 Label("Delete workout", systemImage: "trash")
             }
         }
+        .onTapGesture {
+            guard canOpenDetail else { return }
+            showWorkoutDetail()
+        }
         .allowsHitTesting(!isDisabled)
         .opacity(isDisabled ? 0.82 : 1)
     }
@@ -2173,6 +2197,10 @@ private struct PlanWorkoutCard: View {
 
     private var actionOpacity: Double {
         min(1, max(0, Double(abs(horizontalOffset) / 20)))
+    }
+
+    private var canOpenDetail: Bool {
+        !isDisabled && !isDragging && horizontalOffset == 0 && ![.deleted, .superseded].contains(workout.status)
     }
 
     private var cardMinHeight: CGFloat {
@@ -2340,6 +2368,514 @@ private struct PlanWorkoutCardPill: View {
                 Capsule()
                     .stroke(style == .metric ? HAYFColor.orange.opacity(0.18) : HAYFColor.border, lineWidth: 1)
             }
+    }
+}
+
+private struct WorkoutDetailScreen: View {
+    let workout: PlanWorkout
+    let fallbackLocationLabel: String?
+    let dismiss: () -> Void
+
+    private var display: WorkoutCardDisplayModel {
+        WorkoutCardDisplayModel(workout: workout, fallbackLocationLabel: fallbackLocationLabel)
+    }
+
+    private var prescription: WorkoutPrescriptionDisplayModel {
+        WorkoutPrescriptionDisplayModel(workout: workout)
+    }
+
+    var body: some View {
+        ZStack {
+            HAYFColor.neutral
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                    .padding(.bottom, 12)
+                    .background(HAYFColor.neutral)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        metricGrid
+
+                        WorkoutDetailTextSection(
+                            title: "Why today",
+                            text: prescription.summary.isEmpty ? workout.purpose : prescription.summary
+                        )
+
+                        WorkoutDetailStepsSection(title: "Warm up", group: prescription.warmup)
+
+                        WorkoutDetailMainSection(blocks: prescription.blocks)
+
+                        WorkoutDetailStepsSection(title: "Cool down", group: prescription.cooldown)
+
+                        WorkoutDetailTextSection(title: "Success", text: prescription.successCriteria)
+
+                        if !prescription.constraintsApplied.isEmpty {
+                            WorkoutDetailTagSection(title: "Constraints applied", tags: prescription.constraintsApplied)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 28)
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Button(action: dismiss) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(HAYFColor.primary)
+                        .frame(width: 38, height: 38)
+                        .background(HAYFColor.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close workout detail")
+
+                Text("HAYF")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Spacer(minLength: 8)
+
+                WorkoutDetailStatusPill(status: workout.status)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text(display.modalityEmoji)
+                    .font(.system(size: 25))
+                    .frame(width: 30, alignment: .leading)
+
+                Text(display.title)
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
+            }
+        }
+    }
+
+    private var metricGrid: some View {
+        LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
+            spacing: 8
+        ) {
+            WorkoutDetailMetricChip(icon: "calendar", label: PlanDate.weekdayLabel(workout.scheduledDate), value: PlanDate.dayLabel(workout.scheduledDate))
+            WorkoutDetailMetricChip(icon: "clock", label: "Duration", value: WorkoutDetailFormatting.duration(workout.durationMinutes))
+            WorkoutDetailMetricChip(icon: "flame", label: "Intensity", value: display.metricPills.last(where: { $0.emoji == "🔥" })?.text.capitalized ?? workout.intensityLabel)
+            WorkoutDetailMetricChip(icon: "target", label: "Target", value: display.metricPills.last(where: { $0.emoji == "🎯" })?.text ?? "Support")
+            if let distance = workout.estimatedDistanceKilometers {
+                WorkoutDetailMetricChip(icon: "point.topleft.down.curvedto.point.bottomright.up", label: "Distance", value: "\(max(1, Int(distance.rounded()))) km")
+            }
+            if let elevation = workout.estimatedElevationMeters, elevation > 0 {
+                WorkoutDetailMetricChip(icon: "mountain.2", label: "Elevation", value: "\(max(1, Int(elevation.rounded()))) m")
+            }
+            WorkoutDetailMetricChip(icon: "mappin.and.ellipse", label: "Location", value: WorkoutDetailFormatting.location(workout.plannedLocationLabel ?? fallbackLocationLabel))
+            WorkoutDetailMetricChip(icon: "fork.knife", label: "Fuel", value: WorkoutDetailFormatting.shortFuel(workout.fuelingSummary))
+        }
+    }
+}
+
+private struct WorkoutDetailStatusPill: View {
+    let status: PlanWorkoutStatus
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(color.opacity(0.09))
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(color.opacity(0.14), lineWidth: 1)
+            }
+    }
+
+    private var label: String {
+        switch status {
+        case .current: return "Current"
+        case .planned: return "Planned"
+        case .checkedIn: return "Checked in"
+        case .adjusted: return "Adjusted"
+        case .done: return "Done"
+        case .missed: return "Missed"
+        case .deleted: return "Deleted"
+        case .superseded: return "Updated"
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case .current:
+            return HAYFColor.orange
+        case .missed, .deleted:
+            return HAYFColor.error
+        default:
+            return HAYFColor.primary
+        }
+    }
+}
+
+private struct WorkoutDetailMetricChip: View {
+    let icon: String
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 18, height: 18, alignment: .leading)
+
+            Text(value)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(HAYFColor.muted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct WorkoutDetailTextSection: View {
+    let title: String
+    let text: String
+
+    var body: some View {
+        WorkoutDetailSectionContainer(title: title) {
+            Text(text.isEmpty ? "Complete the session as planned." : text)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(HAYFColor.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct WorkoutDetailStepsSection: View {
+    let title: String
+    let group: WorkoutPrescriptionDisplayModel.StepGroup
+
+    var body: some View {
+        WorkoutDetailSectionContainer(title: title) {
+            VStack(alignment: .leading, spacing: 9) {
+                Text(group.description)
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(Array(group.steps.enumerated()), id: \.offset) { _, step in
+                    HStack(alignment: .top, spacing: 9) {
+                        Circle()
+                            .fill(HAYFColor.orange)
+                            .frame(width: 5, height: 5)
+                            .padding(.top, 7)
+
+                        Text(step)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(HAYFColor.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct WorkoutDetailMainSection: View {
+    let blocks: [WorkoutPrescriptionDisplayModel.MainBlock]
+
+    var body: some View {
+        WorkoutDetailSectionContainer(title: "Main work") {
+            VStack(spacing: 10) {
+                ForEach(blocks) { block in
+                    switch block.kind {
+                    case let .strength(exercise):
+                        WorkoutStrengthExerciseRow(exercise: exercise)
+                    case let .interval(interval):
+                        WorkoutIntervalBlockRow(interval: interval)
+                    case let .steady(steady):
+                        WorkoutSteadyBlockRow(steady: steady)
+                    case let .mobility(mobility):
+                        WorkoutMobilityBlockRow(mobility: mobility)
+                    case let .text(text):
+                        Text(text)
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct WorkoutStrengthExerciseRow: View {
+    let exercise: WorkoutPrescriptionDisplayModel.StrengthExercise
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(exercise.exerciseName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.76)
+
+                Spacer(minLength: 8)
+
+                Text(exercise.setsReps)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 7) {
+                WorkoutDetailMiniPill(text: exercise.machineOrEquipment)
+                WorkoutDetailMiniPill(text: exercise.restText)
+                WorkoutDetailMiniPill(text: exercise.effortTarget)
+            }
+
+            if !exercise.coachingCue.isEmpty {
+                Text(exercise.coachingCue)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let alternative = exercise.alternatives.first {
+                Text("Alt: \(alternative.exerciseName)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(HAYFColor.muted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct WorkoutIntervalBlockRow: View {
+    let interval: WorkoutPrescriptionDisplayModel.IntervalBlock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(interval.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Spacer(minLength: 8)
+
+                Text("\(interval.repeats)x")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(HAYFColor.orange)
+            }
+
+            HStack(spacing: 8) {
+                WorkoutDetailIntervalCell(label: "Work", value: interval.workDuration)
+                WorkoutDetailIntervalCell(label: "Recover", value: interval.recoveryDuration)
+                WorkoutDetailIntervalCell(label: "Target", value: interval.target)
+            }
+
+            if !interval.notes.isEmpty {
+                Text(interval.notes)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct WorkoutDetailIntervalCell: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(HAYFColor.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
+
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(HAYFColor.muted)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .background(HAYFColor.neutral)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+private struct WorkoutSteadyBlockRow: View {
+    let steady: WorkoutPrescriptionDisplayModel.SteadyBlock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(steady.title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            HStack(spacing: 8) {
+                if let duration = steady.durationMinutes {
+                    WorkoutDetailIntervalCell(label: "Time", value: "\(duration) min")
+                }
+                if let distance = steady.distanceKilometers {
+                    WorkoutDetailIntervalCell(label: "Distance", value: "\(max(1, Int(distance.rounded()))) km")
+                }
+                if let elevation = steady.elevationMeters {
+                    WorkoutDetailIntervalCell(label: "Elevation", value: "\(max(1, Int(elevation.rounded()))) m")
+                }
+            }
+
+            Text(steady.target)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            if let terrainNotes = steady.terrainNotes, !terrainNotes.isEmpty {
+                Text(terrainNotes)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+            }
+        }
+        .padding(12)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct WorkoutMobilityBlockRow: View {
+    let mobility: WorkoutPrescriptionDisplayModel.MobilityBlock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(mobility.title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            Text("\(mobility.durationMinutes) min · \(mobility.movementFocus)")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HAYFColor.secondary)
+
+            ForEach(Array(mobility.steps.enumerated()), id: \.offset) { _, step in
+                Text(step)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(12)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
+private struct WorkoutDetailTagSection: View {
+    let title: String
+    let tags: [String]
+
+    var body: some View {
+        WorkoutDetailSectionContainer(title: title) {
+            WorkoutPillFlow(spacing: 7, rowSpacing: 7) {
+                ForEach(tags.prefix(6), id: \.self) { tag in
+                    WorkoutDetailMiniPill(text: tag)
+                }
+            }
+        }
+    }
+}
+
+private struct WorkoutDetailMiniPill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(HAYFColor.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, 8)
+            .frame(height: 24)
+            .background(HAYFColor.neutral)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(HAYFColor.border, lineWidth: 1)
+            }
+    }
+}
+
+private struct WorkoutDetailSectionContainer<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+
+            content
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface.opacity(0.58))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.border, lineWidth: 1)
+        }
     }
 }
 
@@ -2603,22 +3139,25 @@ private struct WorkoutCardTaxonomy {
         if preservesCustomUserTitle {
             return compactTitle(source.title, maxWords: 4)
         }
+        if preservesPlannerDescriptiveTitle {
+            return compactTitle(source.title, maxWords: 6)
+        }
 
         switch modality {
         case .ride:
             if contains("interval") || contains("vo2") || contains("zone 4") || contains("z4") || contains("zone 5") || contains("z5") {
-                return "Intervals Ride"
+                return "Cycling intervals"
             }
             if contains("recover") || contains("easy spin") {
-                return "Recovery Ride"
+                return "Easy ride"
             }
             if source.durationMinutes >= 90 || contains("long") {
-                return "Long Ride"
+                return "Long ride"
             }
             if contains("tempo") || contains("threshold") || contains("steady") {
-                return "Tempo Ride"
+                return "Tempo ride"
             }
-            return "Base Ride"
+            return "Easy ride"
         case .hike:
             if contains("hard") || contains("high") || contains("mountain") {
                 return "Hard Hike"
@@ -2631,15 +3170,18 @@ private struct WorkoutCardTaxonomy {
             if isHealthKitOnlyDetected {
                 return "Strength"
             }
-            if let splitTitle {
-                return splitTitle
+            if contains("maintain") || contains("maintenance") {
+                return "Strength maintenance"
             }
-            return "Full Body A"
+            if contains("build") || contains("heavy") || contains("progress") || contains("hypertrophy") {
+                return "Strength build"
+            }
+            return "Strength support"
         case .run:
-            if contains("tempo") || contains("threshold") { return "Tempo Run" }
-            if contains("interval") || contains("vo2") { return "Intervals Run" }
-            if contains("recover") { return "Recovery Run" }
-            return source.durationMinutes >= 70 || contains("long") ? "Long Run" : "Base Run"
+            if contains("tempo") || contains("threshold") { return "Tempo run" }
+            if contains("interval") || contains("vo2") { return "Run intervals" }
+            if contains("recover") { return "Easy run" }
+            return source.durationMinutes >= 70 || contains("long") ? "Long run" : "Easy run"
         case .swim:
             if contains("interval") || contains("vo2") { return "Intervals Swim" }
             if contains("recover") { return "Recovery Swim" }
@@ -2707,11 +3249,11 @@ private struct WorkoutCardTaxonomy {
     var targetText: String {
         if contains("threshold") || title.contains("Tempo") { return "Threshold" }
         if contains("vo2") { return "VO2Max" }
-        if title.contains("Intervals") { return "VO2Max" }
+        if title.lowercased().contains("interval") { return "VO2Max" }
         if title.contains("Recovery") || contains("recover") || modality == .recovery { return "Recovery" }
         if modality == .strength { return "Strength" }
         if modality == .mobility { return "Mobility" }
-        if ["Base Ride", "Long Ride", "Base Run", "Long Run", "Easy Hike", "Long Hike", "Base Swim"].contains(title) {
+        if ["Easy ride", "Long ride", "Easy run", "Long run", "Easy Hike", "Long Hike", "Base Swim"].contains(title) {
             return "Endurance"
         }
         if contains("endurance") || contains("aerobic") || contains("base") { return "Endurance" }
@@ -2864,21 +3406,17 @@ private struct WorkoutCardTaxonomy {
         return false
     }
 
-    private var splitTitle: String? {
-        let letterPattern = #"\b([abcde])\b"#
-        let letter = normalized.range(of: letterPattern, options: .regularExpression).map {
-            String(normalized[$0]).uppercased()
-        }
-        if contains("upper") {
-            return "Upper Body \(letter ?? "A")"
-        }
-        if contains("lower") || contains("leg") {
-            return "Lower Body \(letter ?? "A")"
-        }
-        if contains("full") || contains("body") {
-            return "Full Body \(letter ?? "A")"
-        }
-        return nil
+    private var preservesPlannerDescriptiveTitle: Bool {
+        guard ["generated", "replanned", "candidate"].contains(source.source) else { return false }
+        let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = title.lowercased()
+        guard !title.isEmpty else { return false }
+        if ["full body a", "base ride", "long ride", "base run", "long run"].contains(lower) { return false }
+        if lower.range(of: #"\b(full|upper|lower)\s+body\s+[a-e]\b"#, options: .regularExpression) != nil { return false }
+        return lower.range(
+            of: #"\b(support|maintenance|build|aerobic|endurance|tempo|interval|strength|ride|run|mobility|recovery)\b"#,
+            options: .regularExpression
+        ) != nil
     }
 
     private var normalized: String {
@@ -2926,11 +3464,249 @@ private extension JSONValue {
         return nil
     }
 
+    var planArrayValue: [JSONValue] {
+        if case let .array(value) = self {
+            return value
+        }
+        return []
+    }
+
     var planObjectValue: [String: JSONValue] {
         if case let .object(value) = self {
             return value
         }
         return [:]
+    }
+}
+
+private struct WorkoutPrescriptionDisplayModel {
+    struct StepGroup {
+        let title: String
+        let description: String
+        let durationMinutes: Int?
+        let steps: [String]
+    }
+
+    struct StrengthExercise {
+        struct Alternative {
+            let exerciseName: String
+            let equipment: String
+            let notes: String
+        }
+
+        let exerciseName: String
+        let machineOrEquipment: String
+        let sets: Int?
+        let reps: String
+        let restSeconds: Int?
+        let effortTarget: String
+        let coachingCue: String
+        let alternatives: [Alternative]
+
+        var setsReps: String {
+            if let sets {
+                return "\(sets) x \(reps)"
+            }
+            return reps
+        }
+
+        var restText: String {
+            guard let restSeconds else { return "Rest as needed" }
+            return "\(restSeconds) sec"
+        }
+    }
+
+    struct IntervalBlock {
+        let title: String
+        let repeats: Int
+        let workDuration: String
+        let recoveryDuration: String
+        let target: String
+        let notes: String
+    }
+
+    struct SteadyBlock {
+        let title: String
+        let durationMinutes: Int?
+        let distanceKilometers: Double?
+        let elevationMeters: Double?
+        let target: String
+        let terrainNotes: String?
+    }
+
+    struct MobilityBlock {
+        let title: String
+        let durationMinutes: Int
+        let movementFocus: String
+        let steps: [String]
+    }
+
+    struct MainBlock: Identifiable {
+        enum Kind {
+            case strength(StrengthExercise)
+            case interval(IntervalBlock)
+            case steady(SteadyBlock)
+            case mobility(MobilityBlock)
+            case text(String)
+        }
+
+        let id = UUID()
+        let kind: Kind
+    }
+
+    let summary: String
+    let warmup: StepGroup
+    let blocks: [MainBlock]
+    let cooldown: StepGroup
+    let successCriteria: String
+    let equipment: [String]
+    let constraintsApplied: [String]
+
+    init(workout: PlanWorkout) {
+        let object = workout.prescription?.planObjectValue ?? [:]
+        if object["schemaVersion"]?.planNumberValue == 1 {
+            summary = Self.stringValue(object["summary"]) ?? workout.purpose
+            warmup = Self.stepGroup(from: object["warmup"], fallbackTitle: "Warm up", fallbackText: "Start easy and prepare for the main work.")
+            blocks = Self.mainBlocks(from: object["main"])
+            cooldown = Self.stepGroup(from: object["cooldown"], fallbackTitle: "Cool down", fallbackText: "Finish easy and note any recovery flags.")
+            successCriteria = Self.stringValue(object["successCriteria"]) ?? "Complete the planned dose with clean form and controlled effort."
+            equipment = Self.stringArray(object["equipment"])
+            constraintsApplied = Self.stringArray(object["constraintsApplied"])
+            return
+        }
+
+        let warmupText = Self.stringValue(object["warmup"]) ?? "Start easy and check readiness."
+        let mainTexts = Self.stringArray(object["main"])
+        let cooldownText = Self.stringValue(object["cooldown"]) ?? "Finish easy."
+        summary = workout.purpose
+        warmup = StepGroup(title: "Warm up", description: warmupText, durationMinutes: nil, steps: [warmupText])
+        blocks = (mainTexts.isEmpty ? [workout.purpose] : mainTexts).map { MainBlock(kind: .text($0)) }
+        cooldown = StepGroup(title: "Cool down", description: cooldownText, durationMinutes: nil, steps: [cooldownText])
+        successCriteria = Self.stringValue(object["successCriteria"]) ?? "Complete the planned dose with control."
+        equipment = []
+        constraintsApplied = []
+    }
+
+    private static func stepGroup(from value: JSONValue?, fallbackTitle: String, fallbackText: String) -> StepGroup {
+        let object = value?.planObjectValue ?? [:]
+        let text = stringValue(value) ?? stringValue(object["description"]) ?? fallbackText
+        return StepGroup(
+            title: stringValue(object["title"]) ?? fallbackTitle,
+            description: text,
+            durationMinutes: intValue(object["durationMinutes"]),
+            steps: nonEmptyStrings(stringArray(object["steps"]), fallback: [text])
+        )
+    }
+
+    private static func mainBlocks(from value: JSONValue?) -> [MainBlock] {
+        let mainObject = value?.planObjectValue ?? [:]
+        let blockValues = mainObject["blocks"]?.planArrayValue ?? value?.planArrayValue ?? []
+        let blocks = blockValues.compactMap(block(from:))
+        if !blocks.isEmpty { return blocks }
+        if let text = stringValue(value) ?? stringValue(mainObject["description"]) {
+            return [MainBlock(kind: .text(text))]
+        }
+        return [MainBlock(kind: .text("Complete the planned main work with control."))]
+    }
+
+    private static func block(from value: JSONValue) -> MainBlock? {
+        let object = value.planObjectValue
+        switch stringValue(object["kind"]) {
+        case "strengthExercise":
+            let alternatives = (object["alternatives"]?.planArrayValue ?? []).map { alternative -> StrengthExercise.Alternative in
+                let alt = alternative.planObjectValue
+                return StrengthExercise.Alternative(
+                    exerciseName: stringValue(alt["exerciseName"]) ?? "Alternative",
+                    equipment: stringValue(alt["equipment"]) ?? "Available equipment",
+                    notes: stringValue(alt["notes"]) ?? ""
+                )
+            }
+            return MainBlock(kind: .strength(StrengthExercise(
+                exerciseName: stringValue(object["exerciseName"]) ?? stringValue(object["title"]) ?? "Strength exercise",
+                machineOrEquipment: stringValue(object["machineOrEquipment"]) ?? "Available equipment",
+                sets: intValue(object["sets"]),
+                reps: stringValue(object["reps"]) ?? "8-10",
+                restSeconds: intValue(object["restSeconds"]),
+                effortTarget: stringValue(object["effortTarget"]) ?? "Controlled effort",
+                coachingCue: stringValue(object["coachingCue"]) ?? "",
+                alternatives: alternatives
+            )))
+        case "interval":
+            return MainBlock(kind: .interval(IntervalBlock(
+                title: stringValue(object["title"]) ?? "Intervals",
+                repeats: intValue(object["repeats"]) ?? 1,
+                workDuration: stringValue(object["workDuration"]) ?? "Work",
+                recoveryDuration: stringValue(object["recoveryDuration"]) ?? "Recover",
+                target: stringValue(object["target"]) ?? "Controlled hard",
+                notes: stringValue(object["notes"]) ?? ""
+            )))
+        case "steady":
+            return MainBlock(kind: .steady(SteadyBlock(
+                title: stringValue(object["title"]) ?? "Steady work",
+                durationMinutes: intValue(object["durationMinutes"]),
+                distanceKilometers: object["distanceKilometers"]?.planNumberValue,
+                elevationMeters: object["elevationMeters"]?.planNumberValue,
+                target: stringValue(object["target"]) ?? "Controlled effort",
+                terrainNotes: stringValue(object["terrainNotes"])
+            )))
+        case "mobilityRecovery":
+            return MainBlock(kind: .mobility(MobilityBlock(
+                title: stringValue(object["title"]) ?? "Mobility",
+                durationMinutes: intValue(object["durationMinutes"]) ?? 10,
+                movementFocus: stringValue(object["movementFocus"]) ?? "easy movement",
+                steps: nonEmptyStrings(stringArray(object["steps"]), fallback: [stringValue(object["description"]) ?? "Move easily"])
+            )))
+        default:
+            return stringValue(value).map { MainBlock(kind: .text($0)) }
+        }
+    }
+
+    private static func stringArray(_ value: JSONValue?) -> [String] {
+        if let string = stringValue(value) {
+            return [string]
+        }
+        return value?.planArrayValue.compactMap(stringValue) ?? []
+    }
+
+    private static func nonEmptyStrings(_ values: [String], fallback: [String]) -> [String] {
+        let compact = values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return compact.isEmpty ? fallback : compact
+    }
+
+    private static func stringValue(_ value: JSONValue?) -> String? {
+        guard let string = value?.planStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !string.isEmpty else {
+            return nil
+        }
+        return string
+    }
+
+    private static func intValue(_ value: JSONValue?) -> Int? {
+        guard let number = value?.planNumberValue, number.isFinite else { return nil }
+        return Int(number.rounded())
+    }
+}
+
+private enum WorkoutDetailFormatting {
+    static func duration(_ minutes: Int) -> String {
+        if minutes >= 120, minutes % 60 == 0 {
+            return "\(minutes / 60)h"
+        }
+        return "\(minutes) min"
+    }
+
+    static func location(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return "Home" }
+        return trimmed.components(separatedBy: ",").first ?? trimmed
+    }
+
+    static func shortFuel(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return "Normal" }
+        if trimmed.count <= 18 { return trimmed }
+        let words = trimmed.split(separator: " ").prefix(3).joined(separator: " ")
+        return words.isEmpty ? "Normal" : words
     }
 }
 
@@ -5277,7 +6053,9 @@ private enum PlanWorkoutCardPreviewFixtures {
         purpose: String,
         status: PlanWorkoutStatus,
         source: String = "generated",
-        location: String = "Munich"
+        location: String = "Munich",
+        prescription: JSONValue? = nil,
+        fuelingSummary: String? = nil
     ) -> PlanWorkout {
         PlanWorkout(
             id: UUID(),
@@ -5295,7 +6073,8 @@ private enum PlanWorkoutCardPreviewFixtures {
             purpose: purpose,
             status: status,
             source: source,
-            fuelingSummary: nil,
+            fuelingSummary: fuelingSummary,
+            prescription: prescription ?? legacyPrescription,
             plannedLocationLabel: location,
             weatherForecast: .object([
                 "temperatureCelsius": .number(19),
@@ -5304,6 +6083,145 @@ private enum PlanWorkoutCardPreviewFixtures {
             ])
         )
     }
+
+    static var legacyPrescription: JSONValue {
+        .object([
+            "warmup": .string("Start easy and check readiness."),
+            "main": .array([.string("Complete the planned dose with control.")]),
+            "cooldown": .string("Finish easy."),
+            "successCriteria": .string("Leave feeling ready for the next session.")
+        ])
+    }
+
+    static var strengthPrescription: JSONValue {
+        .object([
+            "schemaVersion": .number(1),
+            "summary": .string("Controlled full-body strength that supports the week without compromising endurance."),
+            "warmup": .object([
+                "title": .string("Warm up"),
+                "description": .string("Prepare joints and movement patterns before loading."),
+                "durationMinutes": .number(8),
+                "steps": .array([.string("5 min easy bike"), .string("Two light ramp-up sets for the first lift")])
+            ]),
+            "main": .object([
+                "title": .string("Strength work"),
+                "description": .string("Use repeatable lifts with clean reps and bounded fatigue."),
+                "blocks": .array([
+                    strengthExercise("Leg press", equipment: "Leg press machine", sets: 3, reps: "8-10", alternative: "Goblet squat"),
+                    strengthExercise("Seated row", equipment: "Seated row machine", sets: 3, reps: "8-10", alternative: "Dumbbell row"),
+                    strengthExercise("Chest press", equipment: "Chest press machine", sets: 2, reps: "8-10", alternative: "Push-up"),
+                    strengthExercise("Pallof press", equipment: "Cable stack", sets: 2, reps: "10 each side", alternative: "Band press")
+                ])
+            ]),
+            "cooldown": .object([
+                "title": .string("Cool down"),
+                "description": .string("Bring effort down and check recovery signals."),
+                "durationMinutes": .number(5),
+                "steps": .array([.string("Easy walk"), .string("Light hips and upper-back mobility")])
+            ]),
+            "successCriteria": .string("Finish with 1-2 reps in reserve and no form breakdown."),
+            "equipment": .array([.string("Leg press machine"), .string("Seated row machine"), .string("Cable stack")]),
+            "constraintsApplied": .array([.string("Controlled lower-body load"), .string("No grinding reps")])
+        ])
+    }
+
+    static var cyclingIntervalPrescription: JSONValue {
+        .object([
+            "schemaVersion": .number(1),
+            "summary": .string("Develop high-end aerobic power while staying spaced from strength work."),
+            "warmup": .object([
+                "title": .string("Warm up"),
+                "description": .string("Ease into the ride before the main work."),
+                "durationMinutes": .number(10),
+                "steps": .array([.string("Ride easy"), .string("Add 2 short cadence pickups")])
+            ]),
+            "main": .object([
+                "title": .string("Ride intervals"),
+                "description": .string("Keep the hard blocks controlled, not maximal."),
+                "blocks": .array([
+                    .object([
+                        "kind": .string("interval"),
+                        "title": .string("Main intervals"),
+                        "description": .string("Alternate focused work with easy recovery."),
+                        "repeats": .number(4),
+                        "workDuration": .string("4 min"),
+                        "recoveryDuration": .string("3 min easy"),
+                        "target": .string("RPE 8"),
+                        "notes": .string("Keep cadence smooth.")
+                    ])
+                ])
+            ]),
+            "cooldown": .object([
+                "title": .string("Cool down"),
+                "description": .string("Finish easy enough to protect the next session."),
+                "durationMinutes": .number(8),
+                "steps": .array([.string("Easy spin"), .string("Note heavy legs or unusual fatigue")])
+            ]),
+            "successCriteria": .string("Complete all intervals without sprinting the final rep."),
+            "equipment": .array([.string("Bike")]),
+            "constraintsApplied": .array([.string("Hard day spacing"), .string("Smooth cadence")])
+        ])
+    }
+
+    static var steadyRunPrescription: JSONValue {
+        .object([
+            "schemaVersion": .number(1),
+            "summary": .string("Extend aerobic time without adding speed."),
+            "warmup": .object([
+                "title": .string("Warm up"),
+                "description": .string("Start gently before the steady block."),
+                "durationMinutes": .number(10),
+                "steps": .array([.string("Easy jog"), .string("Dynamic calves and hips")])
+            ]),
+            "main": .object([
+                "title": .string("Steady run"),
+                "description": .string("Stay conversational and smooth."),
+                "blocks": .array([
+                    .object([
+                        "kind": .string("steady"),
+                        "title": .string("Aerobic block"),
+                        "description": .string("Hold a steady aerobic effort."),
+                        "durationMinutes": .number(55),
+                        "distanceKilometers": .number(9),
+                        "elevationMeters": .null,
+                        "target": .string("Easy pace / RPE 3-4"),
+                        "terrainNotes": .string("Flat or gentle route.")
+                    ])
+                ])
+            ]),
+            "cooldown": .object([
+                "title": .string("Cool down"),
+                "description": .string("Reduce impact and check for irritation."),
+                "durationMinutes": .number(5),
+                "steps": .array([.string("Easy walk or jog"), .string("Light calves and hips mobility")])
+            ]),
+            "successCriteria": .string("Keep gait smooth and finish controlled."),
+            "equipment": .array([.string("Running shoes")]),
+            "constraintsApplied": .array([.string("Impact controlled"), .string("Strength spacing protected")])
+        ])
+    }
+
+    private static func strengthExercise(_ name: String, equipment: String, sets: Double, reps: String, alternative: String) -> JSONValue {
+        .object([
+            "kind": .string("strengthExercise"),
+            "title": .string(name),
+            "description": .string("Perform \(name) with clean repeatable reps."),
+            "exerciseName": .string(name),
+            "machineOrEquipment": .string(equipment),
+            "sets": .number(sets),
+            "reps": .string(reps),
+            "restSeconds": .number(90),
+            "effortTarget": .string("RPE 7"),
+            "coachingCue": .string("Stop each set with clean reps in reserve."),
+            "alternatives": .array([
+                .object([
+                    "exerciseName": .string(alternative),
+                    "equipment": .string("Dumbbells or bodyweight"),
+                    "notes": .string("Use if the main station is busy.")
+                ])
+            ])
+        ])
+    }
 }
 
 #Preview("Workout Cards") {
@@ -5311,24 +6229,27 @@ private enum PlanWorkoutCardPreviewFixtures {
         VStack(spacing: 12) {
             PlanWorkoutCard(
                 workout: PlanWorkoutCardPreviewFixtures.workout(
-                    title: "Intervals Ride",
+                    title: "Cycling intervals",
                     activityType: "cycling",
                     durationMinutes: 75,
                     distance: 35,
                     intensity: "High",
                     purpose: "VO2Max power",
-                    status: .current
+                    status: .current,
+                    prescription: PlanWorkoutCardPreviewFixtures.cyclingIntervalPrescription,
+                    fuelingSummary: "Carbs + water before riding."
                 ),
                 fallbackLocationLabel: "Munich",
                 isDisabled: false,
                 moveWorkout: {},
                 deleteWorkout: {},
-                replaceWorkout: {}
+                replaceWorkout: {},
+                showWorkoutDetail: {}
             )
 
             PlanWorkoutCard(
                 workout: PlanWorkoutCardPreviewFixtures.workout(
-                    title: "Base Ride",
+                    title: "Easy ride",
                     activityType: "cycling",
                     durationMinutes: 60,
                     distance: 22,
@@ -5341,24 +6262,28 @@ private enum PlanWorkoutCardPreviewFixtures {
                 isDisabled: false,
                 moveWorkout: {},
                 deleteWorkout: {},
-                replaceWorkout: {}
+                replaceWorkout: {},
+                showWorkoutDetail: {}
             )
 
             PlanWorkoutCard(
                 workout: PlanWorkoutCardPreviewFixtures.workout(
-                    title: "Upper Body C",
+                    title: "Strength support",
                     activityType: "strength",
-                    durationMinutes: 75,
+                    durationMinutes: 45,
                     distance: nil,
                     intensity: "Moderate",
                     purpose: "Strength",
-                    status: .missed
+                    status: .missed,
+                    prescription: PlanWorkoutCardPreviewFixtures.strengthPrescription,
+                    fuelingSummary: "Protein + carbs."
                 ),
                 fallbackLocationLabel: "Munich",
                 isDisabled: false,
                 moveWorkout: {},
                 deleteWorkout: {},
-                replaceWorkout: {}
+                replaceWorkout: {},
+                showWorkoutDetail: {}
             )
 
             PlanWorkoutCard(
@@ -5376,13 +6301,68 @@ private enum PlanWorkoutCardPreviewFixtures {
                 isDisabled: false,
                 moveWorkout: {},
                 deleteWorkout: {},
-                replaceWorkout: {}
+                replaceWorkout: {},
+                showWorkoutDetail: {}
             )
         }
         .padding(24)
     }
     .frame(width: 390)
     .background(HAYFColor.neutral)
+}
+
+#Preview("Workout Detail Strength") {
+    WorkoutDetailScreen(
+        workout: PlanWorkoutCardPreviewFixtures.workout(
+            title: "Strength support",
+            activityType: "strength",
+            durationMinutes: 45,
+            distance: nil,
+            intensity: "Moderate",
+            purpose: "Strength",
+            status: .planned,
+            prescription: PlanWorkoutCardPreviewFixtures.strengthPrescription,
+            fuelingSummary: "Protein + carbs."
+        ),
+        fallbackLocationLabel: "Munich",
+        dismiss: {}
+    )
+}
+
+#Preview("Workout Detail Ride") {
+    WorkoutDetailScreen(
+        workout: PlanWorkoutCardPreviewFixtures.workout(
+            title: "Cycling intervals",
+            activityType: "cycling",
+            durationMinutes: 50,
+            distance: 24,
+            intensity: "High",
+            purpose: "VO2Max power",
+            status: .planned,
+            prescription: PlanWorkoutCardPreviewFixtures.cyclingIntervalPrescription,
+            fuelingSummary: "Carbs + water before riding."
+        ),
+        fallbackLocationLabel: "Munich",
+        dismiss: {}
+    )
+}
+
+#Preview("Workout Detail Run") {
+    WorkoutDetailScreen(
+        workout: PlanWorkoutCardPreviewFixtures.workout(
+            title: "Long aerobic run",
+            activityType: "running",
+            durationMinutes: 70,
+            distance: 10,
+            intensity: "Low",
+            purpose: "Aerobic endurance",
+            status: .planned,
+            prescription: PlanWorkoutCardPreviewFixtures.steadyRunPrescription,
+            fuelingSummary: "Normal meal timing."
+        ),
+        fallbackLocationLabel: "Munich",
+        dismiss: {}
+    )
 }
 
 #Preview {

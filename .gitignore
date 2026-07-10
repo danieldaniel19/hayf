@@ -16,3 +16,4 @@ supabase/.env.*
 !supabase/.env.local-langgraph.example
 tools/ai-touchpoint-lab/.env
 tools/ai-touchpoint-lab/.env.*
+tools/ai-touchpoint-lab/evals/*.json

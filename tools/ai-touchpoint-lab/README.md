@@ -8,7 +8,7 @@ parameters.
 ```sh
 deno run \
   --allow-read=. \
-  --allow-write=supabase/functions/_shared/ai-touchpoint-catalog.ts,tools/ai-touchpoint-lab/fixtures \
+  --allow-write=supabase/functions/_shared/ai-touchpoint-catalog.ts,tools/ai-touchpoint-lab/fixtures,tools/ai-touchpoint-lab/evals \
   --allow-run=git,/opt/homebrew/bin/deno \
   --allow-env=OPENAI_API_KEY,AI_TOUCHPOINT_LAB_PORT,OPENAI_MODEL,TRAINING_ORCHESTRATOR_URL,TRAINING_ORCHESTRATOR_API_KEY,SUPABASE_URL,SUPABASE_ANON_KEY,SUPABASE_ACCESS_TOKEN \
   --allow-net=127.0.0.1,api.openai.com \
@@ -58,6 +58,7 @@ server, which only writes:
 
 - `supabase/functions/_shared/ai-touchpoint-catalog.ts`
 - JSON fixtures under `tools/ai-touchpoint-lab/fixtures/`
+- local eval records under `tools/ai-touchpoint-lab/evals/`
 
 After saving a prompt change, the server runs `deno check` against the Supabase
 functions and returns the current git diff.

@@ -1,5 +1,6 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import {
+  type DraftTwoWeekPlanArtifact,
   type FitnessStrategyArtifact,
   type GraphResult,
   type GraphTraceNode,
@@ -7,6 +8,7 @@ import {
   normalizeModality,
   type PlannerInputContract,
   type PlanningPacket,
+  type RichWorkoutPrescription,
   type TrainingArchitecture,
   type TwoWeekPlanArtifact,
   type WorkoutArchetypeRecommendation,
@@ -17,6 +19,7 @@ type TwoWeekPlanState = {
   packet: PlanningPacket;
   training_architecture: TrainingArchitecture;
   fitness_strategy: FitnessStrategyArtifact;
+  draft_artifact?: DraftTwoWeekPlanArtifact;
   artifact?: TwoWeekPlanArtifact;
   nodes: GraphTraceNode[];
   tool_calls: GraphToolCall[];
@@ -26,6 +29,7 @@ const State = Annotation.Root({
   packet: Annotation<PlanningPacket>(),
   training_architecture: Annotation<TrainingArchitecture>(),
   fitness_strategy: Annotation<FitnessStrategyArtifact>(),
+  draft_artifact: Annotation<DraftTwoWeekPlanArtifact>(),
   artifact: Annotation<TwoWeekPlanArtifact>(),
   nodes: Annotation<GraphTraceNode[]>({
     reducer: (left, right) => [...left, ...right],
@@ -46,7 +50,7 @@ async function generatePlan(state: TwoWeekPlanState) {
     committed_week_start: isoDate(start),
     draft_week_start: isoDate(addDays(start, 7)),
   });
-  const planAI = await runStructuredJSON<TwoWeekPlanArtifact>({
+  const planAI = await runStructuredJSON<DraftTwoWeekPlanArtifact>({
     toolName: "compile_two_week_plan",
     graphNodeName: "generate_plan",
     system: [
@@ -75,14 +79,14 @@ async function generatePlan(state: TwoWeekPlanState) {
       approvedArchetypeCount: plannerInput.approved_archetypes.length,
       weeklyBudget: architecture.weekly_budget,
     },
-    schema: twoWeekPlanSchema,
+    schema: draftTwoWeekPlanSchema,
     knowledgeRefs: architecture.source_knowledge_refs,
     testOutput: () => deterministicTestPlan(packet, architecture, state.fitness_strategy),
   });
-  const artifact = validatePlanArtifact(planAI.data, plannerInput, isoDate(start));
+  const draft = validateDraftPlanArtifact(planAI.data, plannerInput, isoDate(start));
 
   return {
-    artifact,
+    draft_artifact: draft,
     nodes: [{
       node_name: "compile_two_week_plan",
       input_summary: {
@@ -91,8 +95,8 @@ async function generatePlan(state: TwoWeekPlanState) {
         approvedArchetypeCount: plannerInput.approved_archetypes.length,
       },
       output: {
-        weekCount: artifact.rhythms.length,
-        workoutCount: artifact.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
+        weekCount: draft.rhythms.length,
+        workoutCount: draft.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
       },
       validation: { valid: true },
       status: "succeeded",
@@ -101,10 +105,76 @@ async function generatePlan(state: TwoWeekPlanState) {
   };
 }
 
+async function enrichPrescriptions(state: TwoWeekPlanState) {
+  const draft = state.draft_artifact;
+  if (!draft) throw new Error("Two-Week Plan graph reached enrichment without a draft artifact.");
+
+  const packet = state.packet;
+  const architecture = state.training_architecture;
+  const start = parseDate(packet.planning_constraints.start_date);
+  const plannerInput = buildPlannerInputContract(packet, architecture, state.fitness_strategy, {
+    visible_horizon_weeks: packet.generation_policy.visible_horizon_weeks,
+    committed_week_start: isoDate(start),
+    draft_week_start: isoDate(addDays(start, 7)),
+  });
+  const prescriptionAI = await runStructuredJSON<TwoWeekPlanArtifact>({
+    toolName: "enrich_workout_prescriptions",
+    graphNodeName: "enrich_prescriptions",
+    system: [
+      "You are HAYF's workout prescription detailer.",
+      "Enrich the provided two-week plan with structured workout-card prescription JSON.",
+      "You may improve workout titles and prescription details, but you must not change dates, sequence order, activity type, duration, intensity, purpose, fueling, week count, or workout count.",
+      "Use the validated Training Architecture, approved archetypes, equipment access, injuries, avoidances, planner constraints, and same-week neighboring workouts.",
+      "Respect interference rules. Do not prescribe heavy lower-body strength immediately after long or hard cycling/running sessions.",
+      "Strength workouts require exercises with sets, reps, equipment or machines, coaching cues, and at least one alternative per exercise.",
+      "Cycling and running interval workouts require interval blocks. Long or endurance workouts require steady distance/time/zone or pace guidance.",
+      "Return strict JSON only.",
+    ].join(" "),
+    input: {
+      draft_plan: draft,
+      prescription_context: prescriptionContext(packet, architecture, plannerInput),
+      output_rules: {
+        prescription_schema_version: 1,
+        immutable_workout_fields: ["scheduledDate", "sequenceOrder", "activityType", "durationMinutes", "intensityLabel", "purpose", "fuelingSummary"],
+        title_policy: "Use descriptive human-facing titles. Avoid rigid labels like Full Body A unless the user authored or strategy requires them.",
+      },
+    },
+    inputSummary: {
+      weekCount: draft.rhythms.length,
+      workoutCount: draft.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
+      interferenceRuleCount: architecture.interference_rules.length,
+      equipmentAccess: packet.planning_constraints.equipment_access,
+    },
+    schema: enrichedTwoWeekPlanSchema,
+    knowledgeRefs: architecture.source_knowledge_refs,
+    testOutput: () => deterministicEnrichedPlan(draft, packet, architecture),
+  });
+
+  const artifact = validateEnrichedPlanArtifact(prescriptionAI.data, draft, plannerInput, isoDate(start), architecture);
+  return {
+    artifact,
+    nodes: [{
+      node_name: "enrich_prescriptions",
+      input_summary: {
+        weekCount: draft.rhythms.length,
+        workoutCount: draft.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
+      },
+      output: {
+        enrichedWorkoutCount: artifact.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
+      },
+      validation: { valid: true },
+      status: "succeeded",
+    } satisfies GraphTraceNode],
+    tool_calls: [prescriptionAI.toolCall],
+  };
+}
+
 export const twoWeekPlanGraph = new StateGraph(State)
   .addNode("generate_plan", generatePlan)
+  .addNode("enrich_prescriptions", enrichPrescriptions)
   .addEdge(START, "generate_plan")
-  .addEdge("generate_plan", END)
+  .addEdge("generate_plan", "enrich_prescriptions")
+  .addEdge("enrich_prescriptions", END)
   .compile();
 
 export async function invokeTwoWeekPlanGraph(
@@ -179,6 +249,130 @@ const workoutSchema = {
   },
 };
 
+const richPrescriptionStepGroupSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "description", "durationMinutes", "steps"],
+  properties: {
+    title: { type: "string" },
+    description: { type: "string" },
+    durationMinutes: { type: ["number", "null"] },
+    steps: { type: "array", minItems: 1, items: { type: "string" } },
+  },
+};
+
+const richPrescriptionBlockSchema = {
+  anyOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "title", "description", "repeats", "workDuration", "recoveryDuration", "target", "notes"],
+      properties: {
+        kind: { type: "string", enum: ["interval"] },
+        title: { type: "string" },
+        description: { type: "string" },
+        repeats: { type: "number" },
+        workDuration: { type: "string" },
+        recoveryDuration: { type: "string" },
+        target: { type: "string" },
+        notes: { type: "string" },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "title", "description", "durationMinutes", "distanceKilometers", "elevationMeters", "target", "terrainNotes"],
+      properties: {
+        kind: { type: "string", enum: ["steady"] },
+        title: { type: "string" },
+        description: { type: "string" },
+        durationMinutes: { type: ["number", "null"] },
+        distanceKilometers: { type: ["number", "null"] },
+        elevationMeters: { type: ["number", "null"] },
+        target: { type: "string" },
+        terrainNotes: { type: ["string", "null"] },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "title", "description", "exerciseName", "machineOrEquipment", "sets", "reps", "restSeconds", "effortTarget", "coachingCue", "alternatives"],
+      properties: {
+        kind: { type: "string", enum: ["strengthExercise"] },
+        title: { type: "string" },
+        description: { type: "string" },
+        exerciseName: { type: "string" },
+        machineOrEquipment: { type: "string" },
+        sets: { type: "number" },
+        reps: { type: "string" },
+        restSeconds: { type: "number" },
+        effortTarget: { type: "string" },
+        coachingCue: { type: "string" },
+        alternatives: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["exerciseName", "equipment", "notes"],
+            properties: {
+              exerciseName: { type: "string" },
+              equipment: { type: "string" },
+              notes: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "title", "description", "durationMinutes", "movementFocus", "steps"],
+      properties: {
+        kind: { type: "string", enum: ["mobilityRecovery"] },
+        title: { type: "string" },
+        description: { type: "string" },
+        durationMinutes: { type: "number" },
+        movementFocus: { type: "string" },
+        steps: { type: "array", minItems: 1, items: { type: "string" } },
+      },
+    },
+  ],
+};
+
+const richPrescriptionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "summary", "warmup", "main", "cooldown", "successCriteria", "equipment", "constraintsApplied"],
+  properties: {
+    schemaVersion: { type: "number", enum: [1] },
+    summary: { type: "string" },
+    warmup: richPrescriptionStepGroupSchema,
+    main: {
+      type: "object",
+      additionalProperties: false,
+      required: ["title", "description", "blocks"],
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        blocks: { type: "array", minItems: 1, items: richPrescriptionBlockSchema },
+      },
+    },
+    cooldown: richPrescriptionStepGroupSchema,
+    successCriteria: { type: "string" },
+    equipment: { type: "array", items: { type: "string" } },
+    constraintsApplied: { type: "array", items: { type: "string" } },
+  },
+};
+
+const enrichedWorkoutSchema = {
+  ...workoutSchema,
+  properties: {
+    ...workoutSchema.properties,
+    prescription: richPrescriptionSchema,
+  },
+};
+
 const rhythmSchema = {
   type: "object",
   additionalProperties: false,
@@ -213,7 +407,15 @@ const rhythmSchema = {
   },
 };
 
-const twoWeekPlanSchema = {
+const enrichedRhythmSchema = {
+  ...rhythmSchema,
+  properties: {
+    ...rhythmSchema.properties,
+    workouts: { type: "array", minItems: 1, items: enrichedWorkoutSchema },
+  },
+};
+
+const draftTwoWeekPlanSchema = {
   type: "object",
   additionalProperties: false,
   required: ["block", "phases", "rhythms"],
@@ -261,11 +463,24 @@ const twoWeekPlanSchema = {
   },
 };
 
-function validatePlanArtifact(
-  artifact: TwoWeekPlanArtifact,
+const enrichedTwoWeekPlanSchema = {
+  ...draftTwoWeekPlanSchema,
+  properties: {
+    ...draftTwoWeekPlanSchema.properties,
+    rhythms: {
+      type: "array",
+      minItems: 2,
+      maxItems: 2,
+      items: enrichedRhythmSchema,
+    },
+  },
+};
+
+function validateDraftPlanArtifact(
+  artifact: DraftTwoWeekPlanArtifact,
   plannerInput: PlannerInputContract,
   expectedStartDate: string,
-): TwoWeekPlanArtifact {
+): DraftTwoWeekPlanArtifact {
   if (artifact.rhythms.length !== 2) {
     throw new Error(`Two-week plan compiler returned ${artifact.rhythms.length} rhythms instead of 2.`);
   }
@@ -292,18 +507,29 @@ function validatePlanArtifact(
 }
 
 function resolveWorkoutModality(
-  workout: TwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number] | TwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
   plannerInput: PlannerInputContract,
 ) {
   const allowed = new Set(plannerInput.allowed_modalities.map(normalizeModality));
+  const prescription = workout.prescription as Record<string, unknown> | undefined;
+  const main = prescription?.main;
+  const mainCandidates = Array.isArray(main)
+    ? main
+    : main && typeof main === "object"
+      ? [
+        (main as Record<string, unknown>).title,
+        (main as Record<string, unknown>).description,
+        ...(((main as Record<string, unknown>).blocks as unknown[] | undefined) ?? []).map((block) => JSON.stringify(block)),
+      ]
+      : [];
   const candidates = [
     workout.activityType,
     workout.title,
     workout.purpose,
-    workout.prescription?.warmup,
-    workout.prescription?.cooldown,
-    workout.prescription?.successCriteria,
-    ...(Array.isArray(workout.prescription?.main) ? workout.prescription.main : []),
+    typeof prescription?.warmup === "string" ? prescription.warmup : JSON.stringify(prescription?.warmup ?? ""),
+    typeof prescription?.cooldown === "string" ? prescription.cooldown : JSON.stringify(prescription?.cooldown ?? ""),
+    prescription?.successCriteria,
+    ...mainCandidates,
   ];
 
   for (const candidate of candidates) {
@@ -330,6 +556,148 @@ function resolveWorkoutModality(
   return null;
 }
 
+function validateEnrichedPlanArtifact(
+  artifact: TwoWeekPlanArtifact,
+  draft: DraftTwoWeekPlanArtifact,
+  plannerInput: PlannerInputContract,
+  expectedStartDate: string,
+  architecture: TrainingArchitecture,
+): TwoWeekPlanArtifact {
+  validateDraftPlanArtifact(artifact as unknown as DraftTwoWeekPlanArtifact, plannerInput, expectedStartDate);
+  if (artifact.rhythms.length !== draft.rhythms.length) {
+    throw new Error("Prescription enrichment changed the number of weeks.");
+  }
+  const disallowedEquipment = new Set(plannerInput.constraints.avoidances.map(normalizeLoose).filter(Boolean));
+  for (const [rhythmIndex, rhythm] of artifact.rhythms.entries()) {
+    const draftRhythm = draft.rhythms[rhythmIndex];
+    if (!draftRhythm || rhythm.workouts.length !== draftRhythm.workouts.length) {
+      throw new Error(`Prescription enrichment changed workout count for ${rhythm.weekStartDate}.`);
+    }
+    for (const [workoutIndex, workout] of rhythm.workouts.entries()) {
+      const draftWorkout = draftRhythm.workouts[workoutIndex];
+      restoreImmutableWorkoutFields(workout, draftWorkout);
+      validateRichPrescription(workout.prescription, workout, disallowedEquipment);
+      validateInterferencePrescription(workout, rhythm.workouts, architecture);
+    }
+  }
+  return artifact;
+}
+
+function restoreImmutableWorkoutFields(
+  workout: TwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  draftWorkout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+) {
+  const fields: Array<keyof typeof draftWorkout> = [
+    "scheduledDate",
+    "sequenceOrder",
+    "activityType",
+    "durationMinutes",
+    "intensityLabel",
+    "purpose",
+    "fuelingSummary",
+  ];
+  for (const field of fields) {
+    (workout as Record<string, unknown>)[field] = draftWorkout[field];
+  }
+}
+
+function validateRichPrescription(
+  prescription: RichWorkoutPrescription,
+  workout: TwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  disallowedEquipment: Set<string>,
+) {
+  if (prescription.schemaVersion !== 1) throw new Error(`Prescription for ${workout.title} has invalid schemaVersion.`);
+  if (!nonEmpty(prescription.summary) || !nonEmpty(prescription.successCriteria)) {
+    throw new Error(`Prescription for ${workout.title} is missing summary or success criteria.`);
+  }
+  validateStepGroup(prescription.warmup, workout.title, "warmup");
+  validateStepGroup(prescription.cooldown, workout.title, "cooldown");
+  if (!nonEmpty(prescription.main?.title) || !nonEmpty(prescription.main?.description) || !prescription.main.blocks.length) {
+    throw new Error(`Prescription for ${workout.title} is missing main blocks.`);
+  }
+  const normalizedEquipment = [
+    ...prescription.equipment,
+    ...prescription.main.blocks.flatMap((block) =>
+      block.kind === "strengthExercise"
+        ? [block.machineOrEquipment, ...block.alternatives.map((alternative) => alternative.equipment)]
+        : []
+    ),
+  ].map(normalizeLoose);
+  for (const avoided of disallowedEquipment) {
+    if (normalizedEquipment.some((equipment) => equipment.includes(avoided) || avoided.includes(equipment))) {
+      throw new Error(`Prescription for ${workout.title} used avoided equipment or context: ${avoided}.`);
+    }
+  }
+
+  const modality = workoutModality(workout);
+  const titleText = normalizeLoose(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`);
+  const hasIntervalBlock = prescription.main.blocks.some((block) => block.kind === "interval");
+  const hasSteadyBlock = prescription.main.blocks.some((block) => block.kind === "steady");
+  if (modality === "strength") {
+    const strengthBlocks = prescription.main.blocks.filter((block) => block.kind === "strengthExercise");
+    if (strengthBlocks.length === 0) throw new Error(`Strength prescription for ${workout.title} has no exercises.`);
+    for (const block of strengthBlocks) {
+      if (block.sets < 1 || !nonEmpty(block.reps) || block.restSeconds < 0 || block.alternatives.length === 0) {
+        throw new Error(`Strength prescription for ${workout.title} has an incomplete exercise block.`);
+      }
+    }
+  } else if ((modality === "cycling" || modality === "running") && /interval|vo2/.test(titleText)) {
+    if (!hasIntervalBlock) {
+      throw new Error(`Interval prescription for ${workout.title} has no interval block.`);
+    }
+  } else if ((modality === "cycling" || modality === "running") && /threshold|tempo/.test(titleText)) {
+    if (!hasIntervalBlock && !hasSteadyBlock) {
+      throw new Error(`Tempo prescription for ${workout.title} has no interval or steady block.`);
+    }
+  } else if (modality === "cycling" || modality === "running") {
+    if (!hasSteadyBlock) {
+      throw new Error(`Endurance prescription for ${workout.title} has no steady block.`);
+    }
+  }
+}
+
+function validateStepGroup(group: RichWorkoutPrescription["warmup"], workoutTitle: string, label: string) {
+  if (!nonEmpty(group.title) || !nonEmpty(group.description) || group.steps.length === 0) {
+    throw new Error(`Prescription for ${workoutTitle} is missing ${label} detail.`);
+  }
+}
+
+function validateInterferencePrescription(
+  workout: TwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  weekWorkouts: TwoWeekPlanArtifact["rhythms"][number]["workouts"],
+  architecture: TrainingArchitecture,
+) {
+  const modality = workoutModality(workout);
+  if (modality !== "strength") return;
+  const prior = weekWorkouts.find((candidate) => candidate.scheduledDate < workout.scheduledDate && daysBetween(candidate.scheduledDate, workout.scheduledDate) <= 1);
+  if (!prior || !isLongOrHardEndurance(prior)) return;
+  const prescriptionText = normalizeLoose(JSON.stringify(workout.prescription));
+  if (/\bheavy\b|\bmax\b|\bnear failure\b|\bfailure\b|\b1rm\b/.test(prescriptionText) && /\bleg\b|\bsquat\b|\blunge\b|\bpress\b|\bdeadlift\b/.test(prescriptionText)) {
+    throw new Error(`Strength prescription for ${workout.title} violates interference rules after ${prior.title}.`);
+  }
+  if (architecture.interference_rules.some((rule) => /heavy lower-body|heavy lower body/i.test(rule))) {
+    workout.prescription.constraintsApplied = uniqueStrings([
+      ...workout.prescription.constraintsApplied,
+      `Adjusted lower-body loading because ${prior.title} is nearby.`,
+    ]);
+  }
+}
+
+function isLongOrHardEndurance(workout: TwoWeekPlanArtifact["rhythms"][number]["workouts"][number]) {
+  const modality = workoutModality(workout);
+  if (modality !== "cycling" && modality !== "running") return false;
+  const text = normalizeLoose(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`);
+  return workout.durationMinutes >= (modality === "cycling" ? 90 : 70) || /hard|interval|vo2|tempo|threshold|long/.test(text);
+}
+
+function daysBetween(left: string, right: string) {
+  return Math.round((parseDate(right).getTime() - parseDate(left).getTime()) / 86_400_000);
+}
+
+function nonEmpty(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function normalizeLoose(value: string) {
   return value
     .trim()
@@ -339,11 +707,15 @@ function normalizeLoose(value: string) {
     .trim();
 }
 
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
 function deterministicTestPlan(
   packet: PlanningPacket,
   architecture: TrainingArchitecture,
   fitnessStrategy: FitnessStrategyArtifact,
-): TwoWeekPlanArtifact {
+): DraftTwoWeekPlanArtifact {
   const start = parseDate(packet.planning_constraints.start_date);
   return {
     block: {
@@ -381,7 +753,7 @@ function weekRhythm(
   architecture: TrainingArchitecture,
   packet: PlanningPacket,
   weekIndex: number,
-): TwoWeekPlanArtifact["rhythms"][number] {
+): DraftTwoWeekPlanArtifact["rhythms"][number] {
   const sessions = Math.max(architecture.weekly_budget.minimum_viable_sessions, Math.min(architecture.weekly_budget.target_sessions, 4));
   const priority = architecture.priority_order;
   const approvedArchetypes = architecture.approved_archetypes;
@@ -423,6 +795,305 @@ function weekRhythm(
       };
     }),
   };
+}
+
+function prescriptionContext(
+  packet: PlanningPacket,
+  architecture: TrainingArchitecture,
+  plannerInput: PlannerInputContract,
+) {
+  return {
+    allowedModalities: plannerInput.allowed_modalities,
+    priorityOrder: architecture.priority_order,
+    modalityRoles: architecture.modality_roles.map((role) => ({
+      modality: role.modality,
+      role: role.role,
+      rationale: role.rationale,
+    })),
+    weeklyBudget: architecture.weekly_budget,
+    recoveryEnvelope: architecture.recovery_envelope,
+    interferenceRules: architecture.interference_rules,
+    plannerConstraints: architecture.planner_constraints,
+    approvedArchetypes: architecture.approved_archetypes.map((archetype) => ({
+      id: archetype.id,
+      modality: archetype.modality,
+      purpose: archetype.purpose,
+      targetAdaptation: archetype.target_adaptation,
+      intensityDomain: archetype.intensity_domain,
+      doseRange: archetype.dose_range,
+      progressionRule: archetype.progression_rule,
+      fatigueCost: archetype.fatigue_cost,
+      prerequisites: archetype.prerequisites,
+      incompatibilities: archetype.incompatibilities,
+      plannerConstraints: archetype.planner_constraints,
+    })),
+    constraints: {
+      sessionLength: packet.planning_constraints.session_length,
+      injuries: packet.planning_constraints.injuries,
+      equipmentAccess: packet.planning_constraints.equipment_access,
+      avoidances: packet.planning_constraints.avoidances,
+      badDayFloor: packet.planning_constraints.bad_day_floor,
+    },
+  };
+}
+
+function deterministicEnrichedPlan(
+  draft: DraftTwoWeekPlanArtifact,
+  packet: PlanningPacket,
+  architecture: TrainingArchitecture,
+): TwoWeekPlanArtifact {
+  return {
+    ...draft,
+    rhythms: draft.rhythms.map((rhythm) => ({
+      ...rhythm,
+      workouts: rhythm.workouts.map((workout) => {
+        const title = descriptiveTitle(workout, architecture);
+        return {
+          ...workout,
+          title,
+          prescription: richPrescriptionForWorkout({ ...workout, title }, rhythm.workouts, packet, architecture),
+        };
+      }),
+    })),
+  };
+}
+
+function descriptiveTitle(
+  workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  architecture: TrainingArchitecture,
+) {
+  const modality = workoutModality(workout);
+  const archetype = matchingArchetype(workout, architecture);
+  if (modality === "strength") {
+    if (archetype?.id.includes("maintenance")) return "Strength maintenance";
+    if (archetype?.id.includes("hypertrophy")) return "Strength build";
+    return "Strength support";
+  }
+  if (modality === "cycling") {
+    if (/vo2|interval/i.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`)) return "Cycling intervals";
+    if (/tempo|threshold/i.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`)) return "Controlled tempo ride";
+    if (workout.durationMinutes >= 90) return "Long endurance ride";
+    return "Easy aerobic ride";
+  }
+  if (modality === "running") {
+    if (/tempo|threshold/i.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`)) return "Controlled tempo run";
+    if (/stride|interval|vo2/i.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`)) return "Run intervals";
+    if (workout.durationMinutes >= 70) return "Long aerobic run";
+    return "Easy aerobic run";
+  }
+  return workout.title;
+}
+
+function richPrescriptionForWorkout(
+  workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  weekWorkouts: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"],
+  packet: PlanningPacket,
+  architecture: TrainingArchitecture,
+): RichWorkoutPrescription {
+  const modality = workoutModality(workout);
+  const constraintsApplied = constraintsForWorkout(workout, weekWorkouts, packet, architecture);
+  const equipmentAccess = packet.planning_constraints.equipment_access.map((value) => value.toLowerCase());
+  if (modality === "strength") {
+    const gymAccess = equipmentAccess.some((value) => /gym|machine|cable/.test(value));
+    const useLegCaution = constraintsApplied.some((value) => /lower-body/i.test(value));
+    const exercises = useLegCaution
+      ? [
+        strengthBlock("Chest-supported row", gymAccess ? "Seated row machine" : "Dumbbells", "3", "8-10", "Keep ribs down and pull elbows toward pockets.", gymAccess),
+        strengthBlock("Machine chest press", gymAccess ? "Chest press machine" : "Push-up or dumbbell press", "2", "8-10", "Stop each set with clean reps in reserve.", gymAccess),
+        strengthBlock("Pallof press", gymAccess ? "Cable stack" : "Resistance band", "2", "10 each side", "Resist rotation without holding your breath.", gymAccess),
+      ]
+      : [
+        strengthBlock("Leg press", gymAccess ? "Leg press machine" : "Goblet squat", "3", "8-10", "Control the lowering and stop short of grinding.", gymAccess),
+        strengthBlock("Seated row", gymAccess ? "Seated row machine" : "Dumbbell row", "3", "8-10", "Pull smoothly and keep shoulders away from ears.", gymAccess),
+        strengthBlock("Romanian deadlift", gymAccess ? "Dumbbells or barbell" : "Dumbbells", "2", "8", "Hinge from the hips and keep reps crisp.", gymAccess),
+      ];
+    return {
+      schemaVersion: 1,
+      summary: "A controlled strength session that supports the plan without chasing soreness.",
+      warmup: stepGroup("Warm up", "Prepare joints and movement patterns before loading.", 8, ["5 min easy bike or treadmill", "Two light ramp-up sets for the first lift"]),
+      main: {
+        title: "Strength work",
+        description: useLegCaution
+          ? "Keep lower-body loading light because hard or long endurance work is nearby."
+          : "Use repeatable full-body lifts with clean reps and bounded fatigue.",
+        blocks: exercises,
+      },
+      cooldown: stepGroup("Cool down", "Bring effort down and check recovery signals.", 5, ["Easy walk", "Light hips, calves, and upper-back mobility"]),
+      successCriteria: "Finish with 1-2 reps in reserve and no form breakdown.",
+      equipment: uniqueStrings(exercises.flatMap((block) => block.kind === "strengthExercise" ? [block.machineOrEquipment] : [])),
+      constraintsApplied,
+    };
+  }
+
+  if (modality === "cycling") {
+    const interval = /interval|vo2|tempo|threshold/i.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`);
+    return {
+      schemaVersion: 1,
+      summary: interval ? "Structured ride quality with controlled recoveries." : "Aerobic ride built around steady repeatable volume.",
+      warmup: stepGroup("Warm up", "Ease into the ride before the main work.", 10, ["Ride easy", "Add 2 short cadence pickups if legs feel good"]),
+      main: {
+        title: interval ? "Ride intervals" : "Steady ride",
+        description: interval ? "Keep the hard blocks controlled, not maximal." : "Stay mostly aerobic and smooth.",
+        blocks: [interval
+          ? intervalBlock("Main intervals", workout.durationMinutes >= 50 ? 4 : 3, "4 min", "3 min easy", "RPE 8 or strong sustainable power")
+          : steadyBlock("Aerobic block", workout.durationMinutes, estimatedDistance(workout, "cycling"), null, "Zone 2 / conversational")],
+      },
+      cooldown: stepGroup("Cool down", "Finish easy enough to protect the next session.", 8, ["Easy spin", "Note heavy legs or unusual fatigue"]),
+      successCriteria: "Complete the planned time while keeping the final 10 minutes controlled.",
+      equipment: ["Bike"],
+      constraintsApplied,
+    };
+  }
+
+  if (modality === "running") {
+    const interval = /interval|stride|vo2|tempo|threshold/i.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`);
+    return {
+      schemaVersion: 1,
+      summary: interval ? "Structured run quality with impact kept bounded." : "Easy run volume that supports consistency.",
+      warmup: stepGroup("Warm up", "Start gently before any faster work.", 10, ["Easy jog", "Dynamic calves and hips"]),
+      main: {
+        title: interval ? "Run intervals" : "Steady run",
+        description: interval ? "Keep fast work relaxed enough to preserve form." : "Stay easy enough to finish feeling in control.",
+        blocks: [interval
+          ? intervalBlock("Main intervals", workout.durationMinutes >= 45 ? 5 : 4, "2 min", "2 min easy jog", "Fast but relaxed, around 5K-10K effort")
+          : steadyBlock("Aerobic block", workout.durationMinutes, estimatedDistance(workout, "running"), null, "Easy pace / RPE 3-4")],
+      },
+      cooldown: stepGroup("Cool down", "Reduce impact and check for tendon irritation.", 5, ["Easy walk or jog", "Light calves and hips mobility"]),
+      successCriteria: "Keep pace controlled enough that gait stays smooth.",
+      equipment: ["Running shoes"],
+      constraintsApplied,
+    };
+  }
+
+  return {
+    schemaVersion: 1,
+    summary: "Low-load work to keep the week moving.",
+    warmup: stepGroup("Warm up", "Ease into movement.", 5, ["Start gently"]),
+    main: {
+      title: "Recovery movement",
+      description: "Use this to reduce stiffness without adding training load.",
+      blocks: [{
+        kind: "mobilityRecovery",
+        title: "Mobility flow",
+        description: "Move through comfortable ranges.",
+        durationMinutes: Math.max(10, workout.durationMinutes - 10),
+        movementFocus: "hips, spine, breathing",
+        steps: ["Easy mobility flow", "Nasal breathing reset"],
+      }],
+    },
+    cooldown: stepGroup("Cool down", "Finish calm.", 3, ["Easy breathing"]),
+    successCriteria: "Finish feeling better than you started.",
+    equipment: [],
+    constraintsApplied,
+  };
+}
+
+function constraintsForWorkout(
+  workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  weekWorkouts: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"],
+  packet: PlanningPacket,
+  architecture: TrainingArchitecture,
+) {
+  const constraints = [
+    ...architecture.planner_constraints.workout_generation_rules,
+    ...architecture.interference_rules,
+    packet.planning_constraints.injuries ? `Injury note: ${packet.planning_constraints.injuries}` : null,
+    packet.planning_constraints.avoidances.length ? `Avoidances: ${packet.planning_constraints.avoidances.join(", ")}` : null,
+  ].filter(Boolean) as string[];
+  const modality = workoutModality(workout);
+  if (modality === "strength") {
+    const prior = weekWorkouts.find((candidate) => candidate.scheduledDate < workout.scheduledDate && daysBetween(candidate.scheduledDate, workout.scheduledDate) <= 1);
+    if (prior && isLongOrHardDraftEndurance(prior)) {
+      constraints.push(`Adjusted lower-body loading because ${prior.title} is nearby.`);
+    }
+  }
+  return uniqueStrings(constraints).slice(0, 8);
+}
+
+function strengthBlock(
+  exerciseName: string,
+  machineOrEquipment: string,
+  sets: string,
+  reps: string,
+  coachingCue: string,
+  gymAccess: boolean,
+): RichWorkoutPrescription["main"]["blocks"][number] {
+  return {
+    kind: "strengthExercise",
+    title: exerciseName,
+    description: `Perform ${exerciseName} with clean repeatable reps.`,
+    exerciseName,
+    machineOrEquipment,
+    sets: Number(sets),
+    reps,
+    restSeconds: 90,
+    effortTarget: "RPE 7, 1-2 reps in reserve",
+    coachingCue,
+    alternatives: [{
+      exerciseName: gymAccess ? `${exerciseName} dumbbell variation` : `${exerciseName} bodyweight variation`,
+      equipment: gymAccess ? "Dumbbells" : "Bodyweight",
+      notes: "Use the alternative if the main station is busy or unavailable.",
+    }],
+  };
+}
+
+function stepGroup(title: string, description: string, durationMinutes: number, steps: string[]) {
+  return { title, description, durationMinutes, steps };
+}
+
+function intervalBlock(title: string, repeats: number, workDuration: string, recoveryDuration: string, target: string) {
+  return {
+    kind: "interval" as const,
+    title,
+    description: "Alternate focused work with easy recovery.",
+    repeats,
+    workDuration,
+    recoveryDuration,
+    target,
+    notes: "Stop the interval set early if form or cadence falls apart.",
+  };
+}
+
+function steadyBlock(title: string, durationMinutes: number, distanceKilometers: number | null, elevationMeters: number | null, target: string) {
+  return {
+    kind: "steady" as const,
+    title,
+    description: "Hold a steady aerobic effort.",
+    durationMinutes,
+    distanceKilometers,
+    elevationMeters,
+    target,
+    terrainNotes: null,
+  };
+}
+
+function estimatedDistance(workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number], modality: "cycling" | "running") {
+  const speed = modality === "cycling" ? 22 : 9;
+  return Math.max(1, Math.round((workout.durationMinutes / 60) * speed));
+}
+
+function workoutModality(workout: Pick<DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number], "activityType" | "title" | "purpose">) {
+  const activityModality = normalizeModality(workout.activityType);
+  if (activityModality && activityModality !== "general") return activityModality;
+  return normalizeModality(`${workout.title} ${workout.purpose}`);
+}
+
+function isLongOrHardDraftEndurance(workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number]) {
+  const modality = workoutModality(workout);
+  if (modality !== "cycling" && modality !== "running") return false;
+  const text = normalizeLoose(`${workout.title} ${workout.intensityLabel} ${workout.purpose}`);
+  return workout.durationMinutes >= (modality === "cycling" ? 90 : 70) || /hard|interval|vo2|tempo|threshold|long/.test(text);
+}
+
+function matchingArchetype(
+  workout: DraftTwoWeekPlanArtifact["rhythms"][number]["workouts"][number],
+  architecture: TrainingArchitecture,
+) {
+  const modality = workoutModality(workout);
+  return architecture.approved_archetypes.find((archetype) => archetype.modality === modality && (
+    normalizeLoose(workout.title).includes(normalizeLoose(titleFromArchetype(archetype))) ||
+    normalizeLoose(workout.purpose).includes(normalizeLoose(archetype.purpose))
+  ));
 }
 
 function pickArchetype(archetypes: WorkoutArchetypeRecommendation[], modality: string, index: number) {

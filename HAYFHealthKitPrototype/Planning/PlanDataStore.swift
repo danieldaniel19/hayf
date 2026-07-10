@@ -578,7 +578,7 @@ struct PlanDayConstraint: Equatable {
 
 struct PlanWorkout: Decodable, Identifiable {
     static let legacySelectColumns = "id, active_block_id, weekly_rhythm_id, weekly_plan_id, scheduled_date, sequence_order, activity_type, title, duration_minutes, intensity_label, purpose, status, source, fueling_summary"
-    static let enrichedSelectColumns = "\(legacySelectColumns), estimated_distance_kilometers, estimated_elevation_meters, planned_location_label, weather_forecast_json"
+    static let enrichedSelectColumns = "\(legacySelectColumns), prescription_json, estimated_distance_kilometers, estimated_elevation_meters, planned_location_label, weather_forecast_json"
 
     let id: UUID
     let activeBlockID: UUID?
@@ -596,6 +596,7 @@ struct PlanWorkout: Decodable, Identifiable {
     let status: PlanWorkoutStatus
     let source: String
     let fuelingSummary: String?
+    let prescription: JSONValue?
     let plannedLocationLabel: String?
     let weatherForecast: JSONValue?
 
@@ -616,6 +617,7 @@ struct PlanWorkout: Decodable, Identifiable {
         case status
         case source
         case fuelingSummary = "fueling_summary"
+        case prescription = "prescription_json"
         case plannedLocationLabel = "planned_location_label"
         case weatherForecast = "weather_forecast_json"
     }
