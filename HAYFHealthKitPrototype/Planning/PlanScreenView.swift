@@ -25,6 +25,7 @@ struct PlanScreenView: View {
     @State private var isSavingConstraint = false
     @State private var didAttemptWeeklyTargetBackfill = false
     @State private var observedCommittedWeekStart = PlanCalendar.currentCommittedWeekStart()
+    @State private var isWaitingForInitialPlanHandoff = false
 
     private let planningAIProvider = PlanningAIProvider()
 
@@ -46,7 +47,7 @@ struct PlanScreenView: View {
                     .ignoresSafeArea()
 
                 Group {
-                    if store.isLoading && !didLoad {
+                    if (store.isLoading && !didLoad) || isWaitingForInitialPlanHandoff {
                         PlanLoadingView()
                     } else if store.activeBlock != nil {
                         PlanContentView(
@@ -112,7 +113,12 @@ struct PlanScreenView: View {
         }
         .task {
             guard !didLoad else { return }
+            isWaitingForInitialPlanHandoff = presentActiveBlockOnFirstLoad
             await loadPlan(allowWeeklyTargetBackfill: true)
+            if presentActiveBlockOnFirstLoad, store.activeBlock == nil {
+                await waitForInitialPlanHandoff()
+            }
+            isWaitingForInitialPlanHandoff = false
             presentInitialBlockDetailIfNeeded()
         }
         .onAppear {
@@ -235,6 +241,22 @@ struct PlanScreenView: View {
 
         didPresentInitialBlockDetail = true
         onDidPresentActiveBlockOnFirstLoad()
+    }
+
+    private func waitForInitialPlanHandoff() async {
+        let deadline = Date().addingTimeInterval(12)
+        while store.activeBlock == nil, Date() < deadline {
+            do {
+                try await Task.sleep(nanoseconds: 750_000_000)
+            } catch {
+                return
+            }
+            await store.loadVisiblePlan()
+        }
+
+        if store.activeBlock != nil {
+            await loadPlan(allowWeeklyTargetBackfill: true)
+        }
     }
 
     private func loadPlan(
