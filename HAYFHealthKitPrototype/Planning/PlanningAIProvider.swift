@@ -113,7 +113,7 @@ struct PlanningAIProvider {
         deviceTimezone: String = TimeZone.current.identifier,
         acceptedAt: Date = Date()
     ) async throws {
-        if await preparedStrategyIsReady(preparedStrategyID) {
+        if await preparedStrategyIsActive(preparedStrategyID) {
             return
         }
 
@@ -150,22 +150,6 @@ struct PlanningAIProvider {
         }
     }
 
-    private func preparedStrategyIsReady(_ preparedStrategyID: UUID) async -> Bool {
-        guard await preparedStrategyIsActive(preparedStrategyID) else { return false }
-
-        do {
-            let rows: [PlanningWeeklyPlanStatusRow] = try await supabase
-                .from("weekly_plans")
-                .select("id, status")
-                .eq("fitness_strategy_id", value: preparedStrategyID.uuidString.lowercased())
-                .execute()
-                .value
-            return rows.contains { $0.status == "committed" || $0.status == "draft" }
-        } catch {
-            return false
-        }
-    }
-
     private func waitForPreparedStrategyActivation(
         _ preparedStrategyID: UUID,
         startedAt: Date
@@ -173,7 +157,7 @@ struct PlanningAIProvider {
         let deadline = Date().addingTimeInterval(360)
         while Date() < deadline {
             try Task.checkCancellation()
-            if await preparedStrategyIsReady(preparedStrategyID) {
+            if await preparedStrategyIsActive(preparedStrategyID) {
                 return
             }
             if let run = await latestInitialPlanRun(for: preparedStrategyID, startedAt: startedAt),
@@ -752,11 +736,6 @@ struct PlanningGraphRunStatusOutput: Decodable {
 }
 
 private struct PlanningStrategyStatusRow: Decodable {
-    let id: UUID
-    let status: String
-}
-
-private struct PlanningWeeklyPlanStatusRow: Decodable {
     let id: UUID
     let status: String
 }
