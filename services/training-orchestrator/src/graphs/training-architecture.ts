@@ -71,6 +71,8 @@ type ArchitectSynthesisDecision = {
       id: string;
       name: string;
       objective: string;
+      start_week: number;
+      end_week: number;
     }>;
   };
   progression_rules: string[];
@@ -274,6 +276,28 @@ async function architectSynthesis(state: TrainingArchitectureState) {
     0,
     frame.weekly_budget_range.hard_day_cap,
   );
+  const reentry = reentryPolicyFor(packet);
+  const committedWeekSessions = reentry.active ? minimumSessions : targetSessions;
+  const draftWeekSessions = reentry.active ? Math.min(targetSessions, minimumSessions + 1) : targetSessions;
+  const reentryHardSessions = reentry.stage === "extended_gap" || reentry.stage === "long_layoff"
+    ? 0
+    : reentry.active ? Math.min(1, hardSessions) : hardSessions;
+  const reentrySpacingRules = reentry.active
+    ? [
+      "The committed week is a re-entry week: keep every session easy to moderate and leave recovery space between sessions.",
+      "Do not use high-fatigue, VO2max, threshold, sprint, or maximal-strength archetypes during the committed re-entry week.",
+    ]
+    : [];
+  const modalityRoles = frame.selected_modalities.map((modality) => {
+    const roleDecision = roleByModality.get(modality);
+    const consultation = consultations.find((candidate) => candidate.modality === modality);
+    return {
+      modality,
+      role: roleDecision?.role ?? consultation?.recommended_role ?? roleHypothesis(modality, frame.selected_modalities.indexOf(modality), packet),
+      rationale: roleDecision?.rationale || consultation?.rationale || `${titleCase(modality)} remains assigned by the Training Architect.`,
+      knowledge_refs: consultation?.knowledge_refs ?? frame.knowledge_refs,
+    };
+  });
   const artifact: TrainingArchitecture = {
     source_ids: {
       blueprint_revision_id: packet.athlete_context.blueprint_revision_id,
@@ -284,29 +308,24 @@ async function architectSynthesis(state: TrainingArchitectureState) {
       goal_kind: packet.goal_context.goal_kind,
       success_definition: packet.goal_context.success_definition,
     },
-    modality_roles: frame.selected_modalities.map((modality) => {
-      const roleDecision = roleByModality.get(modality);
-      const consultation = consultations.find((candidate) => candidate.modality === modality);
-      return {
-        modality,
-        role: roleDecision?.role ?? consultation?.recommended_role ?? roleHypothesis(modality, frame.selected_modalities.indexOf(modality), packet),
-        rationale: roleDecision?.rationale || consultation?.rationale || `${titleCase(modality)} remains assigned by the Training Architect.`,
-        knowledge_refs: consultation?.knowledge_refs ?? frame.knowledge_refs,
-      };
-    }),
+    modality_roles: modalityRoles,
+    modality_dose: modalityDoseFor(modalityRoles, finalPriorityOrder, minimumSessions, targetSessions),
     priority_order: finalPriorityOrder,
     weekly_budget: {
       target_sessions: targetSessions,
       minimum_viable_sessions: minimumSessions,
-      hard_sessions: hardSessions,
-      recovery_sessions: Math.max(1, targetSessions - hardSessions),
+      hard_sessions: reentryHardSessions,
+      recovery_sessions: Math.max(1, targetSessions - reentryHardSessions),
+      committed_week_sessions: committedWeekSessions,
+      draft_week_sessions: draftWeekSessions,
     },
+    reentry,
     recovery_envelope: {
-      max_hard_days_per_week: hardSessions,
-      spacing_rules: nonEmptyStrings(synthesis.decision.recovery_envelope.spacing_rules, [
+      max_hard_days_per_week: reentryHardSessions,
+      spacing_rules: uniqueStrings([...nonEmptyStrings(synthesis.decision.recovery_envelope.spacing_rules, [
         "Separate hard endurance and hard lower-body strength by at least one easier day when possible.",
         "If recovery evidence is missing or worsening, use the minimum viable week before adding intensity.",
-      ]),
+      ]), ...reentrySpacingRules]),
       bad_day_floor: synthesis.decision.recovery_envelope.bad_day_floor ?? packet.planning_constraints.bad_day_floor,
     },
     minimum_effective_dose_rules: nonEmptyStrings(synthesis.decision.minimum_effective_dose_rules, [
@@ -321,11 +340,11 @@ async function architectSynthesis(state: TrainingArchitectureState) {
     deferred_specialist_recommendations: filterResult.deferred,
     rejected_specialist_recommendations: filterResult.rejected,
     phase_logic: normalizePhaseLogic(synthesis.decision.phase_logic, packet),
-    progression_rules: nonEmptyStrings(synthesis.decision.progression_rules, [
+    progression_rules: uniqueStrings([...nonEmptyStrings(synthesis.decision.progression_rules, [
       "Progress only when the committed week is mostly completed and recovery caveats are not worsening.",
       "Prefer a small dose increase over adding a new modality when adherence is uncertain.",
       "Escalate intensity only through approved archetypes.",
-    ]),
+    ]), ...(reentry.active ? ["Exit re-entry only after the committed minimum week is completed without worsening recovery or pain signals."] : [])]),
     interference_rules: uniqueStrings(nonEmptyStrings(
       synthesis.decision.interference_rules,
       consultations.flatMap((consultation) => consultation.interference_rules),
@@ -355,14 +374,17 @@ async function architectSynthesis(state: TrainingArchitectureState) {
       })),
     ]),
     planner_constraints: {
-      weekly_plan_rules: nonEmptyStrings(synthesis.decision.planner_constraints.weekly_plan_rules, [
+      weekly_plan_rules: uniqueStrings([...nonEmptyStrings(synthesis.decision.planner_constraints.weekly_plan_rules, [
         "Week 1 is committed; week 2 is draft and must preserve user-authored constraints.",
         "Use the final priority order and role assignments from the Training Architecture.",
-      ]),
-      workout_generation_rules: nonEmptyStrings(synthesis.decision.planner_constraints.workout_generation_rules, [
+      ]), ...(reentry.active ? [
+        `Week 1 is a re-entry block after ${reentry.gap_days ?? "an extended"} days without a tracked workout.`,
+        `Generate ${committedWeekSessions} committed-week sessions and at most ${draftWeekSessions} draft-week sessions.`,
+      ] : [])]),
+      workout_generation_rules: uniqueStrings([...nonEmptyStrings(synthesis.decision.planner_constraints.workout_generation_rules, [
         "Do not introduce off-menu modalities.",
         "Do not reopen goal priority, modality role, or tradeoff decisions.",
-      ]),
+      ]), ...(reentry.active ? ["Use only low- or moderate-fatigue archetypes during re-entry; do not prescribe intervals, threshold, sprints, or maximal work."] : [])]),
       target_generation_rules: nonEmptyStrings(synthesis.decision.planner_constraints.target_generation_rules, [
         "Targets must be measurable from actual completion, body entries, performance observations, or approved plan structure.",
         "Do not mark completion-based targets done from planned workouts alone.",
@@ -747,14 +769,17 @@ const architectSynthesisDecisionSchema = {
         requires_phases: { type: "boolean" },
         phases: {
           type: "array",
+          maxItems: 3,
           items: {
             type: "object",
             additionalProperties: false,
-            required: ["id", "name", "objective"],
+            required: ["id", "name", "objective", "start_week", "end_week"],
             properties: {
               id: { type: "string" },
-              name: { type: "string" },
-              objective: { type: "string" },
+              name: { type: "string", maxLength: 42 },
+              objective: { type: "string", maxLength: 80 },
+              start_week: { type: "number" },
+              end_week: { type: "number" },
             },
           },
         },
@@ -888,6 +913,8 @@ async function synthesizeArchitecture(
       "Only approve archetype ids proposed by specialists.",
       "Use deferred_recommendations for relevant specialist proposals that should wait for a later phase or stronger recovery evidence.",
       "Use rejected_recommendations only for proposals that should not influence this architecture.",
+      "Follow output_requirements.phase_policy exactly: use its phase count and week ranges, and keep every phase objective to one short sentence of at most 80 characters.",
+      "Never use em dashes, en dashes, ellipses, or navigation instructions in user-facing phase names or objectives.",
     ].join(" "),
     input: {
       athlete_context: packet.athlete_context,
@@ -906,6 +933,7 @@ async function synthesizeArchitecture(
         approved_means: "May be used by the first two-week planner.",
         deferred_means: "Relevant but withheld from the first two-week planner; include a phase_hint when possible.",
         rejected_means: "Not coherent for this athlete, evidence, or selected modalities.",
+        phase_policy: phasePolicyFor(packet),
         no_dated_workouts: true,
       },
     },
@@ -1129,16 +1157,7 @@ function deterministicSynthesisDecision(
       archetype_id: rejection.archetype_id ?? null,
       reason: rejection.reason,
     })),
-    phase_logic: packet.goal_context.goal_kind !== "consistency"
-      ? {
-        requires_phases: true,
-        phases: [
-          { id: "base", name: "Base", objective: "Make the weekly structure reliable." },
-          { id: "build", name: "Build", objective: "Increase goal-specific dose without breaking recovery." },
-          { id: "review", name: "Review", objective: "Confirm progress and decide the next move." },
-        ],
-      }
-      : { requires_phases: false, phases: [] },
+    phase_logic: deterministicPhaseLogic(packet),
     progression_rules: [
       "Progress only when the committed week is mostly completed and recovery caveats are not worsening.",
       "Prefer a small dose increase over adding a new modality when adherence is uncertain.",
@@ -1350,6 +1369,8 @@ function filterApprovedArchetypes(
   const rejected: RejectedRecommendation[] = [];
   const lowBudget = frame.weekly_budget_range.target_sessions <= 3;
   const missingEvidence = packet.approved_evidence_summary.confidence === "missing";
+  const reentry = packet.approved_evidence_summary.continuity_state?.state === "reentry"
+    || packet.approved_evidence_summary.continuity_state?.state === "interrupted";
   const architectApprovedIDs = decision ? new Set(decision.approved_archetype_ids) : null;
   const architectDeferrals = new Map((decision?.deferred_recommendations ?? [])
     .filter((deferral) => deferral.archetype_id)
@@ -1364,14 +1385,17 @@ function filterApprovedArchetypes(
       const highFatigueSupport = proposal.fatigue_cost === "high" && consultation.recommended_role !== "primary_driver";
       const highFatigueLowBudget = proposal.fatigue_cost === "high" && lowBudget;
       const highFatigueMissingEvidence = proposal.fatigue_cost === "high" && missingEvidence;
+      const highFatigueReentry = proposal.fatigue_cost === "high" && reentry;
       const notArchitectApproved = architectApprovedIDs ? !architectApprovedIDs.has(proposal.id) : false;
       const architectDeferral = architectDeferrals.get(proposal.id);
-      if (architectDeferral || (consultation.recommended_role === "primary_driver" && (highFatigueLowBudget || highFatigueMissingEvidence))) {
+      if (architectDeferral || highFatigueReentry || (consultation.recommended_role === "primary_driver" && (highFatigueLowBudget || highFatigueMissingEvidence))) {
         deferred.push({
           modality: proposal.modality,
           archetype_id: proposal.id,
-          reason: architectDeferral?.reason ?? deferralReason(proposal, lowBudget, missingEvidence),
-          phase_hint: architectDeferral?.phase_hint ?? "build",
+          reason: architectDeferral?.reason ?? (highFatigueReentry
+            ? `${proposal.id} is deferred until the athlete completes the re-entry block.`
+            : deferralReason(proposal, lowBudget, missingEvidence)),
+          phase_hint: architectDeferral?.phase_hint ?? (highFatigueReentry ? "post_reentry" : "build"),
           knowledge_refs: proposal.knowledge_refs,
         });
         continue;
@@ -1594,15 +1618,35 @@ function conflictSummary(status: TrainingArchitecture["conflict_assessment"]["st
 }
 
 function recoveryRisksFor(packet: PlanningPacket, modalities: string[]) {
+  const continuity = packet.approved_evidence_summary.continuity_state;
   const risks = [
     modalities.includes("strength") && (modalities.includes("running") || modalities.includes("cycling"))
       ? "Lower-body strength can interfere with endurance quality if hard sessions are stacked."
       : null,
     modalities.includes("running") ? "Running adds impact cost and should be conservative when evidence is thin." : null,
     packet.approved_evidence_summary.confidence === "missing" ? "Missing evidence requires conservative dose and no fake certainty." : null,
+    continuity?.state === "reentry" || continuity?.state === "interrupted"
+      ? `Training has been interrupted for ${continuity.days_since_last_workout ?? "an unknown number of"} days; the opening week must be a re-entry dose.`
+      : null,
     packet.planning_constraints.injuries ? `Injury constraint: ${packet.planning_constraints.injuries}.` : null,
   ].filter(Boolean) as string[];
   return risks.length ? risks : ["No unusual recovery risk is visible beyond normal hard-day spacing."];
+}
+
+function reentryPolicyFor(packet: PlanningPacket): TrainingArchitecture["reentry"] {
+  const continuity = packet.approved_evidence_summary.continuity_state;
+  const stage = continuity?.reentry_stage ?? "none";
+  const active = continuity?.state === "reentry" || continuity?.state === "interrupted";
+  if (!active) {
+    return { active: false, stage: "none", gap_days: continuity?.days_since_last_workout ?? null, summary: null };
+  }
+  const gapDays = continuity.days_since_last_workout;
+  const summary = stage === "long_layoff"
+    ? `Return conservatively after a ${gapDays ?? "90+"}-day layoff; historical capacity is context, not current tolerance.`
+    : stage === "extended_gap"
+      ? `Use a two-week re-entry block after ${gapDays ?? "21+"} days without a tracked workout.`
+      : `Restore rhythm after a ${gapDays ?? "short"}-day interruption before normal progression.`;
+  return { active: true, stage, gap_days: gapDays, summary };
 }
 
 function fatigueRank(cost: WorkoutArchetypeRecommendation["fatigue_cost"]) {
@@ -1664,26 +1708,183 @@ function normalizePhaseLogic(
   value: ArchitectSynthesisDecision["phase_logic"],
   packet: PlanningPacket,
 ): TrainingArchitecture["phase_logic"] {
-  if (packet.goal_context.goal_kind === "consistency") {
-    return { requires_phases: false, phases: [] };
-  }
-  const phases = Array.isArray(value?.phases)
-    ? value.phases
-      .filter((phase) => phase.id && phase.name && phase.objective)
-      .map((phase) => ({
-        id: normalizeArchetypeID(phase.id, "phase").replace(/^phase_/, ""),
-        name: phase.name,
-        objective: phase.objective,
-      }))
-    : [];
+  const fallback = deterministicPhaseLogic(packet);
+  if (!fallback.requires_phases) return fallback;
+
+  const phases = Array.isArray(value?.phases) ? value.phases : [];
+  const rangesAreValid = value?.requires_phases === true
+    && phases.length === fallback.phases.length
+    && phases.every((phase, index) => (
+      Number.isInteger(phase.start_week)
+      && Number.isInteger(phase.end_week)
+      && phase.start_week === fallback.phases[index]?.start_week
+      && phase.end_week === fallback.phases[index]?.end_week
+    ));
+  if (!rangesAreValid) return fallback;
+
+  const normalizedIDs = phases.map((phase) => normalizeArchetypeID(phase.id, "phase").replace(/^phase_/, ""));
+  if (new Set(normalizedIDs).size !== normalizedIDs.length) return fallback;
+
   return {
     requires_phases: true,
-    phases: phases.length ? phases : [
-      { id: "base", name: "Base", objective: "Make the weekly structure reliable." },
-      { id: "build", name: "Build", objective: "Increase goal-specific dose without breaking recovery." },
-      { id: "review", name: "Review", objective: "Confirm progress and decide the next move." },
-    ],
+    phases: phases.map((phase, index) => {
+      const expected = fallback.phases[index]!;
+      return {
+        id: normalizedIDs[index] || expected.id,
+        name: compactPhaseCopy(phase.name, expected.name, 42, 6),
+        objective: compactPhaseCopy(phase.objective, expected.objective, 80, 14),
+        start_week: expected.start_week,
+        end_week: expected.end_week,
+      };
+    }),
   };
+}
+
+function deterministicPhaseLogic(packet: PlanningPacket): TrainingArchitecture["phase_logic"] {
+  const policy = phasePolicyFor(packet);
+  if (!policy.requires_phases) return { requires_phases: false, phases: [] };
+  return {
+    requires_phases: true,
+    phases: policy.phases.map((phase) => ({ ...phase })),
+  };
+}
+
+function phasePolicyFor(packet: PlanningPacket) {
+  if (packet.goal_context.goal_kind === "consistency") {
+    return {
+      requires_phases: false,
+      horizon_weeks: null,
+      expected_phase_count: 0,
+      phases: [] as TrainingArchitecture["phase_logic"]["phases"],
+    };
+  }
+
+  const rawHorizon = Number(packet.goal_context.timeframe_weeks ?? 8);
+  const horizon = Math.max(2, Number.isFinite(rawHorizon) ? Math.round(rawHorizon) : 8);
+  const reentry = reentryPolicyFor(packet).active;
+  if (horizon <= 4) {
+    const firstEnd = reentry ? Math.min(2, horizon - 1) : Math.max(1, Math.floor(horizon / 2));
+    return {
+      requires_phases: true,
+      horizon_weeks: horizon,
+      expected_phase_count: 2,
+      phases: reentry
+        ? [
+          phase("reentry", "Re-entry", "Rebuild rhythm with easy, manageable training.", 1, firstEnd),
+          phase("progress", "Progress", "Add goal-specific work while keeping the week repeatable.", firstEnd + 1, horizon),
+        ]
+        : [
+          phase("foundation", "Foundation", "Make the weekly structure reliable.", 1, firstEnd),
+          phase("progress", "Progress", "Build the goal-specific signal without crowding recovery.", firstEnd + 1, horizon),
+        ],
+    };
+  }
+
+  const openingEnd = 2;
+  const consolidationStart = horizon - 1;
+  return {
+    requires_phases: true,
+    horizon_weeks: horizon,
+    expected_phase_count: 3,
+    phases: reentry
+      ? [
+        phase("reentry", "Re-entry", "Rebuild rhythm with easy, manageable training.", 1, openingEnd),
+        phase("build", "Build", "Add focused goal work while protecting recovery.", openingEnd + 1, consolidationStart - 1),
+        phase("consolidate", "Consolidate", "Hold the gains and assess readiness for the next block.", consolidationStart, horizon),
+      ]
+      : [
+        phase("foundation", "Foundation", "Make the weekly structure reliable.", 1, openingEnd),
+        phase("build", "Build", "Increase goal-specific work without crowding recovery.", openingEnd + 1, consolidationStart - 1),
+        phase("consolidate", "Consolidate", "Hold the gains and assess readiness for the next block.", consolidationStart, horizon),
+      ],
+  };
+}
+
+function phase(id: string, name: string, objective: string, startWeek: number, endWeek: number) {
+  return { id, name, objective, start_week: startWeek, end_week: endWeek };
+}
+
+function compactPhaseCopy(value: unknown, fallback: string, maxCharacters: number, maxWords: number) {
+  if (typeof value !== "string") return fallback;
+  const candidate = value.trim().replace(/\s+/g, " ");
+  const words = candidate.split(/\s+/).filter(Boolean);
+  const sentenceCount = candidate.match(/[^.!?]+[.!?]?/g)?.filter((sentence) => sentence.trim()).length ?? 0;
+  const forbidden = /[\u2013\u2014\u2026]|\.{3}|[_]|\b(?:review|plan\s+summary)\b/i;
+  return candidate.length > 0
+    && candidate.length <= maxCharacters
+    && words.length <= maxWords
+    && sentenceCount === 1
+    && !forbidden.test(candidate)
+    ? candidate
+    : fallback;
+}
+
+function modalityDoseFor(
+  roles: TrainingArchitecture["modality_roles"],
+  priorityOrder: string[],
+  minimumSessions: number,
+  targetSessions: number,
+): TrainingArchitecture["modality_dose"] {
+  const priorityIndex = new Map(priorityOrder.map((modality, index) => [modality, index]));
+  const ordered = [...roles].sort((left, right) => (
+    (priorityIndex.get(left.modality) ?? Number.MAX_SAFE_INTEGER)
+    - (priorityIndex.get(right.modality) ?? Number.MAX_SAFE_INTEGER)
+  ));
+  const eligible = ordered.filter((item) => item.role !== "optional_filler" && item.role !== "currently_inappropriate");
+  const minimums = new Map(ordered.map((item) => [item.modality, 0]));
+  const targets = new Map(ordered.map((item) => [item.modality, 0]));
+
+  let minimumRemaining = minimumSessions;
+  for (const item of eligible) {
+    if (minimumRemaining <= 0) break;
+    minimums.set(item.modality, 1);
+    minimumRemaining -= 1;
+  }
+  let minimumCursor = 0;
+  while (minimumRemaining > 0 && eligible.length > 0) {
+    const item = eligible[minimumCursor % eligible.length]!;
+    minimums.set(item.modality, (minimums.get(item.modality) ?? 0) + 1);
+    minimumRemaining -= 1;
+    minimumCursor += 1;
+  }
+  for (const item of ordered) targets.set(item.modality, minimums.get(item.modality) ?? 0);
+
+  let targetRemaining = Math.max(0, targetSessions - minimumSessions);
+  for (const item of eligible) {
+    if (targetRemaining <= 0) break;
+    if ((targets.get(item.modality) ?? 0) === 0) {
+      targets.set(item.modality, 1);
+      targetRemaining -= 1;
+    }
+  }
+  let targetCursor = 0;
+  while (targetRemaining > 0 && eligible.length > 0) {
+    const item = eligible[targetCursor % eligible.length]!;
+    targets.set(item.modality, (targets.get(item.modality) ?? 0) + 1);
+    targetRemaining -= 1;
+    targetCursor += 1;
+  }
+
+  return ordered.map((item) => {
+    const minimum = item.role === "optional_filler" || item.role === "currently_inappropriate"
+      ? 0
+      : minimums.get(item.modality) ?? 0;
+    const target = item.role === "optional_filler" || item.role === "currently_inappropriate"
+      ? 0
+      : targets.get(item.modality) ?? minimum;
+    const maximum = item.role === "currently_inappropriate"
+      ? 0
+      : item.role === "optional_filler"
+        ? Math.min(1, targetSessions)
+        : Math.min(targetSessions, target + 1);
+    return {
+      modality: item.modality,
+      role: item.role,
+      minimum_sessions: minimum,
+      target_sessions: target,
+      maximum_sessions: Math.max(target, maximum),
+    };
+  });
 }
 
 function normalizeConflictDecisions(

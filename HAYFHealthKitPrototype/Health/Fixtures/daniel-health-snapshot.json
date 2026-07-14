@@ -400,6 +400,7 @@
     "averageWater28DaysLiters": 1.6875
   },
   "notes": [
+    "Historical re-entry scenario captured on 2026-05-19. Relative 7/28/90-day aggregates are valid only at generatedAt; consumers must use absolute sample dates and freshness gates afterward.",
     "Mock fixture copied from Daniel's derived HealthKit feature snapshot for simulator onboarding QA.",
     "HealthKit remains the source of truth in production. HAYF computed deterministic features locally before any AI call."
   ]

@@ -1,6 +1,22 @@
 import Foundation
 import Supabase
 
+private actor PlanningRefreshCoordinator {
+    static let shared = PlanningRefreshCoordinator()
+
+    private var isRefreshing = false
+
+    func begin() -> Bool {
+        guard !isRefreshing else { return false }
+        isRefreshing = true
+        return true
+    }
+
+    func finish() {
+        isRefreshing = false
+    }
+}
+
 struct PlanningAIProvider {
     private let supabase: SupabaseClient
 
@@ -96,10 +112,15 @@ struct PlanningAIProvider {
         actualWorkouts: [HealthActualWorkoutSummary] = [],
         deviceTimezone: String = TimeZone.current.identifier,
         acceptedAt: Date = Date()
-    ) async throws -> PlanningFunctionResponse {
-        try await invoke(
+    ) async throws {
+        if await preparedStrategyIsActive(preparedStrategyID) {
+            return
+        }
+
+        let acceptanceStartedAt = Date()
+        let _: PlanningStartedPlanFunctionResponse = try await invokeTyped(
             PlanningFunctionRequest(
-                task: .acceptPreparedStrategyAndCreateInitialPlan,
+                task: .startAcceptPreparedStrategyAndCreateInitialPlan,
                 healthSnapshot: healthSnapshot,
                 actualWorkouts: actualWorkouts,
                 deviceTimezone: deviceTimezone,
@@ -107,6 +128,68 @@ struct PlanningAIProvider {
                 acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
             )
         )
+
+        try await waitForPreparedStrategyActivation(
+            preparedStrategyID,
+            startedAt: acceptanceStartedAt.addingTimeInterval(-2)
+        )
+    }
+
+    func preparedStrategyIsActive(_ preparedStrategyID: UUID) async -> Bool {
+        do {
+            let row: PlanningStrategyStatusRow = try await supabase
+                .from("fitness_strategies")
+                .select("id, status")
+                .eq("id", value: preparedStrategyID.uuidString.lowercased())
+                .single()
+                .execute()
+                .value
+            return row.status == "active"
+        } catch {
+            return false
+        }
+    }
+
+    private func waitForPreparedStrategyActivation(
+        _ preparedStrategyID: UUID,
+        startedAt: Date
+    ) async throws {
+        let deadline = Date().addingTimeInterval(360)
+        while Date() < deadline {
+            try Task.checkCancellation()
+            if await preparedStrategyIsActive(preparedStrategyID) {
+                return
+            }
+            if let run = await latestInitialPlanRun(for: preparedStrategyID, startedAt: startedAt),
+               run.status == "failed" || run.status == "cancelled" {
+                throw PlanningGraphRunError.failed(
+                    run.errorSummary ?? "Initial plan generation failed."
+                )
+            }
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+        throw PlanningGraphRunError.timedOut
+    }
+
+    private func latestInitialPlanRun(
+        for preparedStrategyID: UUID,
+        startedAt: Date
+    ) async -> PlanningInitialPlanRunRow? {
+        do {
+            let rows: [PlanningInitialPlanRunRow] = try await supabase
+                .from("ai_graph_runs")
+                .select("status, error_summary")
+                .eq("graph_name", value: "two_week_plan")
+                .eq("source_fitness_strategy_id", value: preparedStrategyID.uuidString.lowercased())
+                .gte("created_at", value: Self.isoDateTimeFormatter.string(from: startedAt))
+                .order("created_at", ascending: false)
+                .limit(1)
+                .execute()
+                .value
+            return rows.first
+        } catch {
+            return nil
+        }
     }
 
     func planningGraphRunStatus(graphRunID: UUID) async throws -> PlanningGraphRunStatusOutput {
@@ -178,13 +261,23 @@ struct PlanningAIProvider {
     }
 
     func refreshPlanWindow(windowStart: Date? = nil) async throws -> PlanningFunctionResponse {
-        try await invoke(
-            PlanningFunctionRequest(
-                task: .refreshPlanWindow,
-                deviceTimezone: TimeZone.current.identifier,
-                windowStart: windowStart.map(Self.dateOnlyFormatter.string(from:))
+        guard await PlanningRefreshCoordinator.shared.begin() else {
+            throw CancellationError()
+        }
+        do {
+            let response = try await invoke(
+                PlanningFunctionRequest(
+                    task: .refreshPlanWindow,
+                    deviceTimezone: TimeZone.current.identifier,
+                    windowStart: windowStart.map(Self.dateOnlyFormatter.string(from:))
+                )
             )
-        )
+            await PlanningRefreshCoordinator.shared.finish()
+            return response
+        } catch {
+            await PlanningRefreshCoordinator.shared.finish()
+            throw error
+        }
     }
 
     func refreshWorkoutWeatherForecasts(windowStart: Date? = nil) async throws -> PlanningFunctionResponse {
@@ -487,6 +580,7 @@ struct PlanningWorkoutInterpretationOutput: Decodable {
 
 struct PlanningWorkoutCandidate: Codable, Identifiable {
     let id: String
+    let archetypeId: String?
     let title: String
     let activityType: String
     let durationMinutes: Int
@@ -502,6 +596,7 @@ struct PlanningWorkoutCandidate: Codable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case archetypeId
         case title
         case activityType
         case durationMinutes
@@ -620,6 +715,11 @@ struct PlanningStartedStrategyOutput: Decodable {
     let blueprintRevisionID: UUID
 }
 
+private struct PlanningStartedPlanOutput: Decodable {
+    let status: String
+    let fitnessStrategyID: UUID
+}
+
 struct PlanningGraphRunStatusOutput: Decodable {
     let graphRunID: UUID
     let graphName: String
@@ -633,6 +733,21 @@ struct PlanningGraphRunStatusOutput: Decodable {
     let eventID: UUID?
     let strategy: JSONValue?
     let trainingArchitecture: JSONValue?
+}
+
+private struct PlanningStrategyStatusRow: Decodable {
+    let id: UUID
+    let status: String
+}
+
+private struct PlanningInitialPlanRunRow: Decodable {
+    let status: String
+    let errorSummary: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case errorSummary = "error_summary"
+    }
 }
 
 enum PlanningGraphRunError: LocalizedError {
@@ -704,6 +819,12 @@ private struct PlanningStartedStrategyFunctionResponse: Decodable {
     let output: PlanningStartedStrategyOutput
 }
 
+private struct PlanningStartedPlanFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: PlanningStartedPlanOutput
+}
+
 private struct PlanningGraphRunStatusFunctionResponse: Decodable {
     let task: PlanningAITask
     let model: String
@@ -754,6 +875,7 @@ enum PlanningAITask: String, Codable {
     case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
     case prepareInitialStrategyAfterBlueprint = "prepare_initial_strategy_after_blueprint"
     case startPrepareInitialStrategyAfterBlueprint = "start_prepare_initial_strategy_after_blueprint"
+    case startAcceptPreparedStrategyAndCreateInitialPlan = "start_accept_prepared_strategy_and_create_initial_plan"
     case acceptPreparedStrategyAndCreateInitialPlan = "accept_prepared_strategy_and_create_initial_plan"
     case getPlanningGraphRunStatus = "get_planning_graph_run_status"
     case syncHealthKitAndReconcile = "sync_healthkit_and_reconcile"

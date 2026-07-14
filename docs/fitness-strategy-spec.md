@@ -40,9 +40,9 @@ Plan = this is what you do next
 
 After the user accepts the Fitness Strategy, HAYF should open the first visible planning window:
 
-- current week as `committed`
-- next week as `draft`
-- first workouts already scheduled
+- Monday acceptance starts Program Week 1 as `committed`, with Program Week 2 as `draft`.
+- Later acceptance uses the partial current week as a short `launch` bridge, then includes counted Program Weeks 1 and 2 from the following Monday.
+- The primary and secondary training anchors are already scheduled; optional modalities cannot displace them.
 
 The same strategy artifact should be persisted for later review elsewhere in the app, likely from Profile, even though the final navigation home is not decided yet.
 
@@ -65,6 +65,8 @@ The same strategy artifact should be persisted for later review elsewhere in the
    - why these targets
 11. Treat the Training Architecture as the source of truth for modality roles, priority order, weekly budget, and tradeoffs.
 12. Do not let the strategy prompt independently turn a cycling-first athlete into a pure cycling plan, dilute an explicit strength/aesthetic goal, or add running volume just because weight loss is mentioned. Those decisions belong in the Training Architecture.
+13. User-facing strategy copy is a compact UI contract. It must not rely on truncation, ellipses, or clipped fixed-height cards.
+14. Em dashes, en dashes, internal identifiers, and instructions to review another section are not valid strategy copy.
 
 ## User-Facing Sections
 
@@ -88,12 +90,13 @@ Deliver the opening verdict. This is the emotional center of the screen and the 
 
 #### Length
 
-- 2 to 4 sentences
-- 45 to 90 words
+- 1 to 2 sentences
+- at most 40 words and 240 characters
+- must state the primary path, how it progresses, and what support work or recovery protects
 
 #### Example Shape
 
-> Your best route is to make the chosen training path repeatable before asking it to become more demanding. HAYF will use your history as context, but the strategy should stay pointed at the goal and constraints you selected. Progression is earned when the week is holding.
+> We’ll rebuild your cycling rhythm first, then add focused work for VO2 max and climbing. Two weekly strength sessions will protect muscle while you lean out.
 
 ### 2. `strategy_pillars`
 
@@ -125,6 +128,8 @@ Show the few rules HAYF will use to steer the strategy.
 - each pillar should be a consequence of the athlete read, not a generic fitness truism
 - keep the language general enough that historical modalities do not leak into the strategy
 - protect the user-selected training path, then use history only when it supports that path
+- titles use at most 6 words or 42 characters
+- summaries use at most 12 words or 72 characters
 
 ### 3A. `phase_outline`
 
@@ -148,6 +153,8 @@ Show the arc that supports the strategy without revealing a full long-term calen
     "id": "base",
     "name": "Base",
     "objective": "Make the weekly rhythm repeatable before adding more demanding work.",
+    "startWeek": 1,
+    "endWeek": 2,
     "targetSummary": "Hold 3 weekly exposures with recovery intact.",
     "phaseTargets": [
       {
@@ -169,6 +176,10 @@ Show the arc that supports the strategy without revealing a full long-term calen
 - required for time-bound concrete goals
 - omitted for consistency goals
 - should remain directional, not calendar-dense
+- goals of 4 weeks or less use exactly 2 phases; longer time-bound goals use exactly 3 phases
+- re-entry occupies the opening phase but never removes the later build and consolidation arc
+- every phase has explicit, contiguous `startWeek` and `endWeek` values covering the full horizon
+- objectives are one sentence with at most 14 words or 80 characters
 
 ### 3B. `operating_rhythm`
 
@@ -280,6 +291,8 @@ The first user-facing Strategy artifact should be able to serialize to:
       "id": "string",
       "name": "string",
       "objective": "string",
+      "startWeek": "number",
+      "endWeek": "number",
       "targetSummary": "string",
       "phaseTargets": [
         {

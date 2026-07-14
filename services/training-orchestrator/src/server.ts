@@ -1,3 +1,4 @@
+import "./runtime.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import {
@@ -220,6 +221,7 @@ function planningPacketFromPlanContext(context: JsonRecord, architecture: Traini
   const goal = objectAt(context, "goal") ?? {};
   const strategy = objectAt(context, "strategy") ?? {};
   const policy = objectAt(context, "planGenerationPolicy") ?? {};
+  const constraints = objectAt(context, "planningConstraints") ?? {};
   const selectedModalities = normalizedModalities([
     ...stringArrayAt(architecture, "priority_order"),
     ...stringArrayAt(policy, "allowedModalities"),
@@ -238,7 +240,9 @@ function planningPacketFromPlanContext(context: JsonRecord, architecture: Traini
       current_training_state: {},
       history_findings: [],
       goal_fit: {},
-      hidden_inputs: {},
+      hidden_inputs: {
+        planOwnerStartDate: stringAt(context, "planOwnerStartDate"),
+      },
     },
     goal_context: {
       user_goal_id: architecture.source_ids?.user_goal_id ?? stringAt(goal, "id") ?? undefined,
@@ -253,17 +257,39 @@ function planningPacketFromPlanContext(context: JsonRecord, architecture: Traini
     },
     planning_constraints: {
       feasible_modalities: selectedModalities.length ? selectedModalities : architecture.priority_order,
-      frequency: `${targetSessions} days per week`,
-      session_length: null,
-      injuries: null,
-      equipment_access: [],
-      avoidances: [],
-      bad_day_floor: architecture.recovery_envelope?.bad_day_floor ?? null,
+      available_days: Array.from(new Set([
+        ...stringArrayAt(constraints, "availableDays"),
+        ...stringArrayAt(constraints, "available_days"),
+      ])),
+      available_day_parts: Array.from(new Set([
+        ...stringArrayAt(constraints, "availableDayParts"),
+        ...stringArrayAt(constraints, "available_day_parts"),
+      ])),
+      frequency: stringAt(constraints, "frequency") ?? `${targetSessions} days per week`,
+      session_length: stringAt(constraints, "sessionLength") ?? stringAt(constraints, "session_length"),
+      injuries: stringAt(constraints, "injuries"),
+      equipment_access: Array.from(new Set([
+        ...stringArrayAt(constraints, "equipmentAccess"),
+        ...stringArrayAt(constraints, "equipment_access"),
+      ])),
+      avoidances: stringArrayAt(constraints, "avoidances"),
+      bad_day_floor: stringAt(constraints, "badDayFloor")
+        ?? stringAt(constraints, "bad_day_floor")
+        ?? architecture.recovery_envelope?.bad_day_floor
+        ?? null,
       timezone,
       start_date: startDate,
     },
     approved_evidence_summary: {
       recent_training_load: {},
+      continuity_state: {
+        state: "insufficient_history",
+        reentry_stage: "none",
+        days_since_last_workout: null,
+        last_workout_at: null,
+        historical_base: "none",
+        total_imported_workouts: 0,
+      },
       consistency: {},
       modality_mix: {},
       body_recovery_context: {},

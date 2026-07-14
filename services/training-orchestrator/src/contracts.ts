@@ -28,6 +28,8 @@ export type PlanningPacket = {
   };
   planning_constraints: {
     feasible_modalities: string[];
+    available_days: string[];
+    available_day_parts: string[];
     frequency: string | null;
     session_length: string | null;
     injuries: string | null;
@@ -39,6 +41,14 @@ export type PlanningPacket = {
   };
   approved_evidence_summary: {
     recent_training_load: JsonObject;
+    continuity_state: {
+      state: "active" | "interrupted" | "reentry" | "insufficient_history";
+      reentry_stage: "none" | "short_break" | "extended_gap" | "long_layoff";
+      days_since_last_workout: number | null;
+      last_workout_at: string | null;
+      historical_base: "none" | "limited" | "established";
+      total_imported_workouts: number;
+    };
     consistency: JsonObject;
     modality_mix: JsonObject;
     body_recovery_context: JsonObject;
@@ -59,6 +69,14 @@ export type ModalityRole =
   | "maintenance_exposure"
   | "optional_filler"
   | "currently_inappropriate";
+
+export type ModalityDose = {
+  modality: string;
+  role: ModalityRole;
+  minimum_sessions: number;
+  target_sessions: number;
+  maximum_sessions: number;
+};
 
 export type TrainingArchitectFrame = {
   goal_read: {
@@ -169,12 +187,21 @@ export type TrainingArchitecture = {
     rationale: string;
     knowledge_refs: KnowledgeSourceRef[];
   }>;
+  modality_dose: ModalityDose[];
   priority_order: string[];
   weekly_budget: {
     target_sessions: number;
     minimum_viable_sessions: number;
     hard_sessions: number;
     recovery_sessions: number;
+    committed_week_sessions?: number;
+    draft_week_sessions?: number;
+  };
+  reentry: {
+    active: boolean;
+    stage: "none" | "short_break" | "extended_gap" | "long_layoff";
+    gap_days: number | null;
+    summary: string | null;
   };
   recovery_envelope: {
     max_hard_days_per_week: number;
@@ -194,6 +221,8 @@ export type TrainingArchitecture = {
       id: string;
       name: string;
       objective: string;
+      start_week: number;
+      end_week: number;
     }>;
   };
   progression_rules: string[];
@@ -244,6 +273,8 @@ export type FitnessStrategyArtifact = {
     id: string;
     name: string;
     objective: string;
+    startWeek: number;
+    endWeek: number;
     targetSummary: string;
     targets: StrategyTarget[];
   }>;
@@ -337,11 +368,22 @@ export type WorkoutPrescriptionMainBlock =
       durationMinutes: number;
       movementFocus: string;
       steps: string[];
+    }
+  | {
+      kind: "walkRun";
+      title: string;
+      description: string;
+      repeats: number;
+      runDurationMinutes: number;
+      walkDurationMinutes: number;
+      target: string;
+      notes: string;
     };
 
 export type RichWorkoutPrescription = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   summary: string;
+  whyToday?: string;
   warmup: WorkoutPrescriptionStepGroup;
   main: {
     title: string;
@@ -383,6 +425,13 @@ export type TwoWeekPlanArtifact = {
   rhythms: Array<{
     weekStartDate: string;
     weekEndDate: string;
+    programStage: "launch" | "program";
+    programWeekNumber: number | null;
+    programStartDate: string;
+    modalityTargets: Array<{
+      modality: string;
+      sessions: number;
+    }>;
     objective: string;
     priorityOrder: string[];
     hardEasyDistribution: {
@@ -395,6 +444,7 @@ export type TwoWeekPlanArtifact = {
     workouts: Array<{
       scheduledDate: string;
       sequenceOrder: number;
+      archetypeId: string | null;
       activityType: string;
       title: string;
       durationMinutes: number;
@@ -451,6 +501,12 @@ export function assertPlanningPacket(value: unknown): asserts value is PlanningP
   }
   if (!packet.planning_constraints?.timezone || !packet.planning_constraints.start_date) {
     throw new Error("Planning packet requires timezone and start_date.");
+  }
+  if (!Array.isArray(packet.planning_constraints.available_days)) {
+    throw new Error("Planning packet requires planning_constraints.available_days.");
+  }
+  if (!Array.isArray(packet.planning_constraints.available_day_parts)) {
+    throw new Error("Planning packet requires planning_constraints.available_day_parts.");
   }
   if (/"(workoutLedger|rawHealthKitSamples|healthKitSamples|samples)"\s*:/.test(JSON.stringify(packet))) {
     throw new Error("Planning packet must not include raw HealthKit workout ledgers or samples.");

@@ -75,7 +75,7 @@ describe("training orchestrator HTTP adapter", () => {
       rhythm.workouts.every((workout: Record<string, string>) => ["cycling", "strength"].includes(workout.activityType.toLowerCase()))
     )));
     const workouts = body.plan.rhythms.flatMap((rhythm: Record<string, any>) => rhythm.workouts);
-    assert.ok(workouts.every((workout: Record<string, any>) => workout.prescription?.schemaVersion === 1));
+    assert.ok(workouts.every((workout: Record<string, any>) => workout.prescription?.schemaVersion === 2));
     assert.ok(workouts.some((workout: Record<string, any>) => (
       workout.activityType === "strength" &&
       workout.prescription.main.blocks.some((block: Record<string, any>) => block.kind === "strengthExercise" && block.alternatives.length > 0)
@@ -207,6 +207,8 @@ function basePacket(): PlanningPacket {
     },
     planning_constraints: {
       feasible_modalities: ["Cycling", "Strength"],
+      available_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+      available_day_parts: ["Morning", "Afternoon"],
       frequency: "3 days per week",
       session_length: "30-45 minutes",
       injuries: null,
@@ -218,6 +220,14 @@ function basePacket(): PlanningPacket {
     },
     approved_evidence_summary: {
       recent_training_load: { sessions28d: 9 },
+      continuity_state: {
+        state: "active",
+        reentry_stage: "none",
+        days_since_last_workout: 2,
+        last_workout_at: "2026-07-11T08:00:00Z",
+        historical_base: "established",
+        total_imported_workouts: 120,
+      },
       consistency: { activeWeeks8w: 6 },
       modality_mix: { strength: 5, cycling: 3 },
       body_recovery_context: { sleep: "unknown", bodyMassTrend: "stable" },

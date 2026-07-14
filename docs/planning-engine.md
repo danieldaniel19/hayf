@@ -100,6 +100,8 @@ Initial post-blueprint planning is split into durable architecture and plan arti
 
 - `prepare_initial_strategy_after_blueprint` / `start_prepare_initial_strategy_after_blueprint` build the Training Architecture graph and prepared Fitness Strategy.
 - `accept_prepared_strategy_and_create_initial_plan` activates the prepared strategy and runs the two-week plan graph.
+- If onboarding is accepted after Monday, the partial current week is a `launch` bridge with at most two core sessions; counted Program Weeks 1 and 2 begin the following Monday and remain available in the generated artifact.
+- The goal horizon, phase dates, and target date start from Program Week 1 rather than the launch bridge.
 - `training_architectures` is the required coaching contract for all active plan generation and replan review.
 - Initial and rolling plan generation persist `ai_graph_runs` with `graph_name = two_week_plan`.
 

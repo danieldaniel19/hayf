@@ -1174,6 +1174,15 @@ struct OnboardingFlowView: View {
                 primaryAction()
             }
 
+            if let completionErrorMessage,
+               step == .fitnessStrategy || step == .fitnessStrategyPhases {
+                Text(completionErrorMessage)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if step == .summary {
                 Button("Edit answers") {
                     step = summaryEditStep
@@ -1826,14 +1835,8 @@ struct OnboardingFlowView: View {
                 } else {
                     healthSnapshot = await planningHealthSnapshot()
                 }
-                let completedProfile = try await onboardingProfileStore.completeCurrentUserOnboarding(
-                    intent: currentIntent,
-                    draft: draft,
-                    summary: currentSummary,
-                    healthRequestState: healthRequestState
-                )
                 if let preparedStrategyID {
-                    _ = try await planningAIProvider.acceptPreparedStrategyAndCreateInitialPlan(
+                    try await acceptPreparedStrategyForOnboarding(
                         preparedStrategyID: preparedStrategyID,
                         healthSnapshot: healthSnapshot,
                         actualWorkouts: syncPayload?.actualWorkouts ?? [],
@@ -1857,7 +1860,7 @@ struct OnboardingFlowView: View {
                     }
                     preparedFitnessStrategyID = prepared.fitnessStrategyID
                     preparedPlanningGraphRunID = prepared.graphRunID
-                    _ = try await planningAIProvider.acceptPreparedStrategyAndCreateInitialPlan(
+                    try await acceptPreparedStrategyForOnboarding(
                         preparedStrategyID: prepared.fitnessStrategyID,
                         healthSnapshot: healthSnapshot,
                         actualWorkouts: syncPayload?.actualWorkouts ?? [],
@@ -1865,6 +1868,12 @@ struct OnboardingFlowView: View {
                         acceptedAt: acceptedAt
                     )
                 }
+                let completedProfile = try await onboardingProfileStore.completeCurrentUserOnboarding(
+                    intent: currentIntent,
+                    draft: draft,
+                    summary: currentSummary,
+                    healthRequestState: healthRequestState
+                )
                 await MainActor.run {
                     onboardingProfileStore.useProfile(completedProfile)
                     onComplete()
@@ -1876,6 +1885,22 @@ struct OnboardingFlowView: View {
                 }
             }
         }
+    }
+
+    private func acceptPreparedStrategyForOnboarding(
+        preparedStrategyID: UUID,
+        healthSnapshot: HealthFeatureSnapshot?,
+        actualWorkouts: [HealthActualWorkoutSummary],
+        deviceTimezone: String,
+        acceptedAt: Date
+    ) async throws {
+        try await planningAIProvider.acceptPreparedStrategyAndCreateInitialPlan(
+            preparedStrategyID: preparedStrategyID,
+            healthSnapshot: healthSnapshot,
+            actualWorkouts: actualWorkouts,
+            deviceTimezone: deviceTimezone,
+            acceptedAt: acceptedAt
+        )
     }
 
     private func acceptedBlueprintArtifact(from blueprint: AthleteBlueprintOutput) -> JSONValue {
@@ -2028,7 +2053,11 @@ struct OnboardingFlowView: View {
 
         pendingHealthSnapshot = snapshot
         healthRequestState = .connected
-        mockHealthDataMessage = "Mock Health data loaded: \(snapshot.fitnessHistory.trainingIdentity.label), \(snapshot.workoutLedger.totalWorkouts) workouts, longest cycling ride \(Int((snapshot.workoutLedger.longestCyclingDistanceKilometers ?? 0).rounded())) km."
+        let gapDays = snapshot.workoutLedger.lastWorkout.map {
+            max(0, Calendar.current.dateComponents([.day], from: $0.startDate, to: Date()).day ?? 0)
+        }
+        let continuity = gapDays.map { "last workout \($0) days ago" } ?? "last workout unknown"
+        mockHealthDataMessage = "Historical mock loaded: \(snapshot.fitnessHistory.trainingIdentity.label), \(snapshot.workoutLedger.totalWorkouts) workouts, \(continuity)."
     }
 }
 
@@ -2377,6 +2406,19 @@ private struct ConsistencyOnboardingDraft {
         return goalTimeline.title
     }
 
+    var timelineWeeks: Int? {
+        if let goalTimeline {
+            guard goalTimeline == .specificDate else { return goalTimeline.weeks }
+            let days = Calendar.current.dateComponents(
+                [.day],
+                from: Calendar.current.startOfDay(for: .now),
+                to: Calendar.current.startOfDay(for: goalDate)
+            ).day ?? 0
+            return max(1, Int(ceil(Double(max(1, days)) / 7.0)))
+        }
+        return chosenGoal?.timeline.weeks
+    }
+
     var prioritySummary: String {
         goalPriority?.summaryTitle ?? "Not set"
     }
@@ -2504,6 +2546,7 @@ private struct OnboardingAICompactContext: Codable {
     let injuryNotes: String
     let goalExperience: String
     let goalTimeline: String
+    let goalTimelineWeeks: Int?
     let goalPriority: String
     let goalDirection: String
     let challengeStyle: String
@@ -2533,6 +2576,7 @@ private struct OnboardingAICompactContext: Codable {
         injuryNotes = draft.injuryNotes.trimmed
         goalExperience = draft.experienceSummary
         goalTimeline = draft.timelineSummary
+        goalTimelineWeeks = draft.timelineWeeks
         goalPriority = draft.prioritySummary
         goalDirection = draft.directionSummary
         challengeStyle = draft.challengeSummary
@@ -2540,12 +2584,12 @@ private struct OnboardingAICompactContext: Codable {
         chosenGoal = draft.chosenGoal.map(GoalCandidatePayload.init(candidate:))
         frequency = draft.frequency?.summary ?? ""
         sessionLength = draft.sessionLength?.title ?? ""
-        availableDays = draft.availableDays.map(\.title).sorted()
-        availableDayParts = draft.availableDayParts.map(\.title).sorted()
+        availableDays = draft.availableDays.map(\.rawValue).sorted()
+        availableDayParts = draft.availableDayParts.map(\.rawValue).sorted()
         blockers = draft.blockers.map(\.title).sorted()
         blockerNote = draft.blockerNote.trimmed
         supportStyle = draft.supportSummary
-        badDayFloor = draft.floorSummary
+        badDayFloor = draft.badDayFloor?.title ?? ""
         bodyBaseline = BodyBaselinePayload(draft: draft)
         self.healthSnapshot = healthSnapshot
     }
@@ -2742,8 +2786,8 @@ private struct AthleteBlueprintAIEvidenceSummary: Codable {
         strongestMonthLabel = evidence.strongestMonth?.label
         longestWorkout = evidence.longestWorkout.map(AthleteBlueprintAILongestWorkoutPayload.init(summary:))
         hasRecentBodyTrend = evidence.hasRecentBodyTrend
-        bodyMass28DayAverageKilograms = evidence.snapshot?.body.bodyMass28DayAverageKilograms
-        bodyFat28DayAveragePercentage = evidence.snapshot?.body.bodyFat28DayAveragePercentage
+        bodyMass28DayAverageKilograms = evidence.hasRecentBodyTrend ? evidence.snapshot?.body.bodyMass28DayAverageKilograms : nil
+        bodyFat28DayAveragePercentage = evidence.hasRecentBodyTrend ? evidence.snapshot?.body.bodyFat28DayAveragePercentage : nil
         bodyMassTrend = evidence.bodyMassTrend
         bodyFatTrend = evidence.bodyFatTrend
     }
@@ -7440,10 +7484,9 @@ private enum AthleteBlueprintBuilder {
                 baseLabel = titleCase(label)
             }
 
-            let friendlyLabel = evidence.bodyMemoryArchetypePrefix.map { "\($0) \(baseLabel)" } ?? baseLabel
             let explanation = "Your history is led by \(joinedList(evidence.dominantModalities)), which makes you a \(baseLabel.lowercased())."
             return AthleteBlueprintArchetype(
-                label: friendlyLabel,
+                label: baseLabel,
                 explanation: explanation,
                 detail: AthleteBlueprintDetail(
                     id: "athlete_archetype",
@@ -7455,8 +7498,8 @@ private enum AthleteBlueprintBuilder {
                     evidence: [
                         "Dominant modalities: \(joinedList(evidence.dominantModalities)).",
                         "\(evidence.totalWorkouts) imported workouts were available for this read."
-                    ] + evidence.bodyMemoryEvidenceLines,
-                    caveat: evidence.bodyMemoryArchetypeClause == nil ? nil : "Body-change modifiers appear only when repeated measurements clear the trend threshold."
+                    ],
+                    caveat: nil
                 )
             )
         }
@@ -7502,6 +7545,63 @@ private enum AthleteBlueprintBuilder {
                     observationWindow: "Recent training evidence unavailable",
                     evidence: ["Current-state claims are withheld when recent evidence is sparse."],
                     caveat: "This protects against treating old or thin data as your current state."
+                )
+            )
+        }
+
+        if let daysSinceLastWorkout = evidence.daysSinceLastWorkout, daysSinceLastWorkout >= 90 {
+            return AthleteBlueprintCurrentState(
+                label: "Returning after a long layoff",
+                summary: "Your last tracked workout was \(daysSinceLastWorkout) days ago. Your history is useful context, but it is not your current training load.",
+                detail: AthleteBlueprintDetail(
+                    id: "current_training_state",
+                    title: "Current state",
+                    summary: "A long interruption makes this a careful return, not continuity from your old load.",
+                    body: "HAYF should begin below your historical capacity, keep intensity controlled, and earn progression from completed sessions.",
+                    confidence: "High",
+                    observationWindow: "Time since last tracked workout",
+                    evidence: [
+                        "Last tracked workout: \(daysSinceLastWorkout) days ago.",
+                        "Historical base: \(evidence.totalWorkouts) imported workouts."
+                    ],
+                    caveat: "Historical achievements describe capacity you have shown before, not readiness today."
+                )
+            )
+        }
+
+        if let daysSinceLastWorkout = evidence.daysSinceLastWorkout, daysSinceLastWorkout >= 21 {
+            return AthleteBlueprintCurrentState(
+                label: "Re-entering after a break",
+                summary: "Your last tracked workout was \(daysSinceLastWorkout) days ago. HAYF should treat the opening weeks as re-entry.",
+                detail: AthleteBlueprintDetail(
+                    id: "current_training_state",
+                    title: "Current state",
+                    summary: "You have an established historical base and a meaningful recent interruption.",
+                    body: "This is re-entry rather than a blank slate: begin with a reduced, repeatable dose and restore intensity only after the rhythm holds.",
+                    confidence: "High",
+                    observationWindow: "Time since last tracked workout",
+                    evidence: [
+                        "Last tracked workout: \(daysSinceLastWorkout) days ago.",
+                        "Historical base: \(evidence.totalWorkouts) imported workouts."
+                    ],
+                    caveat: "Old training volume should not be treated as current tolerance."
+                )
+            )
+        }
+
+        if let daysSinceLastWorkout = evidence.daysSinceLastWorkout, daysSinceLastWorkout >= 7 {
+            return AthleteBlueprintCurrentState(
+                label: "Rebuilding after a short break",
+                summary: "Your last tracked workout was \(daysSinceLastWorkout) days ago, so the first week should restore rhythm before adding load.",
+                detail: AthleteBlueprintDetail(
+                    id: "current_training_state",
+                    title: "Current state",
+                    summary: "A short interruption is visible in your recent training evidence.",
+                    body: "HAYF should protect continuity with controlled sessions before returning to normal progression.",
+                    confidence: "High",
+                    observationWindow: "Time since last tracked workout",
+                    evidence: ["Last tracked workout: \(daysSinceLastWorkout) days ago."],
+                    caveat: nil
                 )
             )
         }
@@ -8012,6 +8112,12 @@ private enum AthleteBlueprintGoalCategory: String {
 
 private struct AthleteBlueprintEvidence {
     let snapshot: HealthFeatureSnapshot?
+    let now: Date
+
+    init(snapshot: HealthFeatureSnapshot?, now: Date = Date()) {
+        self.snapshot = snapshot
+        self.now = now
+    }
 
     var hasWorkoutHistory: Bool {
         totalWorkouts > 0
@@ -8042,11 +8148,13 @@ private struct AthleteBlueprintEvidence {
     }
 
     var strengthWorkouts90Days: Int {
-        snapshot?.fitnessHistory.strengthContinuity.strengthWorkouts90Days ?? 0
+        guard hasFreshRelativeWindows else { return 0 }
+        return snapshot?.fitnessHistory.strengthContinuity.strengthWorkouts90Days ?? 0
     }
 
     var strengthMinutes90Days: Double {
-        snapshot?.fitnessHistory.strengthContinuity.strengthMinutes90Days ?? 0
+        guard hasFreshRelativeWindows else { return 0 }
+        return snapshot?.fitnessHistory.strengthContinuity.strengthMinutes90Days ?? 0
     }
 
     var longestWorkout: FitnessLongestWorkoutSummary? {
@@ -8058,56 +8166,35 @@ private struct AthleteBlueprintEvidence {
     }
 
     var hasRecentBodyTrend: Bool {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? .distantFuture
-        return [
-            snapshot?.body.bodyMassLatestSampleDate,
-            snapshot?.body.bodyFatLatestSampleDate
-        ]
-        .compactMap { $0 }
-        .contains { $0 >= cutoff }
+        currentBodyMassTrend != nil || currentBodyFatTrend != nil
     }
 
     var bodyMassTrend: BodyMetricTrendSummary? {
-        let trend = snapshot?.body.bodyMassHistory
-        return trend?.trend == .insufficient ? nil : trend
+        currentBodyMassTrend == nil ? nil : snapshot?.body.bodyMassHistory
     }
 
     var bodyFatTrend: BodyMetricTrendSummary? {
-        let trend = snapshot?.body.bodyFatHistory
-        return trend?.trend == .insufficient ? nil : trend
+        currentBodyFatTrend == nil ? nil : snapshot?.body.bodyFatHistory
     }
 
     var bodyMassTrendDirection: BodyMetricTrendDirection? {
-        bodyMassTrend?.trend
+        currentBodyMassTrend?.direction
     }
 
     var bodyFatTrendDirection: BodyMetricTrendDirection? {
-        bodyFatTrend?.trend
+        currentBodyFatTrend?.direction
     }
 
     var bodyMassTrendChange: Double? {
-        bodyMassTrend?.change
+        currentBodyMassTrend?.change
     }
 
     var bodyMassTrendDaysCovered: Int? {
-        bodyMassTrend?.daysCovered
+        currentBodyMassTrend?.daysCovered
     }
 
     var bodyMassTrendConfidence: String {
-        bodyMassTrend?.confidence ?? "insufficient"
-    }
-
-    var bodyMemoryArchetypePrefix: String? {
-        switch bodyMassTrendDirection {
-        case .falling:
-            return "Leaning"
-        case .rising:
-            return [.falling, .stable].contains(bodyFatTrendDirection) ? "Building" : nil
-        case .stable:
-            return "Steady"
-        case .insufficient, .none:
-            return nil
-        }
+        currentBodyMassTrend?.confidence ?? "insufficient"
     }
 
     var bodyMemoryArchetypeClause: String? {
@@ -8137,14 +8224,14 @@ private struct AthleteBlueprintEvidence {
     }
 
     var bodyMemoryEvidenceLines: [String] {
-        guard let bodyMassTrend else { return [] }
+        guard let trend = currentBodyMassTrend else { return [] }
         var lines = [
-            "Tracked body-mass samples: \(bodyMassTrend.sampleCount).",
-            "Body-mass trend window: \(bodyMassTrend.daysCovered) days.",
-            "Body-mass change across window: \(String(format: "%.1f", bodyMassTrend.change ?? 0)) kg."
+            "Recent body-mass samples: \(trend.sampleCount).",
+            "Current body-mass trend window: \(trend.daysCovered) days.",
+            "Body-mass change in that window: \(String(format: "%.1f", trend.change)) kg."
         ]
-        if let bodyFatTrend {
-            lines.append("Tracked body-fat samples: \(bodyFatTrend.sampleCount); trend: \(bodyFatTrend.trend.rawValue).")
+        if let bodyFatTrend = currentBodyFatTrend {
+            lines.append("Recent body-fat samples: \(bodyFatTrend.sampleCount); trend: \(bodyFatTrend.direction.rawValue).")
         }
         return lines
     }
@@ -8183,12 +8270,84 @@ private struct AthleteBlueprintEvidence {
     }
 
     func windowMinutes(_ label: String) -> Double {
-        snapshot?.workoutLedger.windows.first { $0.window == label }?.totalMinutes ?? 0
+        guard hasFreshRelativeWindows else { return 0 }
+        return snapshot?.workoutLedger.windows.first { $0.window == label }?.totalMinutes ?? 0
     }
 
     func windowWorkouts(_ label: String) -> Int {
-        snapshot?.workoutLedger.windows.first { $0.window == label }?.workouts ?? 0
+        guard hasFreshRelativeWindows else { return 0 }
+        return snapshot?.workoutLedger.windows.first { $0.window == label }?.workouts ?? 0
     }
+
+    var daysSinceLastWorkout: Int? {
+        guard let lastWorkoutDate = snapshot?.workoutLedger.lastWorkout?.startDate else { return nil }
+        return max(0, Calendar.current.dateComponents([.day], from: lastWorkoutDate, to: now).day ?? 0)
+    }
+
+    private var hasFreshRelativeWindows: Bool {
+        guard let generatedAt = snapshot?.generatedAt else { return false }
+        return now.timeIntervalSince(generatedAt) <= 36 * 60 * 60
+    }
+
+    private var currentBodyMassTrend: CurrentBodyMetricTrend? {
+        guard let summary = snapshot?.body.bodyMassHistory else { return nil }
+        return currentTrend(summary: summary, latestSampleDate: snapshot?.body.bodyMassLatestSampleDate, stableThreshold: 0.8)
+    }
+
+    private var currentBodyFatTrend: CurrentBodyMetricTrend? {
+        guard let summary = snapshot?.body.bodyFatHistory else { return nil }
+        return currentTrend(summary: summary, latestSampleDate: snapshot?.body.bodyFatLatestSampleDate, stableThreshold: 1.5)
+    }
+
+    private func currentTrend(summary: BodyMetricTrendSummary, latestSampleDate: Date?, stableThreshold: Double) -> CurrentBodyMetricTrend? {
+        guard let latestSampleDate,
+              let sampleAgeDays = Calendar.current.dateComponents([.day], from: latestSampleDate, to: now).day,
+              sampleAgeDays <= 30 else {
+            return nil
+        }
+
+        if let direction = summary.currentTrend,
+           direction != .insufficient,
+           let change = summary.currentChange,
+           let daysCovered = summary.currentDaysCovered,
+           let sampleCount = summary.currentSampleCount,
+           sampleCount >= 3,
+           daysCovered >= 21 {
+            return CurrentBodyMetricTrend(
+                direction: direction,
+                change: change,
+                daysCovered: daysCovered,
+                sampleCount: sampleCount,
+                confidence: summary.currentConfidence ?? "medium"
+            )
+        }
+
+        guard let change = summary.change90Days,
+              summary.sampleCount >= 4 else {
+            return nil
+        }
+        let direction: BodyMetricTrendDirection
+        if abs(change) <= stableThreshold {
+            direction = .stable
+        } else {
+            direction = change > 0 ? .rising : .falling
+        }
+        return CurrentBodyMetricTrend(
+            direction: direction,
+            change: change,
+            daysCovered: min(90, summary.daysCovered),
+            sampleCount: summary.sampleCount,
+            confidence: "medium"
+        )
+    }
+}
+
+private struct CurrentBodyMetricTrend {
+    let direction: BodyMetricTrendDirection
+    let change: Double
+    let daysCovered: Int
+    let sampleCount: Int
+    let confidence: String
 }
 
 private struct BodyCompositionGoalSupport {
@@ -8257,6 +8416,76 @@ private struct AthleteBlueprintSummaryRow: View {
     }
 }
 
+private enum FitnessStrategyVisibleCopy {
+    static func sanitize(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(
+                of: #"(?i)(?:~\s*)?(\d+)\s*-\s*(\d+)\s*RIR(?:\s*\([^)]*\))?"#,
+                with: "$1-$2 reps left",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)\s*/?\s*RPE\s*\d+(?:\s*-\s*\d+)?"#,
+                with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+([,.;:])"#, with: "$1", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func coachVerdict(_ value: String) -> String {
+        let sanitized = sanitize(value)
+        let lowercased = sanitized.lowercased()
+        let wordCount = sanitized.split(whereSeparator: { $0.isWhitespace }).count
+        let isMetaInstruction = lowercased.contains("please review")
+            || lowercased.contains("review the plan")
+            || lowercased.hasPrefix("plan summary")
+        guard !sanitized.isEmpty, !isMetaInstruction, sanitized.count <= 240, wordCount <= 40 else {
+            return "We will rebuild your training rhythm first, then progress the work that matters most to your goal. Supporting sessions will protect consistency as the main work develops."
+        }
+        return sanitized
+    }
+
+    static func cardSummary(title: String, summary: String) -> String {
+        let sanitized = sanitize(summary)
+        guard sanitized.count > 72 else { return sanitized }
+        if let firstSentence = firstSentence(in: sanitized), firstSentence.count <= 72 {
+            return firstSentence
+        }
+        return "This keeps the plan focused and manageable."
+    }
+
+    static func phaseObjective(name: String, objective: String) -> String {
+        let sanitized = sanitize(objective)
+        guard sanitized.count > 80 else { return sanitized }
+        if let firstSentence = firstSentence(in: sanitized), firstSentence.count <= 80 {
+            return firstSentence
+        }
+        let normalizedName = name.lowercased()
+        if normalizedName.contains("re-entry") || normalizedName.contains("reentry") || normalizedName.contains("return") {
+            return "Restore a repeatable routine with controlled cycling and strength."
+        }
+        if normalizedName.contains("consolid") || normalizedName.contains("review") {
+            return "Consolidate your gains and confirm the next progression."
+        }
+        if normalizedName.contains("build") || normalizedName.contains("stimulus") {
+            return "Build cycling fitness while keeping strength work consistent."
+        }
+        return "Build this phase through consistent, manageable sessions."
+    }
+
+    private static func firstSentence(in value: String) -> String? {
+        guard let match = value.range(of: #"^.*?[.!?](?:\s|$)"#, options: .regularExpression) else {
+            return nil
+        }
+        return String(value[match]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 private struct FitnessStrategySnapshotGrid: View {
     let items: [FitnessStrategySnapshotItem]
     private let tileHeight: CGFloat = 104
@@ -8271,25 +8500,27 @@ private struct FitnessStrategySnapshotGrid: View {
                         .frame(height: 18)
 
                     VStack(spacing: 2) {
-                        Text(item.value)
+                        Text(FitnessStrategyVisibleCopy.sanitize(item.value))
                             .font(.system(size: item.id == "priorities" ? 12 : 13, weight: .semibold))
                             .foregroundStyle(HAYFColor.primary)
                             .multilineTextAlignment(.center)
-                            .lineLimit(item.id == "priorities" ? 3 : 1)
-                            .minimumScaleFactor(item.id == "priorities" ? 0.78 : 0.75)
+                            .lineLimit(item.id == "priorities" ? 3 : 2)
+                            .minimumScaleFactor(0.82)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                        Text(item.label)
+                        Text(FitnessStrategyVisibleCopy.sanitize(item.label))
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(HAYFColor.secondary)
                             .multilineTextAlignment(.center)
                             .lineLimit(2)
-                            .minimumScaleFactor(0.75)
+                            .minimumScaleFactor(0.82)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 10)
-                .frame(maxWidth: item.id == "priorities" ? .infinity : 82)
-                .frame(height: tileHeight)
+                .frame(maxWidth: .infinity, minHeight: tileHeight)
+                .fixedSize(horizontal: false, vertical: true)
                 .background(HAYFColor.orange.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
@@ -8307,7 +8538,7 @@ private struct FitnessStrategyReadCard: View {
                 .kerning(1.2)
                 .foregroundStyle(HAYFColor.secondary)
 
-            Text(read)
+            Text(FitnessStrategyVisibleCopy.coachVerdict(read))
                 .font(.system(size: 18, weight: .regular))
                 .lineSpacing(5)
                 .foregroundStyle(HAYFColor.primary)
@@ -8334,11 +8565,11 @@ private struct FitnessStrategyGoalContextCard: View {
                 .kerning(1.2)
                 .foregroundStyle(HAYFColor.secondary)
 
-            Text(context.title)
+            Text(FitnessStrategyVisibleCopy.sanitize(context.title))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
 
-            Text(context.summary)
+            Text(FitnessStrategyVisibleCopy.cardSummary(title: context.title, summary: context.summary))
                 .font(.system(size: 14, weight: .regular))
                 .lineSpacing(3)
                 .foregroundStyle(HAYFColor.secondary)
@@ -8396,15 +8627,14 @@ private struct FitnessStrategyIconRow: View {
                 }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
+                Text(FitnessStrategyVisibleCopy.sanitize(title))
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
 
-                Text(summary)
+                Text(FitnessStrategyVisibleCopy.cardSummary(title: title, summary: summary))
                     .font(.system(size: 14, weight: .regular))
                     .lineSpacing(3)
                     .foregroundStyle(HAYFColor.secondary)
-                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -8425,12 +8655,12 @@ private struct FitnessStrategyPhaseRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(phase.name.uppercased())
+            Text(FitnessStrategyVisibleCopy.sanitize(phase.name).uppercased())
                 .font(.system(size: 10, weight: .medium))
                 .kerning(1.2)
                 .foregroundStyle(HAYFColor.secondary)
 
-            Text(phase.objective)
+            Text(FitnessStrategyVisibleCopy.phaseObjective(name: phase.name, objective: phase.objective))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -8465,7 +8695,7 @@ private struct FitnessStrategyPhaseTargetRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(target.title)
+                    Text(FitnessStrategyVisibleCopy.sanitize(target.title))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(HAYFColor.primary)
                         .lineLimit(2)
@@ -8474,7 +8704,7 @@ private struct FitnessStrategyPhaseTargetRow: View {
                     Spacer(minLength: 6)
 
                     if let value = target.displayValue {
-                        Text(value)
+                        Text(FitnessStrategyVisibleCopy.sanitize(value))
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(HAYFColor.primary)
                             .lineLimit(1)
@@ -8486,11 +8716,10 @@ private struct FitnessStrategyPhaseTargetRow: View {
                     }
                 }
 
-                Text(target.summary)
+                Text(FitnessStrategyVisibleCopy.cardSummary(title: target.title, summary: target.summary))
                     .font(.system(size: 13, weight: .regular))
                     .lineSpacing(2)
                     .foregroundStyle(HAYFColor.secondary)
-                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -8506,7 +8735,7 @@ private struct FitnessStrategyOperatingRhythmCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(rhythm.summary)
+            Text(FitnessStrategyVisibleCopy.cardSummary(title: "weekly rhythm", summary: rhythm.summary))
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -8519,7 +8748,7 @@ private struct FitnessStrategyOperatingRhythmCard: View {
                             .frame(width: 6, height: 6)
                             .padding(.top, 7)
 
-                        Text(anchor)
+                        Text(FitnessStrategyVisibleCopy.sanitize(anchor))
                             .font(.system(size: 14, weight: .regular))
                             .foregroundStyle(HAYFColor.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -8551,7 +8780,7 @@ private struct FitnessStrategyTargetRow: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(target.title)
+                    Text(FitnessStrategyVisibleCopy.sanitize(target.title))
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(HAYFColor.primary)
                         .lineLimit(2)
@@ -8560,7 +8789,7 @@ private struct FitnessStrategyTargetRow: View {
                     Spacer(minLength: 6)
 
                     if let value = target.displayValue {
-                        Text(value)
+                        Text(FitnessStrategyVisibleCopy.sanitize(value))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(HAYFColor.primary)
                             .lineLimit(1)
@@ -8572,11 +8801,10 @@ private struct FitnessStrategyTargetRow: View {
                     }
                 }
 
-                Text(target.summary)
+                Text(FitnessStrategyVisibleCopy.cardSummary(title: target.title, summary: target.summary))
                     .font(.system(size: 14, weight: .regular))
                     .lineSpacing(3)
                     .foregroundStyle(HAYFColor.secondary)
-                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

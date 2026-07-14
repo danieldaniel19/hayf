@@ -24,6 +24,7 @@ struct PlanScreenView: View {
     @State private var selectedConstraintDay: PlanConstraintEditingContext?
     @State private var isSavingConstraint = false
     @State private var didAttemptWeeklyTargetBackfill = false
+    @State private var observedCommittedWeekStart = PlanCalendar.currentCommittedWeekStart()
 
     private let planningAIProvider = PlanningAIProvider()
 
@@ -113,6 +114,12 @@ struct PlanScreenView: View {
             guard !didLoad else { return }
             await loadPlan(allowWeeklyTargetBackfill: true)
             presentInitialBlockDetailIfNeeded()
+        }
+        .onAppear {
+            refreshVisiblePlanIfNeeded(force: didLoad)
+        }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { now in
+            refreshVisiblePlanIfNeeded(now: now)
         }
         .onChange(of: store.activeBlock?.id) { _, _ in
             presentInitialBlockDetailIfNeeded()
@@ -234,16 +241,9 @@ struct PlanScreenView: View {
         allowWeeklyTargetBackfill: Bool,
         forceWeeklyTargetBackfill: Bool = false
     ) async {
-        if didLoad {
-            await store.loadVisiblePlan()
-            if store.activeBlock != nil {
-                await refreshPlanWindowIfPossible()
-                await store.loadVisiblePlan()
-                await refreshWorkoutWeatherForecastsIfPossible()
-                await store.loadVisiblePlan()
-            }
-        } else {
-            await refreshPlanWindowIfPossible()
+        await refreshPlanWindowIfPossible()
+        await store.loadVisiblePlan()
+        if store.activeBlock != nil {
             await refreshWorkoutWeatherForecastsIfPossible()
             await store.loadVisiblePlan()
         }
@@ -264,6 +264,17 @@ struct PlanScreenView: View {
             #if DEBUG
             print("Weekly target backfill failed: \(error.localizedDescription)")
             #endif
+        }
+    }
+
+    private func refreshVisiblePlanIfNeeded(force: Bool = false, now: Date = Date()) {
+        let currentCommittedWeekStart = PlanCalendar.currentCommittedWeekStart(now: now)
+        guard force || currentCommittedWeekStart != observedCommittedWeekStart else { return }
+        observedCommittedWeekStart = currentCommittedWeekStart
+        guard didLoad else { return }
+
+        Task {
+            await loadPlan(allowWeeklyTargetBackfill: false)
         }
     }
 
@@ -2297,8 +2308,9 @@ private struct WorkoutCardBody<Accessory: View>: View {
                 Text(display.title)
                     .font(.system(size: titleSize, weight: titleWeight))
                     .foregroundStyle(display.stateColor)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.86)
+                    .fixedSize(horizontal: false, vertical: true)
                     .layoutPriority(1)
 
                 Spacer(minLength: 8)
@@ -2371,6 +2383,65 @@ private struct PlanWorkoutCardPill: View {
     }
 }
 
+private enum WorkoutVisibleCopy {
+    static func sanitize(_ value: String) -> String {
+        let dashNormalized = value
+            .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
+
+        if let range = dashNormalized.range(of: #"(?i)^\s*RPE\s*(\d+)(?:\s*-\s*(\d+))?\s*$"#, options: .regularExpression) {
+            let digits = dashNormalized[range].split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+            let effort = digits.max() ?? 5
+            if effort >= 8 { return "Hard, controlled effort" }
+            if effort >= 6 { return "Challenging effort" }
+            return "Easy effort"
+        }
+
+        var result = dashNormalized
+            .replacingOccurrences(
+                of: #"(?i)\b(?:approvedArchetype|archetypeId|bad[_ ]day[_ ]floor)\s*:\s*"#,
+                with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)(?:~\s*)?(\d+)\s*-\s*(\d+)\s*RIR(?:\s*\([^)]*\))?"#,
+                with: "$1-$2 reps left",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)(?:~\s*)?(\d+)\s*RIR(?:\s*\([^)]*\))?"#,
+                with: "$1 reps left",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?i)\s*/?\s*RPE\s*\d+(?:\s*-\s*\d+)?"#,
+                with: "",
+                options: .regularExpression
+            )
+
+        let friendlyTerms = [
+            "strength_mobility_preparation": "light strength and mobility",
+            "strength_maintenance_minimum": "short strength session",
+            "cycling_recovery_spin": "short easy ride",
+            "submaximal_loads_phase1": "controlled opening loads",
+            "submaximal": "controlled"
+        ]
+        for (internalTerm, friendlyTerm) in friendlyTerms {
+            result = result.replacingOccurrences(
+                of: internalTerm,
+                with: friendlyTerm,
+                options: [.caseInsensitive]
+            )
+        }
+
+        return result
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+([,.;:])"#, with: "$1", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 private struct WorkoutDetailScreen: View {
     let workout: PlanWorkout
     let fallbackLocationLabel: String?
@@ -2402,7 +2473,7 @@ private struct WorkoutDetailScreen: View {
 
                         WorkoutDetailTextSection(
                             title: "Why today",
-                            text: prescription.summary.isEmpty ? workout.purpose : prescription.summary
+                            text: prescription.whyToday
                         )
 
                         WorkoutDetailStepsSection(title: "Warm up", group: prescription.warmup)
@@ -2413,9 +2484,6 @@ private struct WorkoutDetailScreen: View {
 
                         WorkoutDetailTextSection(title: "Success", text: prescription.successCriteria)
 
-                        if !prescription.constraintsApplied.isEmpty {
-                            WorkoutDetailTagSection(title: "Constraints applied", tags: prescription.constraintsApplied)
-                        }
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 28)
@@ -2474,11 +2542,11 @@ private struct WorkoutDetailScreen: View {
             WorkoutDetailMetricChip(icon: "clock", label: "Duration", value: WorkoutDetailFormatting.duration(workout.durationMinutes))
             WorkoutDetailMetricChip(icon: "flame", label: "Intensity", value: display.metricPills.last(where: { $0.emoji == "🔥" })?.text.capitalized ?? workout.intensityLabel)
             WorkoutDetailMetricChip(icon: "target", label: "Target", value: display.metricPills.last(where: { $0.emoji == "🎯" })?.text ?? "Support")
-            if let distance = workout.estimatedDistanceKilometers {
-                WorkoutDetailMetricChip(icon: "point.topleft.down.curvedto.point.bottomright.up", label: "Distance", value: "\(max(1, Int(distance.rounded()))) km")
+            if let distanceText = display.distanceText {
+                WorkoutDetailMetricChip(icon: "point.topleft.down.curvedto.point.bottomright.up", label: "Distance", value: distanceText)
             }
-            if let elevation = workout.estimatedElevationMeters, elevation > 0 {
-                WorkoutDetailMetricChip(icon: "mountain.2", label: "Elevation", value: "\(max(1, Int(elevation.rounded()))) m")
+            if let elevationText = display.elevationText {
+                WorkoutDetailMetricChip(icon: "mountain.2", label: "Elevation", value: elevationText)
             }
             WorkoutDetailMetricChip(icon: "mappin.and.ellipse", label: "Location", value: WorkoutDetailFormatting.location(workout.plannedLocationLabel ?? fallbackLocationLabel))
             WorkoutDetailMetricChip(icon: "fork.knife", label: "Fuel", value: WorkoutDetailFormatting.shortFuel(workout.fuelingSummary))
@@ -2543,8 +2611,9 @@ private struct WorkoutDetailMetricChip: View {
             Text(value)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(HAYFColor.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
+                .fixedSize(horizontal: false, vertical: true)
 
             Text(label)
                 .font(.system(size: 11, weight: .medium))
@@ -2553,7 +2622,7 @@ private struct WorkoutDetailMetricChip: View {
                 .minimumScaleFactor(0.72)
         }
         .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 98, alignment: .topLeading)
         .background(HAYFColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
@@ -2569,7 +2638,7 @@ private struct WorkoutDetailTextSection: View {
 
     var body: some View {
         WorkoutDetailSectionContainer(title: title) {
-            Text(text.isEmpty ? "Complete the session as planned." : text)
+            Text(WorkoutVisibleCopy.sanitize(text.isEmpty ? "Complete the session as planned." : text))
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(HAYFColor.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2623,6 +2692,8 @@ private struct WorkoutDetailMainSection: View {
                         WorkoutSteadyBlockRow(steady: steady)
                     case let .mobility(mobility):
                         WorkoutMobilityBlockRow(mobility: mobility)
+                    case let .walkRun(walkRun):
+                        WorkoutWalkRunBlockRow(walkRun: walkRun)
                     case let .text(text):
                         Text(text)
                             .font(.system(size: 15, weight: .regular))
@@ -2644,8 +2715,8 @@ private struct WorkoutStrengthExerciseRow: View {
                 Text(exercise.exerciseName)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 8)
 
@@ -2655,7 +2726,7 @@ private struct WorkoutStrengthExerciseRow: View {
                     .lineLimit(1)
             }
 
-            HStack(spacing: 7) {
+            WorkoutPillFlow(spacing: 7, rowSpacing: 6) {
                 WorkoutDetailMiniPill(text: exercise.machineOrEquipment)
                 WorkoutDetailMiniPill(text: exercise.restText)
                 WorkoutDetailMiniPill(text: exercise.effortTarget)
@@ -2672,7 +2743,8 @@ private struct WorkoutStrengthExerciseRow: View {
                 Text("Alt: \(alternative.exerciseName)")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(HAYFColor.muted)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(12)
@@ -2791,6 +2863,52 @@ private struct WorkoutSteadyBlockRow: View {
     }
 }
 
+private struct WorkoutWalkRunBlockRow: View {
+    let walkRun: WorkoutPrescriptionDisplayModel.WalkRunBlock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(walkRun.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 8)
+
+                Text("\(walkRun.repeats)x")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(HAYFColor.orange)
+            }
+
+            HStack(spacing: 8) {
+                WorkoutDetailIntervalCell(label: "Run", value: walkRun.runDuration)
+                WorkoutDetailIntervalCell(label: "Walk", value: walkRun.walkDuration)
+            }
+
+            Text(walkRun.target)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(HAYFColor.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !walkRun.notes.isEmpty {
+                Text(walkRun.notes)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(HAYFColor.borderStrong, lineWidth: 1)
+        }
+    }
+}
+
 private struct WorkoutMobilityBlockRow: View {
     let mobility: WorkoutPrescriptionDisplayModel.MobilityBlock
 
@@ -2840,17 +2958,18 @@ private struct WorkoutDetailMiniPill: View {
     let text: String
 
     var body: some View {
-        Text(text)
+        Text(WorkoutVisibleCopy.sanitize(text))
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(HAYFColor.primary)
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
+            .lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 8)
-            .frame(height: 24)
+            .padding(.vertical, 5)
+            .frame(minHeight: 24)
             .background(HAYFColor.neutral)
-            .clipShape(Capsule())
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(HAYFColor.border, lineWidth: 1)
             }
     }
@@ -2907,7 +3026,11 @@ private struct WorkoutPillFlow: Layout {
         var usedWidth: CGFloat = 0
 
         for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+            let intrinsicSize = subviews[index].sizeThatFits(.unspecified)
+            let measuredSize = intrinsicSize.width > maxWidth
+                ? subviews[index].sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+                : intrinsicSize
+            let size = CGSize(width: min(measuredSize.width, maxWidth), height: measuredSize.height)
             if x > 0, x + size.width > maxWidth {
                 y += rowHeight + rowSpacing
                 x = 0
@@ -2941,6 +3064,8 @@ private struct WorkoutCardDisplayModel {
     let backgroundTintOpacity: Double
     let metricPills: [PlanWorkoutCardPillModel]
     let contextPills: [PlanWorkoutCardPillModel]
+    let distanceText: String?
+    let elevationText: String?
 
     init(workout: PlanWorkout, fallbackLocationLabel: String?) {
         let source = WorkoutCardDisplaySource(
@@ -2956,7 +3081,8 @@ private struct WorkoutCardDisplayModel {
             scheduledDate: workout.scheduledDate,
             plannedLocationLabel: workout.plannedLocationLabel,
             weatherForecast: workout.weatherForecast,
-            fallbackLocationLabel: fallbackLocationLabel
+            fallbackLocationLabel: fallbackLocationLabel,
+            prescription: workout.prescription
         )
         self.init(source: source)
     }
@@ -2975,7 +3101,8 @@ private struct WorkoutCardDisplayModel {
             scheduledDate: scheduledDate,
             plannedLocationLabel: candidate.plannedLocationLabel,
             weatherForecast: nil,
-            fallbackLocationLabel: fallbackLocationLabel
+            fallbackLocationLabel: fallbackLocationLabel,
+            prescription: nil
         )
         self.init(source: source)
     }
@@ -3015,10 +3142,13 @@ private struct WorkoutCardDisplayModel {
         var metrics: [PlanWorkoutCardPillModel] = [
             PlanWorkoutCardPillModel(emoji: "⌚", text: Self.durationText(source.durationMinutes))
         ]
-        if let distanceText = titleBuilder.distanceText {
+        distanceText = titleBuilder.distanceText
+        elevationText = titleBuilder.elevationText
+
+        if let distanceText {
             metrics.append(PlanWorkoutCardPillModel(emoji: "🛣️", text: distanceText))
         }
-        if let elevationText = titleBuilder.elevationText {
+        if let elevationText {
             metrics.append(PlanWorkoutCardPillModel(emoji: "⛰️", text: elevationText))
         }
         metrics.append(PlanWorkoutCardPillModel(emoji: "🔥", text: titleBuilder.intensityText))
@@ -3090,6 +3220,7 @@ private struct WorkoutCardDisplaySource {
     let plannedLocationLabel: String?
     let weatherForecast: JSONValue?
     let fallbackLocationLabel: String?
+    let prescription: JSONValue?
 }
 
 private struct PlanWorkoutCardPillModel: Identifiable {
@@ -3110,7 +3241,7 @@ private struct PlanWorkoutForecastDisplay {
             let temperature = object["temperatureCelsius"]?.planNumberValue
         else {
             emoji = "🌡"
-            temperatureText = "—"
+            temperatureText = "Pending"
             return
         }
 
@@ -3263,6 +3394,7 @@ private struct WorkoutCardTaxonomy {
     }
 
     private var estimatedDistanceKilometers: Double? {
+        guard !isWalkRunPrescription else { return nil }
         let minutes = Double(source.durationMinutes)
         guard minutes > 0 else { return nil }
         let textualIntensity = textualIntensityText
@@ -3288,7 +3420,17 @@ private struct WorkoutCardTaxonomy {
     }
 
     private var distanceKilometers: Double? {
-        explicitRouteDistanceKilometers ?? estimatedDistanceKilometers
+        guard !isWalkRunPrescription else { return nil }
+        return explicitRouteDistanceKilometers ?? estimatedDistanceKilometers
+    }
+
+    private var isWalkRunPrescription: Bool {
+        let object = source.prescription?.planObjectValue ?? [:]
+        let main = object["main"]?.planObjectValue ?? [:]
+        return (main["blocks"]?.planArrayValue ?? []).contains { block in
+            let kind = block.planObjectValue["kind"]?.planStringValue
+            return kind == "walkRun" || kind == "walk_run"
+        }
     }
 
     private var elevationMeters: Double? {
@@ -3334,6 +3476,18 @@ private struct WorkoutCardTaxonomy {
     }
 
     private var modality: Modality {
+        if let prescriptionModality {
+            return prescriptionModality
+        }
+        if let titleModality = storedTitleModality, [.strength, .mobility, .recovery].contains(titleModality) {
+            return titleModality
+        }
+        if activityTypeContains("strength") || activityTypeContains("traditional") { return .strength }
+        if activityTypeContains("mobility") || activityTypeContains("yoga") || activityTypeContains("pilates") { return .mobility }
+        if activityTypeContains("run") { return .run }
+        if activityTypeContains("cycl") || activityTypeContains("bike") || activityTypeContains("ride") { return .ride }
+        if activityTypeContains("swim") { return .swim }
+        if activityTypeContains("row") { return .row }
         if activityTypeContains("walk") { return .walk }
         if activityTypeContains("hike") || activityTypeContains("hik") { return .hike }
         if contains("ride") || contains("cycl") || contains("bike") { return .ride }
@@ -3346,6 +3500,21 @@ private struct WorkoutCardTaxonomy {
         if contains("mobility") || contains("yoga") || contains("pilates") || contains("stretch") || contains("core") || contains("prehab") { return .mobility }
         if contains("recover") || contains("restorative") || contains("rest") { return .recovery }
         return .other
+    }
+
+    private var prescriptionModality: Modality? {
+        let object = source.prescription?.planObjectValue ?? [:]
+        guard let schemaVersion = object["schemaVersion"]?.planNumberValue,
+              (1...2).contains(schemaVersion) else { return nil }
+        let main = object["main"]?.planObjectValue ?? [:]
+        let blocks = main["blocks"]?.planArrayValue ?? []
+        let kinds = Set(blocks.compactMap { block -> String? in
+            block.planObjectValue["kind"]?.planStringValue
+        })
+        if kinds.contains("strengthExercise") { return .strength }
+        if kinds.contains("mobilityRecovery") { return .mobility }
+        if kinds.contains("walkRun") || kinds.contains("walk_run") { return .run }
+        return nil
     }
 
     private var isDistanceEligible: Bool {
@@ -3411,12 +3580,31 @@ private struct WorkoutCardTaxonomy {
         let title = source.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = title.lowercased()
         guard !title.isEmpty else { return false }
+        if let prescriptionModality,
+           let storedTitleModality,
+           prescriptionModality != storedTitleModality {
+            return false
+        }
         if ["full body a", "base ride", "long ride", "base run", "long run"].contains(lower) { return false }
         if lower.range(of: #"\b(full|upper|lower)\s+body\s+[a-e]\b"#, options: .regularExpression) != nil { return false }
         return lower.range(
             of: #"\b(support|maintenance|build|aerobic|endurance|tempo|interval|strength|ride|run|mobility|recovery)\b"#,
             options: .regularExpression
         ) != nil
+    }
+
+    private var storedTitleModality: Modality? {
+        let title = source.title.lowercased()
+        if title.range(of: #"\b(strength|lift|gym|weights|full body|upper body|lower body|upper|lower)\b"#, options: .regularExpression) != nil { return .strength }
+        if title.range(of: #"\b(mobility|yoga|pilates|stretch|core|prehab)\b"#, options: .regularExpression) != nil { return .mobility }
+        if title.range(of: #"\b(ride|cycling|bike)\b"#, options: .regularExpression) != nil { return .ride }
+        if title.range(of: #"\b(run|running|jog)\b"#, options: .regularExpression) != nil { return .run }
+        if title.range(of: #"\b(swim|swimming)\b"#, options: .regularExpression) != nil { return .swim }
+        if title.range(of: #"\b(row|rowing|rower)\b"#, options: .regularExpression) != nil { return .row }
+        if title.range(of: #"\b(walk|walking)\b"#, options: .regularExpression) != nil { return .walk }
+        if title.range(of: #"\b(hike|hiking)\b"#, options: .regularExpression) != nil { return .hike }
+        if title.range(of: #"\b(recovery|recover)\b"#, options: .regularExpression) != nil { return .recovery }
+        return nil
     }
 
     private var normalized: String {
@@ -3440,12 +3628,18 @@ private struct WorkoutCardTaxonomy {
     }
 
     private func compactTitle(_ value: String, maxWords: Int) -> String {
-        let cleaned = value
+        let cleaned = WorkoutVisibleCopy.sanitize(value)
             .replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+-\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*[-:|]+\s*$"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return "Workout" }
-        return cleaned.split(separator: " ").prefix(maxWords).joined(separator: " ")
+        var compact = cleaned.split(separator: " ").prefix(min(maxWords, 4)).joined(separator: " ")
+        while compact.count > 32, compact.contains(" ") {
+            compact = compact.split(separator: " ").dropLast().joined(separator: " ")
+        }
+        return compact.isEmpty ? "Workout" : compact
     }
 }
 
@@ -3541,12 +3735,22 @@ private struct WorkoutPrescriptionDisplayModel {
         let steps: [String]
     }
 
+    struct WalkRunBlock {
+        let title: String
+        let repeats: Int
+        let runDuration: String
+        let walkDuration: String
+        let target: String
+        let notes: String
+    }
+
     struct MainBlock: Identifiable {
         enum Kind {
             case strength(StrengthExercise)
             case interval(IntervalBlock)
             case steady(SteadyBlock)
             case mobility(MobilityBlock)
+            case walkRun(WalkRunBlock)
             case text(String)
         }
 
@@ -3555,6 +3759,7 @@ private struct WorkoutPrescriptionDisplayModel {
     }
 
     let summary: String
+    let whyToday: String
     let warmup: StepGroup
     let blocks: [MainBlock]
     let cooldown: StepGroup
@@ -3564,8 +3769,12 @@ private struct WorkoutPrescriptionDisplayModel {
 
     init(workout: PlanWorkout) {
         let object = workout.prescription?.planObjectValue ?? [:]
-        if object["schemaVersion"]?.planNumberValue == 1 {
-            summary = Self.stringValue(object["summary"]) ?? workout.purpose
+        let schemaVersion = object["schemaVersion"]?.planNumberValue
+        if let schemaVersion, (1...2).contains(schemaVersion) {
+            summary = Self.stringValue(object["summary"]) ?? WorkoutVisibleCopy.sanitize(workout.purpose)
+            whyToday = Self.stringValue(object["whyToday"])
+                ?? Self.stringValue(object["why_today"])
+                ?? summary
             warmup = Self.stepGroup(from: object["warmup"], fallbackTitle: "Warm up", fallbackText: "Start easy and prepare for the main work.")
             blocks = Self.mainBlocks(from: object["main"])
             cooldown = Self.stepGroup(from: object["cooldown"], fallbackTitle: "Cool down", fallbackText: "Finish easy and note any recovery flags.")
@@ -3578,7 +3787,8 @@ private struct WorkoutPrescriptionDisplayModel {
         let warmupText = Self.stringValue(object["warmup"]) ?? "Start easy and check readiness."
         let mainTexts = Self.stringArray(object["main"])
         let cooldownText = Self.stringValue(object["cooldown"]) ?? "Finish easy."
-        summary = workout.purpose
+        summary = WorkoutVisibleCopy.sanitize(workout.purpose)
+        whyToday = summary
         warmup = StepGroup(title: "Warm up", description: warmupText, durationMinutes: nil, steps: [warmupText])
         blocks = (mainTexts.isEmpty ? [workout.purpose] : mainTexts).map { MainBlock(kind: .text($0)) }
         cooldown = StepGroup(title: "Cool down", description: cooldownText, durationMinutes: nil, steps: [cooldownText])
@@ -3611,7 +3821,7 @@ private struct WorkoutPrescriptionDisplayModel {
 
     private static func block(from value: JSONValue) -> MainBlock? {
         let object = value.planObjectValue
-        switch stringValue(object["kind"]) {
+        switch rawStringValue(object["kind"]) {
         case "strengthExercise":
             let alternatives = (object["alternatives"]?.planArrayValue ?? []).map { alternative -> StrengthExercise.Alternative in
                 let alt = alternative.planObjectValue
@@ -3656,6 +3866,21 @@ private struct WorkoutPrescriptionDisplayModel {
                 movementFocus: stringValue(object["movementFocus"]) ?? "easy movement",
                 steps: nonEmptyStrings(stringArray(object["steps"]), fallback: [stringValue(object["description"]) ?? "Move easily"])
             )))
+        case "walkRun", "walk_run":
+            return MainBlock(kind: .walkRun(WalkRunBlock(
+                title: stringValue(object["title"]) ?? "Walk-run intervals",
+                repeats: max(1, intValue(object["repeats"]) ?? 1),
+                runDuration: durationText(
+                    stringValue(object["runDuration"]),
+                    minutes: intValue(object["runDurationMinutes"])
+                ),
+                walkDuration: durationText(
+                    stringValue(object["walkDuration"]),
+                    minutes: intValue(object["walkDurationMinutes"])
+                ),
+                target: stringValue(object["target"]) ?? "Easy, conversational running",
+                notes: stringValue(object["notes"]) ?? ""
+            )))
         default:
             return stringValue(value).map { MainBlock(kind: .text($0)) }
         }
@@ -3674,11 +3899,26 @@ private struct WorkoutPrescriptionDisplayModel {
     }
 
     private static func stringValue(_ value: JSONValue?) -> String? {
+        guard let string = rawStringValue(value),
+              !string.isEmpty else {
+            return nil
+        }
+        let sanitized = WorkoutVisibleCopy.sanitize(string)
+        return sanitized.isEmpty ? nil : sanitized
+    }
+
+    private static func rawStringValue(_ value: JSONValue?) -> String? {
         guard let string = value?.planStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
               !string.isEmpty else {
             return nil
         }
         return string
+    }
+
+    private static func durationText(_ text: String?, minutes: Int?) -> String {
+        if let text, !text.isEmpty { return text }
+        guard let minutes else { return "1 min" }
+        return "\(max(1, minutes)) min"
     }
 
     private static func intValue(_ value: JSONValue?) -> Int? {
@@ -3702,11 +3942,20 @@ private enum WorkoutDetailFormatting {
     }
 
     static func shortFuel(_ value: String?) -> String {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty else { return "Normal" }
-        if trimmed.count <= 18 { return trimmed }
+        let trimmed = WorkoutVisibleCopy.sanitize(value ?? "")
+        let lowercased = trimmed.lowercased()
+        guard !trimmed.isEmpty else { return "Normal meals" }
+        if lowercased.contains("protein") && (lowercased.contains("carb") || lowercased.contains("fruit")) {
+            return "Protein + carbs"
+        }
+        if lowercased.contains("protein") { return "Protein snack" }
+        if lowercased.contains("carb") { return "Carbs + water" }
+        if lowercased.contains("hydrat") || lowercased.contains("water") { return "Hydrate" }
+        if lowercased.contains("meal") || lowercased.contains("normal") || lowercased.contains("usual") {
+            return "Normal meals"
+        }
         let words = trimmed.split(separator: " ").prefix(3).joined(separator: " ")
-        return words.isEmpty ? "Normal" : words
+        return words.count <= 20 && !words.isEmpty ? words : "Normal meals"
     }
 }
 
@@ -6095,8 +6344,9 @@ private enum PlanWorkoutCardPreviewFixtures {
 
     static var strengthPrescription: JSONValue {
         .object([
-            "schemaVersion": .number(1),
+            "schemaVersion": .number(2),
             "summary": .string("Controlled full-body strength that supports the week without compromising endurance."),
+            "whyToday": .string("Week 1 strength protects muscle while you rebuild cycling rhythm."),
             "warmup": .object([
                 "title": .string("Warm up"),
                 "description": .string("Prepare joints and movement patterns before loading."),
@@ -6201,6 +6451,38 @@ private enum PlanWorkoutCardPreviewFixtures {
         ])
     }
 
+    static var walkRunPrescription: JSONValue {
+        .object([
+            "schemaVersion": .number(2),
+            "summary": .string("Use short run and walk intervals to reintroduce impact gradually."),
+            "whyToday": .string("Week 2 adds optional impact only after the core cycling and strength work."),
+            "warmup": .object([
+                "description": .string("Start with an easy walk and relaxed mobility."),
+                "steps": .array([.string("Walk for 5 min"), .string("Mobilize calves and hips")])
+            ]),
+            "main": .object([
+                "blocks": .array([
+                    .object([
+                        "kind": .string("walkRun"),
+                        "title": .string("Walk-run set"),
+                        "repeats": .number(6),
+                        "runDurationMinutes": .number(2),
+                        "walkDurationMinutes": .number(1),
+                        "target": .string("Easy conversational running"),
+                        "notes": .string("Stay relaxed and stop if impact feels uncomfortable.")
+                    ])
+                ])
+            ]),
+            "cooldown": .object([
+                "description": .string("Finish with an easy walk."),
+                "steps": .array([.string("Walk for 5 min")])
+            ]),
+            "successCriteria": .string("Finish feeling able to repeat the session next week."),
+            "equipment": .array([.string("Running shoes")]),
+            "constraintsApplied": .array([.string("walk_run_reentry_only")])
+        ])
+    }
+
     private static func strengthExercise(_ name: String, equipment: String, sets: Double, reps: String, alternative: String) -> JSONValue {
         .object([
             "kind": .string("strengthExercise"),
@@ -6211,7 +6493,7 @@ private enum PlanWorkoutCardPreviewFixtures {
             "sets": .number(sets),
             "reps": .string(reps),
             "restSeconds": .number(90),
-            "effortTarget": .string("RPE 7"),
+            "effortTarget": .string("Stop with ~2-3 RIR (submaximal)"),
             "coachingCue": .string("Stop each set with clean reps in reserve."),
             "alternatives": .array([
                 .object([
@@ -6363,6 +6645,25 @@ private enum PlanWorkoutCardPreviewFixtures {
         fallbackLocationLabel: "Munich",
         dismiss: {}
     )
+}
+
+#Preview("Workout Detail Walk Run") {
+    WorkoutDetailScreen(
+        workout: PlanWorkoutCardPreviewFixtures.workout(
+            title: "Walk-run easy",
+            activityType: "running",
+            durationMinutes: 30,
+            distance: nil,
+            intensity: "Low",
+            purpose: "Careful return to impact",
+            status: .planned,
+            prescription: PlanWorkoutCardPreviewFixtures.walkRunPrescription,
+            fuelingSummary: "Light protein-containing snack after training"
+        ),
+        fallbackLocationLabel: "Munich",
+        dismiss: {}
+    )
+    .environment(\.dynamicTypeSize, .accessibility2)
 }
 
 #Preview {

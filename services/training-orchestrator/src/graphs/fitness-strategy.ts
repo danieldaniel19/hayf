@@ -74,6 +74,10 @@ type StrategyAIOutput = {
   operatingRhythmSummary: string | null;
 };
 
+const compactTitleBudget = { maxCharacters: 42, maxWords: 6 };
+const compactSummaryBudget = { maxCharacters: 72, maxWords: 12 };
+const targetSummaryBudget = compactSummaryBudget;
+
 async function generateStrategy(state: FitnessStrategyState) {
   const architecture = state.training_architecture;
   const primary = architecture.priority_order[0] ?? "training";
@@ -87,6 +91,8 @@ async function generateStrategy(state: FitnessStrategyState) {
       "Use only the validated Training Architecture and compact planning packet.",
       "Return measurable strategy targets that are coherent with the weekly budget, recovery envelope, and goal kind.",
       "Do not invent raw workout evidence or medical claims.",
+      "Target titles may use at most 6 words or 42 characters; target and phase summaries may use at most 12 words or 72 characters.",
+      "Never use em dashes, en dashes, ellipses, raw internal labels, or navigation instructions in user-facing copy.",
     ].join(" "),
     input: {
       goal_context: state.packet.goal_context,
@@ -113,6 +119,11 @@ async function generateStrategy(state: FitnessStrategyState) {
       "You are HAYF's Fitness Strategy writer.",
       "Write concise coaching copy for the reveal screen using the validated Training Architecture and generated targets.",
       "Be specific to the goal, modalities, weekly budget, and tradeoffs. Avoid generic motivational filler.",
+      "The coach verdict must explain how the athlete will win in one or two sentences, at most 40 words and 240 characters.",
+      "The verdict must name the primary path, explain progression, and show how support work or recovery protects the goal.",
+      "When training_architecture.reentry.active is true, explain that the opening two weeks rebuild rhythm before focused work is added.",
+      "Fit-reason and pillar titles may use at most 6 words or 42 characters; summaries may use at most 12 words or 72 characters.",
+      "Never use em dashes, en dashes, ellipses, internal labels, or instructions to review another section.",
     ].join(" "),
     input: {
       goal_context: state.packet.goal_context,
@@ -127,26 +138,40 @@ async function generateStrategy(state: FitnessStrategyState) {
     },
     schema: fitnessStrategyCopySchema,
     knowledgeRefs: architecture.source_knowledge_refs,
-    testOutput: () => testStrategyOutput(architecture, primary),
+    testOutput: () => testStrategyOutput(state.packet, architecture, primary),
   });
   const artifact: FitnessStrategyArtifact = {
-    read: strategyAI.data.read,
+    read: normalizeStrategyRead(strategyAI.data.read, state.packet, architecture),
     goalTargetContext: {
-      title: String(state.packet.goal_context.normalized_goal.title ?? "Active goal"),
-      summary: strategyAI.data.goalTargetContextSummary,
+      title: compactGoalContextTitle(state.packet.goal_context.normalized_goal.title, architecture),
+      summary: compactVisibleCopy(
+        strategyAI.data.goalTargetContextSummary,
+        "This goal sets the direction for the training strategy.",
+        targetSummaryBudget,
+      ),
     },
     snapshotItems: [
       { id: "priority", systemImage: "target", value: titleCase(primary), label: "Primary driver" },
       { id: "budget", systemImage: "calendar", value: `${architecture.weekly_budget.target_sessions}/wk`, label: "Training budget" },
       { id: "horizon", systemImage: "clock", value: state.packet.goal_context.timeframe_weeks ? `${state.packet.goal_context.timeframe_weeks} wks` : "Rolling", label: "Strategy horizon" },
-      { id: "tradeoff", systemImage: "arrow.triangle.branch", value: tradeoffLabel(architecture), label: "Tradeoff read" },
+      architecture.reentry?.active
+        ? { id: "reentry", systemImage: "arrow.counterclockwise", value: "Re-entry", label: `${architecture.reentry.gap_days ?? "21+"}-day gap` }
+        : { id: "tradeoff", systemImage: "arrow.triangle.branch", value: tradeoffLabel(architecture), label: "Tradeoff read" },
     ],
     fitReasons: mergeFitReasons(strategyAI.data.fitReasons),
     pillars: mergePillars(strategyAI.data.pillars, primary),
     phases: requiresPhases
       ? architecture.phase_logic.phases.map((phase) => ({
-        ...phase,
-        targetSummary: phaseTargetSummaries.get(phase.id) ?? "This phase should prove the strategy is moving without breaking recovery.",
+        id: phase.id,
+        name: phase.name,
+        objective: phase.objective,
+        startWeek: phase.start_week,
+        endWeek: phase.end_week,
+        targetSummary: compactVisibleCopy(
+          phaseTargetSummaries.get(phase.id),
+          "Show progress while keeping recovery intact.",
+          targetSummaryBudget,
+        ),
         targets: targets.map((target) => ({
           ...target,
           id: `${phase.id}_${target.id}`,
@@ -155,7 +180,11 @@ async function generateStrategy(state: FitnessStrategyState) {
       }))
       : [],
     operatingRhythm: requiresPhases ? null : {
-      summary: strategyAI.data.operatingRhythmSummary ?? "HAYF will treat consistency as the result, using the smallest useful week that can repeat.",
+      summary: compactVisibleCopy(
+        strategyAI.data.operatingRhythmSummary,
+        "Use the smallest useful week that can repeat consistently.",
+        targetSummaryBudget,
+      ),
       anchors: architecture.priority_order.slice(0, 3).map(titleCase),
     },
     targets,
@@ -206,8 +235,8 @@ const targetShape = {
   required: ["id", "title", "summary", "direction", "targetValue", "unit", "displayValue"],
   properties: {
     id: { type: "string" },
-    title: { type: "string" },
-    summary: { type: "string" },
+    title: { type: "string", maxLength: 42 },
+    summary: { type: "string", maxLength: 72 },
     direction: { type: "string", enum: ["increase", "decrease", "maintain", "complete", "review"] },
     targetValue: { type: ["number", "null"] },
     unit: { type: ["string", "null"] },
@@ -234,7 +263,7 @@ const fitnessStrategyTargetsSchema = {
         required: ["phaseID", "targetSummary"],
         properties: {
           phaseID: { type: "string" },
-          targetSummary: { type: "string" },
+          targetSummary: { type: "string", maxLength: 72 },
         },
       },
     },
@@ -247,8 +276,8 @@ const copyItemShape = {
   required: ["id", "title", "summary"],
   properties: {
     id: { type: "string" },
-    title: { type: "string" },
-    summary: { type: "string" },
+    title: { type: "string", maxLength: 42 },
+    summary: { type: "string", maxLength: 72 },
   },
 };
 
@@ -257,8 +286,8 @@ const fitnessStrategyCopySchema = {
   additionalProperties: false,
   required: ["read", "goalTargetContextSummary", "fitReasons", "pillars", "operatingRhythmSummary"],
   properties: {
-    read: { type: "string" },
-    goalTargetContextSummary: { type: "string" },
+    read: { type: "string", maxLength: 240 },
+    goalTargetContextSummary: { type: "string", maxLength: 72 },
     fitReasons: {
       type: "array",
       minItems: 3,
@@ -271,7 +300,7 @@ const fitnessStrategyCopySchema = {
       maxItems: 3,
       items: copyItemShape,
     },
-    operatingRhythmSummary: { type: ["string", "null"] },
+    operatingRhythmSummary: { type: ["string", "null"], maxLength: 72 },
   },
 };
 
@@ -281,8 +310,8 @@ function mergeTargets(seedTargets: StrategyTarget[], aiTargets: TargetAIOutput["
     const ai = byID.get(seed.id);
     return {
       ...seed,
-      title: cleanString(ai?.title) ?? seed.title,
-      summary: cleanString(ai?.summary) ?? seed.summary,
+      title: compactVisibleCopy(ai?.title, seed.title, compactTitleBudget),
+      summary: compactVisibleCopy(ai?.summary, seed.summary, targetSummaryBudget),
       direction: ai?.direction ?? seed.direction,
       targetValue: typeof ai?.targetValue === "number" ? ai.targetValue : seed.targetValue,
       unit: ai?.unit ?? seed.unit,
@@ -300,8 +329,8 @@ function mergeFitReasons(items: StrategyAIOutput["fitReasons"]) {
   return defaults.map((fallback, index) => ({
     ...fallback,
     id: cleanString(items[index]?.id) ?? fallback.id,
-    title: cleanString(items[index]?.title) ?? fallback.title,
-    summary: cleanString(items[index]?.summary) ?? fallback.summary,
+    title: compactVisibleCopy(items[index]?.title, fallback.title, compactTitleBudget),
+    summary: compactVisibleCopy(items[index]?.summary, fallback.summary, compactSummaryBudget),
   }));
 }
 
@@ -314,8 +343,8 @@ function mergePillars(items: StrategyAIOutput["pillars"], primary: string) {
   return defaults.map((fallback, index) => ({
     ...fallback,
     id: cleanString(items[index]?.id) ?? fallback.id,
-    title: cleanString(items[index]?.title) ?? fallback.title,
-    summary: cleanString(items[index]?.summary) ?? fallback.summary,
+    title: compactVisibleCopy(items[index]?.title, fallback.title, compactTitleBudget),
+    summary: compactVisibleCopy(items[index]?.summary, fallback.summary, compactSummaryBudget),
   }));
 }
 
@@ -337,12 +366,10 @@ function testTargetOutput(seedTargets: StrategyTarget[], architecture: TrainingA
   };
 }
 
-function testStrategyOutput(architecture: TrainingArchitecture, primary: string): StrategyAIOutput {
+function testStrategyOutput(packet: PlanningPacket, architecture: TrainingArchitecture, primary: string): StrategyAIOutput {
   return {
-    read: architecture.conflict_assessment.status === "conflicting"
-      ? `HAYF will coach this by forcing the tradeoff into the open before the plan gets concrete. ${titleCase(primary)} stays first, support work is capped, and the week must protect recovery.`
-      : `HAYF will coach this through a ${titleCase(primary)}-led structure with support work kept useful but bounded by the weekly budget and recovery envelope.`,
-    goalTargetContextSummary: "This is the user target HAYF is translating into a coaching strategy.",
+    read: deterministicStrategyRead(packet, architecture),
+    goalTargetContextSummary: "This goal sets the direction for the training strategy.",
     fitReasons: [
       { id: "blueprint_fit", title: "Blueprint-led", summary: "The strategy starts from the accepted athlete read." },
       { id: "modality_fit", title: "Priority-aware", summary: "Support work stays bounded around the primary driver." },
@@ -361,6 +388,120 @@ function testStrategyOutput(architecture: TrainingArchitecture, primary: string)
 
 function cleanString(value: unknown) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeStrategyRead(
+  value: unknown,
+  packet: PlanningPacket,
+  architecture: TrainingArchitecture,
+) {
+  const candidate = cleanString(value)?.replace(/\s+/g, " ") ?? "";
+  const primary = architecture.priority_order[0] ?? "training";
+  const support = architecture.modality_dose.find((dose) => (
+    dose.modality !== primary
+    && dose.target_sessions > 0
+    && dose.role !== "optional_filler"
+    && dose.role !== "currently_inappropriate"
+  ))?.modality;
+  const sentences = candidate.match(/[^.!?]+[.!?]?/g)?.filter((sentence) => sentence.trim()).length ?? 0;
+  const includesPrimary = modalityTerms(primary).some((term) => candidate.toLowerCase().includes(term));
+  const includesSupport = !support || modalityTerms(support).some((term) => candidate.toLowerCase().includes(term));
+  const explainsProgression = /\b(?:add|build|first|increase|progress|progressing|rebuild|then|before|once)\b/i.test(candidate);
+  const explainsReentry = !architecture.reentry.active || /\b(?:first two weeks|opening two weeks|rebuild|re-entry|return)\b/i.test(candidate);
+  if (
+    validVisibleCopy(candidate, { maxCharacters: 240, maxWords: 40 })
+    && sentences >= 1
+    && sentences <= 2
+    && includesPrimary
+    && includesSupport
+    && explainsProgression
+    && explainsReentry
+  ) {
+    return candidate;
+  }
+  return deterministicStrategyRead(packet, architecture);
+}
+
+function deterministicStrategyRead(packet: PlanningPacket, architecture: TrainingArchitecture) {
+  const primary = architecture.priority_order[0] ?? "training";
+  const primaryLabel = titleCase(primary).toLowerCase();
+  const goalText = [
+    JSON.stringify(packet.goal_context.normalized_goal),
+    packet.goal_context.success_definition,
+    packet.goal_context.body_composition_intent,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const cyclingPerformanceGoal = primary === "cycling" && /\b(?:vo2|max|climb|climbing|hill)\b/i.test(goalText);
+  const firstSentence = architecture.reentry.active
+    ? cyclingPerformanceGoal
+      ? "We’ll use a two-week re-entry to rebuild cycling rhythm, then add focused work for VO2 max and climbing."
+      : `We’ll use a two-week re-entry to rebuild your ${primaryLabel} rhythm before progressing goal-specific work.`
+    : cyclingPerformanceGoal
+      ? "We’ll build the week around cycling, then progress focused VO2 max and climbing work as recovery holds."
+      : `We’ll build the week around ${primaryLabel}, then progress goal-specific work as recovery holds.`;
+  const support = architecture.modality_dose.find((dose) => (
+    dose.modality !== primary
+    && dose.target_sessions > 0
+    && dose.role !== "optional_filler"
+    && dose.role !== "currently_inappropriate"
+  ));
+  if (!support) {
+    return `${firstSentence} We’ll add load only when consistency and recovery are holding.`;
+  }
+  if (support.modality === "strength" && /\b(?:fat|lean|muscle|weight|composition)\b/i.test(goalText)) {
+    const strengthSubject = support.target_sessions === 2 ? "Two weekly strength sessions" : "Strength sessions";
+    return `${firstSentence} ${strengthSubject} will protect muscle while you lean out.`;
+  }
+  return `${firstSentence} ${titleCase(support.modality)} will support the goal without crowding recovery.`;
+}
+
+function compactGoalContextTitle(value: unknown, architecture: TrainingArchitecture) {
+  const candidate = visiblePunctuation(String(value ?? "Active goal")).replace(/\s+/g, " ").trim();
+  if (validVisibleCopy(candidate, compactTitleBudget)) return candidate;
+
+  const primary = architecture.priority_order[0] ?? "training";
+  const lower = candidate.toLowerCase();
+  const bodyComposition = /\b(?:lean|muscle|weight|fat|composition|defined)\b/.test(lower);
+  if (primary === "cycling") return bodyComposition ? "Cycling fitness and lean muscle" : "Cycling performance goal";
+  if (primary === "running") return bodyComposition ? "Running fitness and lean muscle" : "Running performance goal";
+  if (primary === "strength") return bodyComposition ? "Strength and body composition" : "Strength goal";
+  return `${titleCase(primary)} goal`;
+}
+
+function modalityTerms(modality: string) {
+  if (modality === "cycling") return ["cycling", "bike", "ride"];
+  if (modality === "strength") return ["strength", "gym", "muscle"];
+  if (modality === "running") return ["running", "run"];
+  return [modality.toLowerCase()];
+}
+
+function compactVisibleCopy(
+  value: unknown,
+  fallback: string,
+  budget: { maxCharacters: number; maxWords: number },
+) {
+  const candidate = cleanString(value)?.replace(/\s+/g, " ") ?? "";
+  return validVisibleCopy(candidate, budget) ? candidate : fallback;
+}
+
+function validVisibleCopy(
+  value: string,
+  budget: { maxCharacters: number; maxWords: number },
+) {
+  const words = value.split(/\s+/).filter(Boolean);
+  const forbidden = /[\u2013\u2014\u2026]|\.{3}|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b(?:please\s+review|review|plan\s+summary|see\s+(?:above|below)|refer\s+to)\b/i;
+  return value.length > 0
+    && value.length <= budget.maxCharacters
+    && words.length <= budget.maxWords
+    && !forbidden.test(value);
+}
+
+function visiblePunctuation(value: string) {
+  return value
+    .replace(/\s*[\u2013\u2014]\s*/g, ": ")
+    .replace(/\u2026|\.{3}/g, ".")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function strategyTargets(architecture: TrainingArchitecture): StrategyTarget[] {

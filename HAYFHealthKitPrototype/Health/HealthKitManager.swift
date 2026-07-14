@@ -222,6 +222,12 @@ struct BodyMetricTrendSummary: Codable {
     let weeklyChangeRate: Double?
     let trend: BodyMetricTrendDirection
     let confidence: String
+    let currentTrend: BodyMetricTrendDirection?
+    let currentConfidence: String?
+    let currentWindowDays: Int?
+    let currentSampleCount: Int?
+    let currentChange: Double?
+    let currentDaysCovered: Int?
 }
 
 enum BodyMetricTrendDirection: String, Codable {
@@ -1629,6 +1635,11 @@ final class HealthKitManager {
         let totalChange = latest.1 - first.1
         let weeklyRate = daysCovered > 0 ? totalChange / Double(daysCovered) * 7 : nil
         let hasUsableTrend = points.count >= minimumSamples && daysCovered >= minimumDaysCovered
+        let current = currentBodyMetricTrend(
+            points: points,
+            latestSampleDate: latest.0,
+            stableThreshold: stableThreshold
+        )
         let trend: BodyMetricTrendDirection
         if !hasUsableTrend {
             trend = .insufficient
@@ -1654,8 +1665,65 @@ final class HealthKitManager {
             change180Days: change(points: points, withinDays: 180),
             weeklyChangeRate: weeklyRate,
             trend: trend,
-            confidence: hasUsableTrend ? (points.count >= minimumSamples * 2 ? "high" : "medium") : "insufficient"
+            confidence: hasUsableTrend ? (points.count >= minimumSamples * 2 ? "high" : "medium") : "insufficient",
+            currentTrend: current?.trend,
+            currentConfidence: current?.confidence,
+            currentWindowDays: current?.windowDays,
+            currentSampleCount: current?.sampleCount,
+            currentChange: current?.change,
+            currentDaysCovered: current?.daysCovered
         )
+    }
+
+    private func currentBodyMetricTrend(
+        points: [(Date, Double)],
+        latestSampleDate: Date,
+        stableThreshold: Double
+    ) -> (trend: BodyMetricTrendDirection, confidence: String, windowDays: Int, sampleCount: Int, change: Double, daysCovered: Int)? {
+        let now = Date()
+        let latestAgeDays = Calendar.current.dateComponents([.day], from: latestSampleDate, to: now).day ?? Int.max
+        guard latestAgeDays <= 30,
+              let cutoff = Calendar.current.date(byAdding: .day, value: -90, to: now) else {
+            return nil
+        }
+
+        let recent = points.filter { $0.0 >= cutoff }
+        guard recent.count >= 3,
+              let first = recent.first,
+              let latest = recent.last else {
+            return nil
+        }
+        let recentDaysCovered = Calendar.current.dateComponents([.day], from: first.0, to: latest.0).day ?? 0
+        guard recentDaysCovered >= 21 else { return nil }
+
+        let midpoint = max(1, recent.count / 2)
+        let earlyMedian = median(recent.prefix(midpoint).map(\.1))
+        let lateMedian = median(recent.suffix(from: midpoint).map(\.1))
+        let recentChange = lateMedian - earlyMedian
+        let direction: BodyMetricTrendDirection
+        if abs(recentChange) <= stableThreshold {
+            direction = .stable
+        } else {
+            direction = recentChange > 0 ? .rising : .falling
+        }
+        return (
+            trend: direction,
+            confidence: recent.count >= 6 && latestAgeDays <= 14 ? "high" : "medium",
+            windowDays: 90,
+            sampleCount: recent.count,
+            change: recentChange,
+            daysCovered: recentDaysCovered
+        )
+    }
+
+    private func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        guard !sorted.isEmpty else { return 0 }
+        let midpoint = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[midpoint - 1] + sorted[midpoint]) / 2
+        }
+        return sorted[midpoint]
     }
 
     private func average(points: [(Date, Double)], withinDays days: Int) -> Double? {
@@ -1695,7 +1763,13 @@ final class HealthKitManager {
             change180Days: nil,
             weeklyChangeRate: nil,
             trend: .insufficient,
-            confidence: "insufficient"
+            confidence: "insufficient",
+            currentTrend: nil,
+            currentConfidence: nil,
+            currentWindowDays: nil,
+            currentSampleCount: nil,
+            currentChange: nil,
+            currentDaysCovered: nil
         )
     }
 

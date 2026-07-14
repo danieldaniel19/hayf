@@ -73,6 +73,20 @@ describe("trainingArchitectureGraph", () => {
     assert.equal(result.artifact.phase_logic.phases.length, 0);
   });
 
+  it("uses exactly two phases for a four-week time-bound goal", async () => {
+    const result = await invokeTrainingArchitectureGraph(basePacket({
+      goal_kind: "specific_goal",
+      timeframe_weeks: 4,
+      selected_modality_order: ["Cycling", "Strength"],
+      normalized_goal: { title: "Build cycling fitness", desiredOutcome: "ride more strongly" },
+    }));
+
+    assert.deepEqual(
+      result.artifact.phase_logic.phases.map(({ start_week, end_week }) => [start_week, end_week]),
+      [[1, 2], [3, 4]],
+    );
+  });
+
   it("keeps specialist consultations archetype-only with no dated workouts", async () => {
     const result = await invokeTrainingArchitectureGraph(basePacket({
       selected_modality_order: ["Cycling", "Strength", "Running"],
@@ -103,6 +117,14 @@ describe("trainingArchitectureGraph", () => {
     const packet = basePacket();
     packet.approved_evidence_summary = {
       recent_training_load: {},
+      continuity_state: {
+        state: "insufficient_history",
+        reentry_stage: "none",
+        days_since_last_workout: null,
+        last_workout_at: null,
+        historical_base: "none",
+        total_imported_workouts: 0,
+      },
       consistency: {},
       modality_mix: {},
       body_recovery_context: {},
@@ -171,13 +193,21 @@ describe("fitnessStrategyGraph and twoWeekPlanGraph", () => {
     assert.equal(plan.artifact.rhythms.length, 2);
     assert.equal(plan.artifact.rhythms[0]?.weekStartDate, packet.planning_constraints.start_date);
     assert.equal(plan.artifact.rhythms[0]?.workouts.length, architecture.weekly_budget.target_sessions);
+    assert.ok(plan.artifact.rhythms.every((rhythm) => (
+      new Set(rhythm.workouts.map((workout) => workout.scheduledDate)).size === rhythm.workouts.length
+    )));
+    assert.ok(plan.artifact.rhythms.every((rhythm) => (
+      rhythm.workouts.every((workout) => (
+        workout.scheduledDate >= rhythm.weekStartDate && workout.scheduledDate <= rhythm.weekEndDate
+      ))
+    )));
     assert.ok(plan.nodes.some((node) => node.node_name === "enrich_prescriptions"));
     assert.ok(plan.tool_calls.some((tool) => tool.tool_name === "enrich_workout_prescriptions"));
     assert.ok(plan.artifact.rhythms.every((rhythm) => (
       rhythm.workouts.every((workout) => architecture.priority_order.includes(workout.activityType.toLowerCase()))
     )));
     const workouts = plan.artifact.rhythms.flatMap((rhythm) => rhythm.workouts);
-    assert.ok(workouts.every((workout) => workout.prescription.schemaVersion === 1));
+    assert.ok(workouts.every((workout) => workout.prescription.schemaVersion === 2));
     assert.ok(workouts.every((workout) => workout.prescription.warmup.steps.length > 0));
     assert.ok(workouts.every((workout) => workout.prescription.main.blocks.length > 0));
     const strength = workouts.find((workout) => workout.activityType === "strength");
@@ -185,11 +215,240 @@ describe("fitnessStrategyGraph and twoWeekPlanGraph", () => {
     const strengthBlocks = strength.prescription.main.blocks.filter((block) => block.kind === "strengthExercise");
     assert.ok(strengthBlocks.length > 0);
     assert.ok(strengthBlocks.every((block) => block.alternatives.length > 0));
-    const endurance = workouts.find((workout) => workout.activityType === "running" || workout.activityType === "cycling");
-    assert.ok(endurance);
-    assert.ok(endurance.prescription.main.blocks.some((block) => block.kind === "steady" || block.kind === "interval"));
+    const optionalModalities = new Set(architecture.modality_dose
+      .filter((dose) => dose.role === "optional_filler")
+      .map((dose) => dose.modality));
+    assert.ok(workouts.every((workout) => !optionalModalities.has(workout.activityType)));
+  });
+
+  it("turns a 55-day interruption into a visible, dose-limited re-entry block", async () => {
+    const packet = basePacket({
+      selected_modality_order: ["Cycling", "Strength", "Running"],
+      normalized_goal: {
+        title: "Rebuild a consistent mixed training rhythm",
+        desiredOutcome: "return to cycling, strength, and running safely",
+      },
+    });
+    packet.approved_evidence_summary.continuity_state = {
+      state: "reentry",
+      reentry_stage: "extended_gap",
+      days_since_last_workout: 55,
+      last_workout_at: "2026-05-19T06:19:24Z",
+      historical_base: "established",
+      total_imported_workouts: 837,
+    };
+    packet.approved_evidence_summary.confidence = "historical";
+
+    const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+    const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+    const plan = (await invokeTwoWeekPlanGraph(packet, architecture, strategy)).artifact;
+
+    assert.equal(architecture.reentry.active, true);
+    assert.equal(architecture.reentry.stage, "extended_gap");
+    assert.equal(architecture.reentry.gap_days, 55);
+    assert.equal(architecture.weekly_budget.hard_sessions, 0);
+    assert.equal(architecture.weekly_budget.committed_week_sessions, architecture.weekly_budget.minimum_viable_sessions);
+    assert.ok(architecture.approved_archetypes.every((archetype) => archetype.fatigue_cost !== "high"));
+    assert.match(strategy.read, /re-entry/i);
+    assert.equal(plan.rhythms[0]?.workouts.length, architecture.weekly_budget.committed_week_sessions);
+    assert.equal(plan.rhythms[1]?.workouts.length, architecture.weekly_budget.draft_week_sessions);
+    assert.match(plan.rhythms[0]?.objective ?? "", /re-enter|rebuild/i);
+    const workouts = plan.rhythms.flatMap((rhythm) => rhythm.workouts);
+    const planText = workouts.map((workout) => `${workout.title} ${workout.intensityLabel} ${workout.purpose}`).join(" ");
+    assert.doesNotMatch(planText, /\b(vo2|maximal|all-out|threshold|sprint|intervals|race effort|hard)\b/i);
+    assert.ok(workouts.every((workout) => workout.prescription.main.blocks.every((block) => block.kind !== "interval")));
+  });
+
+  it("keeps a midweek 12-week cycling re-entry plan coherent from launch through Week 2", async () => {
+    const packet = basePacket({
+      goal_kind: "specific_goal",
+      timeframe_weeks: 12,
+      selected_modality_order: ["Cycling", "Strength", "Running"],
+      body_composition_intent: "fat_loss",
+      normalized_goal: {
+        title: "Lose 3 kg, improve VO2 max for cycling climbs, and keep defined muscle",
+        desiredOutcome: "lean out while improving cycling and preserving an athletic look",
+      },
+      success_definition: "Lose 3 kg while climbing better and maintaining muscle.",
+    });
+    packet.athlete_context.hidden_inputs = {
+      ...packet.athlete_context.hidden_inputs,
+      planOwnerStartDate: "2026-07-14",
+    };
+    packet.planning_constraints.frequency = "5+ days per week";
+    packet.planning_constraints.available_days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+    packet.planning_constraints.available_day_parts = ["Morning", "Afternoon"];
+    packet.planning_constraints.bad_day_floor = "10-minute walk or mobility";
+    packet.approved_evidence_summary.continuity_state = {
+      state: "reentry",
+      reentry_stage: "extended_gap",
+      days_since_last_workout: 55,
+      last_workout_at: "2026-05-19T06:19:24Z",
+      historical_base: "established",
+      total_imported_workouts: 837,
+    };
+
+    const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+    const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+    const plan = (await invokeTwoWeekPlanGraph(packet, architecture, strategy)).artifact;
+
+    assert.deepEqual(
+      architecture.phase_logic.phases.map(({ start_week, end_week }) => [start_week, end_week]),
+      [[1, 2], [3, 10], [11, 12]],
+    );
+    assert.equal(strategy.phases.length, 3);
+    assertCompactStrategyCopy(strategy);
+
+    const cyclingDose = architecture.modality_dose.find((dose) => dose.modality === "cycling");
+    const strengthDose = architecture.modality_dose.find((dose) => dose.modality === "strength");
+    const runningDose = architecture.modality_dose.find((dose) => dose.modality === "running");
+    assert.equal(cyclingDose?.target_sessions, 3);
+    assert.equal(strengthDose?.target_sessions, 2);
+    assert.equal(runningDose?.minimum_sessions, 0);
+
+    assert.equal(plan.block.startDate, "2026-07-20");
+    assert.equal(plan.block.targetDate, "2026-10-11");
+    assert.deepEqual(plan.rhythms.map((rhythm) => rhythm.programStage), ["launch", "program", "program"]);
+    assert.deepEqual(plan.rhythms.map((rhythm) => rhythm.programWeekNumber), [null, 1, 2]);
+    assert.deepEqual(plan.rhythms.map((rhythm) => rhythm.workouts.length), [2, 4, 5]);
+    assert.deepEqual(plan.rhythms[0]?.workouts.map((workout) => workout.activityType), ["cycling", "strength"]);
+    assert.deepEqual(workoutModalityCounts(plan.rhythms[1]?.workouts ?? []), { cycling: 2, strength: 2 });
+    assert.deepEqual(workoutModalityCounts(plan.rhythms[2]?.workouts ?? []), { cycling: 3, strength: 2 });
+
+    const workouts = plan.rhythms.flatMap((rhythm) => rhythm.workouts);
+    assert.ok(workouts.every((workout) => [1, 2, 3, 4, 5].includes(utcWeekday(workout.scheduledDate))));
+    assert.ok(workouts.every((workout) => workout.activityType !== "running"));
+    assert.ok(workouts.every((workout) => !/recovery/i.test(workout.title)));
+    assert.ok(workouts.every((workout) => workout.archetypeId));
+    assert.ok(workouts.every((workout) => workout.prescription.schemaVersion === 2));
+    assert.ok(workouts.every((workout) => /\b(?:Launch|Week [12])\b/.test(workout.prescription.whyToday ?? "")));
+    assert.ok(workouts.every((workout) => workout.fuelingSummary.length <= 20));
+    assert.ok(workouts.every((workout) => workout.fuelingSummary.trim().split(/\s+/).length <= 3));
+    assert.ok(workouts.every((workout) => workout.title.length <= 32));
+    assert.doesNotMatch(workouts.map((workout) => workout.title).join(" "), /[—–]/);
+
+    for (const workout of workouts) {
+      assert.doesNotMatch(
+        [workout.title, workout.intensityLabel, workout.purpose, workout.fuelingSummary].join(" "),
+        /[—–]|\b(?:RIR|RPE|approvedArchetype|archetypeId|badDayFloor)\b|[a-z]+_[a-z_]+/i,
+      );
+      const { constraintsApplied: _, ...visiblePrescription } = workout.prescription;
+      assert.doesNotMatch(JSON.stringify(visiblePrescription), /[—–]|\b(?:RIR|RPE)\b|[a-z]+_[a-z_]+/i);
+    }
+  });
+
+  it("uses one remaining slot for cycling and omits an empty launch bridge", async () => {
+    const planForOwnerDate = async (planOwnerStartDate: string) => {
+      const packet = basePacket({
+        timeframe_weeks: 12,
+        selected_modality_order: ["Cycling", "Strength"],
+        normalized_goal: { title: "Improve cycling fitness", desiredOutcome: "ride and climb better" },
+      });
+      packet.athlete_context.hidden_inputs = { ...packet.athlete_context.hidden_inputs, planOwnerStartDate };
+      packet.planning_constraints.frequency = "5+ days per week";
+      packet.approved_evidence_summary.continuity_state = {
+        state: "reentry",
+        reentry_stage: "extended_gap",
+        days_since_last_workout: 55,
+        last_workout_at: "2026-05-19T06:19:24Z",
+        historical_base: "established",
+        total_imported_workouts: 837,
+      };
+      const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+      const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+      return (await invokeTwoWeekPlanGraph(packet, architecture, strategy)).artifact;
+    };
+
+    const fridayPlan = await planForOwnerDate("2026-07-17");
+    assert.deepEqual(fridayPlan.rhythms.map((rhythm) => rhythm.programStage), ["launch", "program", "program"]);
+    assert.equal(fridayPlan.rhythms[0]?.workouts.length, 1);
+    assert.equal(fridayPlan.rhythms[0]?.workouts[0]?.activityType, "cycling");
+
+    const saturdayPlan = await planForOwnerDate("2026-07-18");
+    assert.deepEqual(saturdayPlan.rhythms.map((rhythm) => rhythm.programStage), ["program", "program"]);
+    assert.deepEqual(saturdayPlan.rhythms.map((rhythm) => rhythm.weekStartDate), ["2026-07-20", "2026-07-27"]);
+  });
+
+  it("preserves a re-entry walk-run as explicit alternating durations without distance", async () => {
+    const packet = basePacket({
+      timeframe_weeks: 8,
+      selected_modality_order: ["Running"],
+      normalized_goal: {
+        title: "Return to running consistently",
+        desiredOutcome: "rebuild running tolerance",
+      },
+    });
+    packet.planning_constraints.feasible_modalities = ["Running"];
+    packet.approved_evidence_summary.continuity_state = {
+      state: "reentry",
+      reentry_stage: "extended_gap",
+      days_since_last_workout: 55,
+      last_workout_at: "2026-05-19T06:19:24Z",
+      historical_base: "established",
+      total_imported_workouts: 100,
+    };
+
+    const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+    const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+    const plan = (await invokeTwoWeekPlanGraph(packet, architecture, strategy)).artifact;
+    const runningWorkouts = plan.rhythms.flatMap((rhythm) => rhythm.workouts)
+      .filter((workout) => workout.activityType === "running");
+
+    assert.ok(runningWorkouts.length > 0);
+    assert.ok(runningWorkouts.every((workout) => (
+      workout.prescription.main.blocks.some((block) => (
+        block.kind === "walkRun" && block.repeats > 0 && block.runDurationMinutes > 0 && block.walkDurationMinutes > 0
+      ))
+    )));
+    assert.ok(runningWorkouts.every((workout) => (
+      workout.prescription.main.blocks.every((block) => block.kind !== "steady" || block.distanceKilometers === null)
+    )));
   });
 });
+
+function assertCompactStrategyCopy(strategy: Awaited<ReturnType<typeof invokeFitnessStrategyGraph>>["artifact"]) {
+  const sentences = strategy.read.split(/[.!?]+/).map((value) => value.trim()).filter(Boolean);
+  assert.ok(strategy.read.length <= 240);
+  assert.ok(strategy.read.trim().split(/\s+/).length <= 40);
+  assert.ok(sentences.length >= 1 && sentences.length <= 2);
+  assert.doesNotMatch(strategy.read, /[—–]|plan summary|please review|review the/i);
+  for (const item of [...strategy.fitReasons, ...strategy.pillars]) {
+    assert.ok(item.title.length <= 42, `${item.title} exceeds compact title budget`);
+    assert.ok(item.title.trim().split(/\s+/).length <= 6);
+    assert.ok(item.summary.length <= 72, `${item.summary} exceeds compact summary budget`);
+    assert.ok(item.summary.trim().split(/\s+/).length <= 12);
+  }
+  const compactTargets = [
+    strategy.goalTargetContext,
+    ...strategy.targets,
+    ...strategy.phases.flatMap((phase) => [
+      { title: phase.name, summary: phase.targetSummary },
+      ...phase.targets,
+    ]),
+  ];
+  for (const item of compactTargets) {
+    assert.ok(item.title.length <= 42, `${item.title} exceeds compact title budget`);
+    assert.ok(item.title.trim().split(/\s+/).length <= 6);
+    assert.ok(item.summary.length <= 72, `${item.summary} exceeds compact summary budget`);
+    assert.ok(item.summary.trim().split(/\s+/).length <= 12);
+  }
+  if (strategy.operatingRhythm) {
+    assert.ok(strategy.operatingRhythm.summary.length <= 72);
+    assert.ok(strategy.operatingRhythm.summary.trim().split(/\s+/).length <= 12);
+  }
+  assert.ok(strategy.phases.every((phase) => phase.objective.length <= 80));
+}
+
+function workoutModalityCounts(workouts: Array<{ activityType: string }>) {
+  return workouts.reduce<Record<string, number>>((counts, workout) => {
+    counts[workout.activityType] = (counts[workout.activityType] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function utcWeekday(date: string) {
+  return new Date(`${date}T12:00:00Z`).getUTCDay();
+}
 
 function basePacket(overrides: Partial<PlanningPacket["goal_context"]> = {}): PlanningPacket {
   return {
@@ -217,6 +476,8 @@ function basePacket(overrides: Partial<PlanningPacket["goal_context"]> = {}): Pl
     },
     planning_constraints: {
       feasible_modalities: ["Strength", "Running", "Cycling"],
+      available_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+      available_day_parts: ["Morning", "Afternoon"],
       frequency: "3 days per week",
       session_length: "30-45 minutes",
       injuries: null,
@@ -228,6 +489,14 @@ function basePacket(overrides: Partial<PlanningPacket["goal_context"]> = {}): Pl
     },
     approved_evidence_summary: {
       recent_training_load: { sessions28d: 9 },
+      continuity_state: {
+        state: "active",
+        reentry_stage: "none",
+        days_since_last_workout: 2,
+        last_workout_at: "2026-07-11T08:00:00Z",
+        historical_base: "established",
+        total_imported_workouts: 120,
+      },
       consistency: { activeWeeks8w: 6 },
       modality_mix: { strength: 5, running: 3, cycling: 1 },
       body_recovery_context: { sleep: "unknown", bodyMassTrend: "stable" },
