@@ -705,6 +705,7 @@ function validateEnrichedPlanArtifact(
       try {
         validateRichPrescription(workout.prescription, workout, disallowedEquipment);
         validateReentryPrescription(workout.prescription, workout, architecture);
+        validateInterferencePrescription(workout, rhythm.workouts, architecture);
       } catch {
         const draftWorkout = draftRhythm.workouts[workoutIndex];
         workout.prescription = richPrescriptionForWorkout(
@@ -716,8 +717,8 @@ function validateEnrichedPlanArtifact(
         );
         validateRichPrescription(workout.prescription, workout, disallowedEquipment);
         validateReentryPrescription(workout.prescription, workout, architecture);
+        validateInterferencePrescription(workout, rhythm.workouts, architecture);
       }
-      validateInterferencePrescription(workout, rhythm.workouts, architecture);
     }
   }
   return artifact;
