@@ -242,6 +242,7 @@ function planningPacketFromPlanContext(context: JsonRecord, architecture: Traini
       goal_fit: {},
       hidden_inputs: {
         planOwnerStartDate: stringAt(context, "planOwnerStartDate"),
+        programStartDate: stringAt(strategy, "start_date") ?? stringAt(context, "programStartDate"),
       },
     },
     goal_context: {

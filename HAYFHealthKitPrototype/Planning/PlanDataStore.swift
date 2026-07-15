@@ -118,7 +118,7 @@ final class PlanDataStore: ObservableObject {
 
         let plans: [PlanWeeklyRhythm] = try await supabase
             .from("weekly_plans")
-            .select("id, fitness_strategy_id, week_start_date, week_end_date, objective, status, rhythm_json, constraints_json")
+            .select("id, fitness_strategy_id, week_start_date, week_end_date, objective, status, rhythm_json, constraints_json, context_json")
             .eq("fitness_strategy_id", value: strategyID.uuidString.lowercased())
             .gte("week_start_date", value: PlanCalendar.dateFormatter.string(from: window.start))
             .lte("week_start_date", value: PlanCalendar.dateFormatter.string(from: window.end))
@@ -528,6 +528,7 @@ struct PlanWeeklyRhythm: Decodable, Identifiable {
     let status: String
     let rhythm: JSONValue?
     let constraints: JSONValue?
+    let context: PlanWeeklyContext?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -539,6 +540,31 @@ struct PlanWeeklyRhythm: Decodable, Identifiable {
         case status
         case rhythm = "rhythm_json"
         case constraints = "constraints_json"
+        case context = "context_json"
+    }
+
+    var programStage: String? {
+        rhythmString("programStage")
+    }
+
+    var programWeekNumber: Int? {
+        guard case let .object(object)? = rhythm,
+              case let .number(value)? = object["programWeekNumber"] else {
+            return nil
+        }
+        return Int(value)
+    }
+
+    var programStartDate: String? {
+        rhythmString("programStartDate")
+    }
+
+    private func rhythmString(_ key: String) -> String? {
+        guard case let .object(object)? = rhythm,
+              case let .string(value)? = object[key] else {
+            return nil
+        }
+        return value
     }
 
     func constraint(for date: String) -> PlanDayConstraint? {
@@ -567,6 +593,22 @@ struct PlanWeeklyRhythm: Decodable, Identifiable {
 
         return PlanDayConstraint(date: date, kind: kind, note: note, updatedAt: updatedAt)
     }
+}
+
+struct PlanWeeklyContext: Decodable {
+    let schemaVersion: Int?
+    let strategyExplanation: String?
+    let provenance: PlanWeeklyPlanProvenance?
+    let adaptationExplanation: String?
+    let updatedAt: String?
+}
+
+enum PlanWeeklyPlanProvenance: String, Decodable {
+    case hayfOriginal = "hayf_original"
+    case userChangedPending = "user_changed_pending"
+    case reviewedNoAdjustment = "reviewed_no_adjustment"
+    case hayfAdapted = "hayf_adapted"
+    case userChangesKept = "user_changes_kept"
 }
 
 struct PlanDayConstraint: Equatable {

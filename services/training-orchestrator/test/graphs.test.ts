@@ -369,6 +369,28 @@ describe("fitnessStrategyGraph and twoWeekPlanGraph", () => {
     assert.deepEqual(saturdayPlan.rhythms.map((rhythm) => rhythm.weekStartDate), ["2026-07-20", "2026-07-27"]);
   });
 
+  it("keeps program week numbers absolute on a later visible-window refresh", async () => {
+    const packet = basePacket({
+      timeframe_weeks: 12,
+      selected_modality_order: ["Cycling", "Strength"],
+      normalized_goal: { title: "Improve cycling fitness", desiredOutcome: "ride and climb better" },
+    });
+    packet.planning_constraints.start_date = "2026-08-10";
+    packet.athlete_context.hidden_inputs = {
+      ...packet.athlete_context.hidden_inputs,
+      planOwnerStartDate: "2026-07-14",
+      programStartDate: "2026-07-20",
+    };
+    const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+    const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+    const plan = (await invokeTwoWeekPlanGraph(packet, architecture, strategy)).artifact;
+
+    assert.deepEqual(plan.rhythms.map((rhythm) => rhythm.programStage), ["program", "program"]);
+    assert.deepEqual(plan.rhythms.map((rhythm) => rhythm.programWeekNumber), [4, 5]);
+    assert.ok(plan.rhythms.every((rhythm) => rhythm.weekContext.strategyExplanation.length <= 180));
+    assert.ok(plan.rhythms.every((rhythm) => !/[—–]|[a-z]+_[a-z_]+/i.test(rhythm.weekContext.strategyExplanation)));
+  });
+
   it("preserves a re-entry walk-run as explicit alternating durations without distance", async () => {
     const packet = basePacket({
       timeframe_weeks: 8,

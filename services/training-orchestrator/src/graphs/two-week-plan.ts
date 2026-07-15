@@ -75,13 +75,14 @@ async function generatePlan(state: TwoWeekPlanState) {
     graphNodeName: "generate_plan",
     system: [
       "You are HAYF's two-week plan compiler.",
-      "Generate the exact supplied rhythm list. A normal opening has Program Weeks 1 and 2; a midweek opening has a launch bridge followed by Program Weeks 1 and 2.",
+      "Generate the exact supplied rhythm list. An initial Monday opening has Program Weeks 1 and 2; a midweek opening may add a launch bridge, and later refreshes use the supplied absolute program weeks.",
       "Generate exactly the supplied rhythm specifications, modality targets, and allowed weekdays, with at most one workout on each calendar day.",
       "A launch rhythm is a short bridge before Program Week 1. It must contain cycling first and strength second when those are the primary and secondary modalities; optional filler never displaces a core modality.",
       "When reentry.active is true, explicitly describe the opening rhythm as re-entry and keep all sessions easy to moderate with no intervals, threshold, VO2max, sprints, maximal strength, or other high-fatigue work.",
       "Use only allowed modalities and approved workout archetypes from the planner input.",
       "Recovery-labelled workouts require a real preceding hard or long load or an explicit recovery trigger. A first session after a gap is easy, not recovery.",
       "Respect the validated Training Architecture, Fitness Strategy, recovery envelope, hard-day cap, bad-day floor, and weekly plan rules.",
+      "For each rhythm, write weekContext.strategyExplanation as one concrete, coach-to-athlete sentence of at most 180 characters. Name what the session mix develops, why its load fits this point in the phase, and the recovery tradeoff. Use you or your where natural.",
       "Do not emit deterministic fallback markers or generic templates. If the constraints conflict, still return the safest valid plan inside the provided architecture.",
       "Set block.context to an empty object; Supabase will add persisted context after validation.",
     ].join(" "),
@@ -155,12 +156,13 @@ async function enrichPrescriptions(state: TwoWeekPlanState) {
     "You are HAYF's workout prescription detailer.",
     "Enrich the provided opening plan with structured workout-card prescription JSON.",
     "You may improve workout titles and prescription details, but you must not change dates, sequence order, archetype ID, activity type, duration, intensity, purpose, fueling, week count, or workout count.",
+    "Do not change weekContext or its strategy explanation.",
     "Every prescription must follow the immutable activityType. A strength workout must contain strengthExercise blocks even when its title or purpose mentions mobility, joint preparation, or support work.",
     "Use the validated Training Architecture, approved archetypes, equipment access, injuries, avoidances, planner constraints, and same-week neighboring workouts.",
     "Respect interference rules. Do not prescribe heavy lower-body strength immediately after long or hard cycling/running sessions.",
     "Strength workouts require exercises with sets, reps, equipment or machines, coaching cues, and at least one alternative per exercise.",
     "Cycling and running interval workouts require interval blocks. Long or endurance workouts require steady distance/time/zone or pace guidance.",
-    "Use prescription schema version 2 and include whyToday. It must name Launch, Week 1, or Week 2 and explain how the workout advances the current phase and goal.",
+    "Use prescription schema version 2 and include whyToday. It must name Launch or the supplied absolute program week and explain how the workout advances the current phase and goal.",
     "During re-entry, an easy running archetype is a structured walk-run with run and walk durations, not a continuous steady run, and it has no estimated distance.",
     "All visible copy must use plain language. Never emit internal identifiers, snake_case, RIR, RPE, em dashes, or en dashes.",
     "Return strict JSON only.",
@@ -447,6 +449,7 @@ const rhythmSchema = {
     "programStage",
     "programWeekNumber",
     "programStartDate",
+    "weekContext",
     "modalityTargets",
     "objective",
     "priorityOrder",
@@ -461,6 +464,14 @@ const rhythmSchema = {
     programStage: { type: "string", enum: ["launch", "program"] },
     programWeekNumber: { type: ["number", "null"] },
     programStartDate: { type: "string" },
+    weekContext: {
+      type: "object",
+      additionalProperties: false,
+      required: ["strategyExplanation"],
+      properties: {
+        strategyExplanation: { type: "string", maxLength: 180 },
+      },
+    },
     modalityTargets: {
       type: "array",
       items: {
@@ -588,6 +599,7 @@ function validateDraftPlanArtifact(
     if (!sameModalityTargets(rhythm.modalityTargets, expected.modalityTargets)) {
       throw new Error(`Two-week plan compiler returned invalid modality targets for ${rhythm.weekStartDate}.`);
     }
+    validateWeekContext(rhythm.weekContext, rhythm.weekStartDate);
     if (rhythm.workouts.length !== expected.workoutCount) {
       throw new Error(`Two-week plan compiler returned ${rhythm.workouts.length} workouts for ${rhythm.weekStartDate}; expected ${expected.workoutCount}.`);
     }
@@ -689,6 +701,7 @@ function validateEnrichedPlanArtifact(
       throw new Error(`Prescription enrichment changed workout count for ${rhythm.weekStartDate}.`);
     }
     rhythm.objective = draftRhythm.objective;
+    rhythm.weekContext = draftRhythm.weekContext;
     rhythm.hardEasyDistribution = draftRhythm.hardEasyDistribution;
     rhythm.swapRules = draftRhythm.swapRules;
     for (const [workoutIndex, workout] of rhythm.workouts.entries()) {
@@ -937,8 +950,26 @@ function validateCompactWorkoutCopy(workout: DraftTwoWeekPlanArtifact["rhythms"]
   }
 }
 
+function validateWeekContext(
+  context: DraftTwoWeekPlanArtifact["rhythms"][number]["weekContext"],
+  weekStartDate: string,
+) {
+  const explanation = plainVisibleCopy(context?.strategyExplanation ?? "");
+  if (!explanation || explanation.length > 180) {
+    throw new Error(`Week context for ${weekStartDate} must contain a strategy explanation of at most 180 characters.`);
+  }
+  const sentenceMarks = explanation.match(/[.!?](?:\s|$)/g)?.length ?? 0;
+  if (sentenceMarks > 1) {
+    throw new Error(`Week context for ${weekStartDate} must be one sentence.`);
+  }
+  if (/\b[a-z][a-z0-9]*_[a-z0-9_]+\b|[—–]|\b(?:RIR|RPE)\b/i.test(explanation)) {
+    throw new Error(`Week context for ${weekStartDate} contains prohibited copy.`);
+  }
+  context.strategyExplanation = explanation;
+}
+
 function validateVisiblePrescriptionCopy(prescription: RichWorkoutPrescription, workoutTitle: string) {
-  if (!/\b(?:Launch|Week\s+[12])\b/i.test(prescription.whyToday ?? "")) {
+  if (!/\b(?:Launch|Week\s+\d+)\b/i.test(prescription.whyToday ?? "")) {
     throw new Error(`Prescription for ${workoutTitle} does not explain its program week.`);
   }
   const visit = (value: unknown, path: string) => {
@@ -1011,13 +1042,17 @@ function openingPlanContext(
   const ownerStartDate = /^\d{4}-\d{2}-\d{2}$/.test(ownerCandidate)
     ? ownerCandidate
     : visibleStart;
-  const partialWeek = ownerStartDate > visibleStart && ownerStartDate <= visibleEnd;
+  const persistedProgramStart = String(packet.athlete_context.hidden_inputs.programStartDate ?? "");
+  const hasPersistedProgramStart = /^\d{4}-\d{2}-\d{2}$/.test(persistedProgramStart);
+  const initialPartialWeek = ownerStartDate > visibleStart && ownerStartDate <= visibleEnd;
+  const computedProgramStart = initialPartialWeek ? isoDate(addDays(visibleWeekStart, 7)) : visibleStart;
+  const programStartDate = hasPersistedProgramStart ? persistedProgramStart : computedProgramStart;
+  const partialWeek = visibleStart < programStartDate && ownerStartDate > visibleStart && ownerStartDate <= visibleEnd;
   const launchDates = partialWeek
     ? availableDatesForRange(packet, ownerStartDate, visibleEnd)
     : [];
   const launchCount = Math.min(2, launchDates.length);
-  const programStart = partialWeek ? addDays(visibleWeekStart, 7) : visibleWeekStart;
-  const programStartDate = isoDate(programStart);
+  const programStart = parseDate(programStartDate);
 
   const programSpec = (weekStart: Date, programWeekNumber: number, requestedCount: number): OpeningRhythmSpec => {
     const weekStartDate = isoDate(weekStart);
@@ -1056,13 +1091,14 @@ function openingPlanContext(
     };
   }
 
-  const firstProgramStart = partialWeek ? programStart : visibleWeekStart;
+  const firstProgramStart = visibleStart < programStartDate ? programStart : visibleWeekStart;
+  const firstProgramWeekNumber = Math.max(1, Math.floor(daysBetween(programStartDate, isoDate(firstProgramStart)) / 7) + 1);
   return {
     ownerStartDate,
-    programStartDate: isoDate(firstProgramStart),
+    programStartDate,
     rhythms: [
-      programSpec(firstProgramStart, 1, targets[0]),
-      programSpec(addDays(firstProgramStart, 7), 2, targets[1]),
+      programSpec(firstProgramStart, firstProgramWeekNumber, targets[0]),
+      programSpec(addDays(firstProgramStart, 7), firstProgramWeekNumber + 1, targets[1]),
     ],
   };
 }
@@ -1187,6 +1223,9 @@ function applyPlanContractGuardrails(
       programStage: spec.programStage,
       programWeekNumber: spec.programWeekNumber,
       programStartDate: spec.programStartDate,
+      weekContext: generatedRhythm?.weekContext ?? {
+        strategyExplanation: weekStrategyExplanation(spec, architecture),
+      },
       modalityTargets: spec.modalityTargets,
       objective: spec.programStage === "launch"
         ? "Use two familiar sessions to bridge into Program Week 1."
@@ -1333,6 +1372,9 @@ function weekRhythm(
     programStage: spec.programStage,
     programWeekNumber: spec.programWeekNumber,
     programStartDate: spec.programStartDate,
+    weekContext: {
+      strategyExplanation: weekStrategyExplanation(spec, architecture),
+    },
     modalityTargets: spec.modalityTargets,
     objective: spec.programStage === "launch"
       ? "Use two familiar sessions to bridge into Program Week 1."
@@ -1372,6 +1414,22 @@ function weekRhythm(
       }, modality, date, index, architecture);
     }),
   };
+}
+
+function weekStrategyExplanation(spec: OpeningRhythmSpec, architecture: TrainingArchitecture) {
+  const modalities = spec.modalityTargets
+    .filter((target) => target.sessions > 0)
+    .map((target) => titleCase(normalizeModality(target.modality)));
+  const mix = modalities.length > 1
+    ? `${modalities.slice(0, -1).join(", ")} and ${modalities[modalities.length - 1]}`
+    : modalities[0] ?? "Training";
+  if (spec.programStage === "launch") {
+    return `I paired ${mix} to ease you back into training without adding fatigue before Week 1.`;
+  }
+  if (architecture.reentry?.active) {
+    return `This ${mix} mix rebuilds your training rhythm while keeping fatigue inside the current phase's recovery budget.`;
+  }
+  return `This ${mix} mix develops the phase's priority while keeping your weekly load balanced enough to repeat.`;
 }
 
 function sessionTargetsForArchitecture(architecture: TrainingArchitecture): [number, number] {

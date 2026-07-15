@@ -1,4 +1,5 @@
 import { AI_TOUCHPOINT_CATALOG } from "../../supabase/functions/_shared/ai-touchpoint-catalog.ts";
+import { touchpointResponseMetadata } from "../../supabase/functions/_shared/ai-touchpoint-schemas.ts";
 import { MOCK_TOUCHPOINT_FIXTURES } from "./mock-fixtures.ts";
 import {
   buildOpenAIRequestBody,
@@ -104,6 +105,22 @@ Deno.test("buildOpenAIRequestBody includes structured output schema metadata", (
   assertEquals(text.format.name, "generate_summary");
   assertEquals(text.format.strict, true);
   assert(text.format.schema.properties.readback);
+});
+
+Deno.test("workout candidate schemas satisfy strict structured output object rules", () => {
+  for (
+    const id of [
+      "workout_replacements",
+      "workout_additions",
+      "workout_interpretation",
+    ]
+  ) {
+    const metadata = touchpointResponseMetadata("planning", id);
+    if (!metadata) {
+      throw new Error(`Missing planning response metadata for ${id}`);
+    }
+    assertStrictObjectSchemas(metadata.schema, `planning/${id}`);
+  }
 });
 
 Deno.test("summarizeFixtureForClient extracts human-readable context cues", () => {
@@ -331,5 +348,38 @@ function assertThrows(fn: () => unknown) {
   }
   if (!didThrow) {
     throw new Error("Expected function to throw");
+  }
+}
+
+function assertStrictObjectSchemas(value: unknown, path: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const schema = value as Record<string, unknown>;
+  const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (types.includes("object")) {
+    assertEquals(schema.additionalProperties, false);
+    const properties = schema.properties as Record<string, unknown> | undefined;
+    if (!properties) throw new Error(`Missing properties at ${path}`);
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    assertEquals([...required].sort(), Object.keys(properties).sort());
+  }
+
+  for (const key of ["properties", "items", "anyOf", "oneOf", "allOf"]) {
+    const child = schema[key];
+    if (Array.isArray(child)) {
+      child.forEach((item, index) =>
+        assertStrictObjectSchemas(item, `${path}.${key}[${index}]`)
+      );
+    } else if (child && typeof child === "object") {
+      if (key === "properties") {
+        for (const [name, propertySchema] of Object.entries(child)) {
+          assertStrictObjectSchemas(
+            propertySchema,
+            `${path}.properties.${name}`,
+          );
+        }
+      } else {
+        assertStrictObjectSchemas(child, `${path}.${key}`);
+      }
+    }
   }
 }

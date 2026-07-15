@@ -428,6 +428,9 @@ export type TwoWeekPlanArtifact = {
     programStage: "launch" | "program";
     programWeekNumber: number | null;
     programStartDate: string;
+    weekContext: {
+      strategyExplanation: string;
+    };
     modalityTargets: Array<{
       modality: string;
       sessions: number;
