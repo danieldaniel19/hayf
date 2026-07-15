@@ -107,12 +107,13 @@ Deno.test("buildOpenAIRequestBody includes structured output schema metadata", (
   assert(text.format.schema.properties.readback);
 });
 
-Deno.test("workout candidate schemas satisfy strict structured output object rules", () => {
+Deno.test("interactive planning schemas satisfy strict structured output object rules", () => {
   for (
     const id of [
       "workout_replacements",
       "workout_additions",
       "workout_interpretation",
+      "pending_plan_review",
     ]
   ) {
     const metadata = touchpointResponseMetadata("planning", id);

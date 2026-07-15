@@ -756,72 +756,6 @@ const editRepairSchema: Record<string, unknown> = {
   },
 };
 
-const pendingPlanReviewSchema: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["reviewNeeded", "reason", "summary", "confidence", "notes", "mutations"],
-  properties: {
-    reviewNeeded: { type: "boolean" },
-    reason: { type: ["string", "null"] },
-    summary: { type: ["string", "null"] },
-    confidence: { type: "string", enum: ["low", "medium", "high"] },
-    notes: { type: ["string", "null"] },
-    mutations: {
-      type: "array",
-      maxItems: 4,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["type", "workout_id", "fields"],
-        properties: {
-          type: { type: "string", enum: ["create_workout", "update_workout", "delete_workout"] },
-          workout_id: { type: ["string", "null"] },
-          fields: {
-            type: ["object", "null"],
-            additionalProperties: false,
-            required: [
-              "scheduled_date",
-              "sequence_order",
-              "activity_type",
-              "title",
-              "duration_minutes",
-              "intensity_label",
-              "purpose",
-              "prescription_json",
-              "fueling_summary",
-            ],
-            properties: {
-              scheduled_date: { type: ["string", "null"] },
-              sequence_order: { type: ["integer", "null"] },
-              activity_type: { type: ["string", "null"] },
-              title: { type: ["string", "null"] },
-              duration_minutes: { type: ["integer", "null"] },
-              intensity_label: { type: ["string", "null"] },
-              purpose: { type: ["string", "null"] },
-              prescription_json: {
-                type: ["object", "null"],
-                additionalProperties: false,
-                required: ["warmup", "main", "cooldown", "successCriteria"],
-                properties: {
-                  schemaVersion: { type: ["integer", "null"] },
-                  summary: { type: ["string", "null"] },
-                  warmup: { type: ["string", "object", "null"] },
-                  main: { type: ["string", "array", "object", "null"], items: { type: "string" } },
-                  cooldown: { type: ["string", "object", "null"] },
-                  successCriteria: { type: ["string", "null"] },
-                  equipment: { type: ["array", "null"], items: { type: "string" } },
-                  constraintsApplied: { type: ["array", "null"], items: { type: "string" } },
-                },
-              },
-              fueling_summary: { type: ["string", "null"] },
-            },
-          },
-        },
-      },
-    },
-  },
-};
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -4715,7 +4649,7 @@ async function runPendingPlanReview(context: Record<string, unknown>, model: str
         type: "json_schema",
         name: "pending_plan_review",
         strict: true,
-        schema: pendingPlanReviewSchema,
+        schema: requiredPlanningResponseSchema("pending_plan_review"),
       },
     )),
   });
