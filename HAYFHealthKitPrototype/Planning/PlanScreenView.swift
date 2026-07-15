@@ -28,13 +28,16 @@ struct PlanScreenView: View {
 
     private let planningAIProvider = PlanningAIProvider()
 
+    let userName: String?
     let presentActiveBlockOnFirstLoad: Bool
     let onDidPresentActiveBlockOnFirstLoad: () -> Void
 
     init(
+        userName: String? = nil,
         presentActiveBlockOnFirstLoad: Bool = false,
         onDidPresentActiveBlockOnFirstLoad: @escaping () -> Void = {}
     ) {
+        self.userName = userName
         self.presentActiveBlockOnFirstLoad = presentActiveBlockOnFirstLoad
         self.onDidPresentActiveBlockOnFirstLoad = onDidPresentActiveBlockOnFirstLoad
     }
@@ -50,6 +53,8 @@ struct PlanScreenView: View {
                         PlanLoadingView()
                     } else if store.activeBlock != nil {
                         PlanContentView(
+                            userName: userName,
+                            phases: store.phases,
                             weeklyRhythms: store.weeklyRhythms,
                             workouts: store.workouts,
                             homeLocationLabel: store.homeLocationLabel,
@@ -918,6 +923,8 @@ private struct PlanEditAnalysisOverlay: View {
 }
 
 private struct PlanContentView: View {
+    let userName: String?
+    let phases: [PlanFitnessBlockPhase]
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
     let homeLocationLabel: String?
@@ -945,6 +952,8 @@ private struct PlanContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 PlanWorkoutsPanel(
+                    userName: userName,
+                    phases: phases,
                     weeklyRhythms: weeklyRhythms,
                     workouts: workouts,
                     homeLocationLabel: homeLocationLabel,
@@ -1393,7 +1402,10 @@ private struct PlanMoveCue: View {
 
 private struct PlanWorkoutsPanel: View {
     @State private var selectedWeek: PlanWeekBucket = .current
+    @State private var selectedWeekContext: PlanWeekContextPresentation?
 
+    let userName: String?
+    let phases: [PlanFitnessBlockPhase]
     let weeklyRhythms: [PlanWeeklyRhythm]
     let workouts: [PlanWorkout]
     let homeLocationLabel: String?
@@ -1451,6 +1463,15 @@ private struct PlanWorkoutsPanel: View {
                     evaluations: evaluations,
                     movingWorkout: movingWorkout,
                     isAnalyzingEdit: isAnalyzingEdit,
+                    showWeekContext: {
+                        guard let rhythm = rhythm(for: selectedWeek) else { return }
+                        selectedWeekContext = PlanWeekContextPresentation(
+                            rhythm: rhythm,
+                            phases: phases,
+                            workouts: groups(for: selectedWeek).flatMap(\.workouts),
+                            userName: userName
+                        )
+                    },
                     showTargetDetail: showTargetDetail,
                     moveWorkout: moveWorkout,
                     beginMoveWorkout: beginMoveWorkout,
@@ -1467,6 +1488,12 @@ private struct PlanWorkoutsPanel: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(HAYFColor.borderStrong, lineWidth: 1)
             }
+        }
+        .sheet(item: $selectedWeekContext) { context in
+            PlanWeekContextSheet(context: context)
+                .presentationDetents([.height(380), .medium])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(HAYFColor.neutral)
         }
     }
 
@@ -1668,6 +1695,7 @@ private struct PlanWeekSection: View {
     let evaluations: [PlanGoalEvaluation]
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
+    let showWeekContext: () -> Void
     let showTargetDetail: (PlanGoalTarget) -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
@@ -1685,16 +1713,13 @@ private struct PlanWeekSection: View {
                         .foregroundStyle(HAYFColor.primary)
 
                     if let rhythm {
-                        PlanWeekStatusChip(status: rhythm.status)
+                        PlanWeekStatusChip(
+                            status: rhythm.status,
+                            open: showWeekContext
+                        )
                     }
 
                     Spacer(minLength: 8)
-                }
-
-                if rhythm?.status == "draft" {
-                    Text("Finalizes Sunday 9pm")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(HAYFColor.orange)
                 }
             }
 
@@ -1729,6 +1754,384 @@ private struct PlanWeekSection: View {
                 }
             }
         }
+    }
+}
+
+private struct PlanWeekContextPresentation: Identifiable {
+    private struct PhaseDetails {
+        let sequence: Int
+        let name: String
+        let week: Int
+        let totalWeeks: Int
+    }
+
+    let id: UUID
+    let headerTitle: String
+    let metadataLabels: [String]
+    let provenanceLabel: String
+    let isDraft: Bool
+    let statusExplanation: String
+    let coachMessage: String
+    let adaptationMessage: String?
+
+    init(
+        rhythm: PlanWeeklyRhythm,
+        phases: [PlanFitnessBlockPhase],
+        workouts: [PlanWorkout],
+        userName: String?
+    ) {
+        id = rhythm.id
+        let phase = Self.phaseDetails(for: rhythm, phases: phases)
+        headerTitle = Self.dashless(Self.headerTitle(for: rhythm, phases: phases, phase: phase))
+        metadataLabels = Self.metadataLabels(for: rhythm, phase: phase).map(Self.dashless)
+        provenanceLabel = Self.provenanceLabel(for: rhythm.context?.provenance ?? .hayfOriginal)
+        isDraft = rhythm.status == "draft"
+        statusExplanation = isDraft
+            ? "This is still a draft. HAYF will finalize it Sunday at 9 p.m., so there is still time for your changes."
+            : "This week is committed. You have accepted these sessions, and they are ready to follow."
+
+        let strategyRationale = Self.sentence(
+            rhythm.context?.strategyExplanation,
+            fallback: rhythm.objective.isEmpty
+                ? "This week supports the current strategy while keeping training repeatable."
+                : rhythm.objective
+        )
+        coachMessage = Self.coachMessage(
+            for: rhythm,
+            workouts: workouts,
+            firstName: Self.firstName(from: userName),
+            strategyRationale: strategyRationale
+        )
+        adaptationMessage = Self.adaptationSentence(for: rhythm.context)
+    }
+
+    private static func weekLabel(for rhythm: PlanWeeklyRhythm) -> String {
+        if rhythm.programStage == "launch" {
+            return "Launch"
+        }
+        if let week = rhythm.programWeekNumber {
+            return "Week \(week)"
+        }
+        return "Why this week"
+    }
+
+    private static func headerTitle(
+        for rhythm: PlanWeeklyRhythm,
+        phases: [PlanFitnessBlockPhase],
+        phase: PhaseDetails?
+    ) -> String {
+        if rhythm.programStage == "launch" {
+            return "Launch week"
+        }
+
+        guard let weekNumber = rhythm.programWeekNumber else {
+            return "Why this week"
+        }
+
+        guard let phase else {
+            return phases.isEmpty
+                ? (weekNumber == 1 ? "First week of your rhythm" : "Week \(weekNumber) of your rhythm")
+                : "Program week \(weekNumber)"
+        }
+
+        if phase.totalWeeks == 1 {
+            return "\(phase.name) focus week"
+        }
+        if phase.week == 1 {
+            return "First week of \(phase.name)"
+        }
+        if phase.week >= phase.totalWeeks {
+            return "Final week of \(phase.name)"
+        }
+        return "Week \(phase.week) of \(phase.name)"
+    }
+
+    private static func phaseDetails(
+        for rhythm: PlanWeeklyRhythm,
+        phases: [PlanFitnessBlockPhase]
+    ) -> PhaseDetails? {
+        guard let weekStart = PlanDate.date(from: rhythm.weekStartDate),
+              let phaseMatch = phases.enumerated().first(where: { _, phase in
+                  guard let start = PlanDate.date(from: phase.startDate),
+                        let end = PlanDate.date(from: phase.endDate) else {
+                      return false
+                  }
+                  return weekStart >= start && weekStart <= end
+              }),
+              let phaseStart = PlanDate.date(from: phaseMatch.element.startDate),
+              let phaseEnd = PlanDate.date(from: phaseMatch.element.endDate) else {
+            return nil
+        }
+
+        let calendar = PlanCalendar.iso
+        let elapsedDays = max(0, calendar.dateComponents([.day], from: phaseStart, to: weekStart).day ?? 0)
+        let totalDays = max(0, calendar.dateComponents([.day], from: phaseStart, to: phaseEnd).day ?? 0)
+        return PhaseDetails(
+            sequence: phaseMatch.offset + 1,
+            name: phaseMatch.element.name,
+            week: (elapsedDays / 7) + 1,
+            totalWeeks: (totalDays / 7) + 1
+        )
+    }
+
+    private static func metadataLabels(
+        for rhythm: PlanWeeklyRhythm,
+        phase: PhaseDetails?
+    ) -> [String] {
+        var labels = [weekLabel(for: rhythm)]
+        if let phase {
+            labels.append("Phase \(phase.sequence)")
+            labels.append(phase.name)
+        }
+        return labels
+    }
+
+    private static func coachMessage(
+        for rhythm: PlanWeeklyRhythm,
+        workouts: [PlanWorkout],
+        firstName: String?,
+        strategyRationale: String
+    ) -> String {
+        let hello = firstName.map { "Hey, \($0)," } ?? "Hey,"
+        let opening: String
+        let rationale: String
+        let close: String
+
+        if rhythm.programStage == "launch" {
+            opening = "\(hello) this is your launch week, so we are keeping it light."
+            rationale = "The ride wakes your aerobic system up without much fatigue, while strength reintroduces load safely."
+            close = "You should finish fresh for Week 1."
+        } else if rhythm.status == "draft" {
+            opening = "\(hello) here is next week's draft."
+            rationale = warmRationale(strategyRationale)
+            close = "We can still adapt it before it is committed."
+        } else {
+            opening = "\(hello) here is this week's plan."
+            rationale = warmRationale(strategyRationale)
+            close = "Keep the easy work easy; the spacing matters too."
+        }
+
+        return [opening, sessionOverview(for: rhythm, workouts: workouts), rationale, close]
+            .joined(separator: " ")
+    }
+
+    private static func firstName(from fullName: String?) -> String? {
+        fullName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: \.isWhitespace)
+            .first
+            .map(String.init)
+    }
+
+    private static func warmRationale(_ rationale: String) -> String {
+        let body = dashless(rationale).trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutStop = body.last.map { ".!?".contains($0) } == true ? String(body.dropLast()) : body
+        let lowercasedLead = withoutStop.prefix(1).lowercased() + String(withoutStop.dropFirst())
+        let imperativeLeads = ["rebuild ", "maintain ", "preserve ", "develop ", "restore ", "progress ", "build ", "keep ", "use "]
+        if imperativeLeads.contains(where: { lowercasedLead.hasPrefix($0) }) {
+            return "That mix is designed to \(lowercasedLead)."
+        }
+        return body.last.map { ".!?".contains($0) } == true ? body : "\(body)."
+    }
+
+    private static func sessionOverview(for rhythm: PlanWeeklyRhythm, workouts: [PlanWorkout]) -> String {
+        guard !workouts.isEmpty else {
+            return "I have kept this week open so we can place the right sessions around your availability."
+        }
+
+        let mix = sessionMix(for: workouts)
+        if rhythm.programStage == "launch" {
+            return "We are starting with \(countLabel(workouts.count, noun: "session")): \(mix)."
+        }
+        if rhythm.status == "draft" {
+            return "The draft includes \(countLabel(workouts.count, noun: "session")): \(mix)."
+        }
+        return "We have \(countLabel(workouts.count, noun: "session")) this week: \(mix)."
+    }
+
+    private static func sessionMix(for workouts: [PlanWorkout]) -> String {
+        let grouped = Dictionary(grouping: workouts) { workout -> String in
+            let activity = workout.activityType.lowercased()
+            let intensity = workout.intensityLabel.lowercased()
+            if activity.contains("strength") {
+                return "strength support session"
+            }
+            if activity.contains("ride") || activity.contains("cycl") || activity.contains("bike") {
+                if intensity.contains("hard") || intensity.contains("threshold") || intensity.contains("high") {
+                    return "focused hard ride"
+                }
+                if intensity.contains("recover") || intensity.contains("very easy") {
+                    return "recovery ride"
+                }
+                return "easy endurance ride"
+            }
+            if activity.contains("run") {
+                return "easy run"
+            }
+            return "\(activity) session"
+        }
+
+        let order = ["easy endurance ride", "focused hard ride", "recovery ride", "strength support session", "easy run"]
+        let descriptions = grouped.keys.sorted { lhs, rhs in
+            (order.firstIndex(of: lhs) ?? order.count) < (order.firstIndex(of: rhs) ?? order.count)
+        }.map { descriptor in
+            countLabel(grouped[descriptor]?.count ?? 0, noun: descriptor)
+        }
+        return joinedList(descriptions)
+    }
+
+    private static func countLabel(_ count: Int, noun: String) -> String {
+        let number = [1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"][count] ?? "\(count)"
+        return "\(number) \(noun)\(count == 1 ? "" : "s")"
+    }
+
+    private static func joinedList(_ values: [String]) -> String {
+        switch values.count {
+        case 0:
+            return "a deliberately light session mix"
+        case 1:
+            return values[0]
+        case 2:
+            return "\(values[0]) and \(values[1])"
+        default:
+            return "\(values.dropLast().joined(separator: ", ")), and \(values.last ?? "")"
+        }
+    }
+
+    private static func provenanceLabel(for provenance: PlanWeeklyPlanProvenance) -> String {
+        switch provenance {
+        case .hayfOriginal:
+            return "Original HAYF plan"
+        case .userChangedPending:
+            return "Changes need review"
+        case .reviewedNoAdjustment:
+            return "Changes reviewed by HAYF"
+        case .hayfAdapted:
+            return "Adapted by HAYF"
+        case .userChangesKept:
+            return "Your changes kept"
+        }
+    }
+
+    private static func adaptationSentence(for context: PlanWeeklyContext?) -> String? {
+        guard let provenance = context?.provenance, provenance != .hayfOriginal else {
+            return nil
+        }
+        let fallback: String
+        switch provenance {
+        case .hayfOriginal:
+            return nil
+        case .userChangedPending:
+            fallback = "You changed this week, and HAYF has not reviewed the surrounding sessions yet."
+        case .reviewedNoAdjustment:
+            fallback = "HAYF reviewed your changes and the surrounding sessions still support the strategy."
+        case .hayfAdapted:
+            fallback = "HAYF adjusted the surrounding sessions to keep your changes aligned with the strategy."
+        case .userChangesKept:
+            fallback = "Your changes remain, and HAYF's suggested surrounding adjustments were not applied."
+        }
+        return sentence(context?.adaptationExplanation, fallback: fallback)
+    }
+
+    private static func sentence(_ value: String?, fallback: String) -> String {
+        var cleaned = dashless(value ?? fallback)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return fallback }
+        if let firstSentence = cleaned.range(
+            of: #"^.*?[.!?](?=\s|$)"#,
+            options: .regularExpression
+        ) {
+            cleaned = String(cleaned[firstSentence])
+        }
+        return cleaned.last.map { ".!?".contains($0) } == true ? cleaned : "\(cleaned)."
+    }
+
+    private static func dashless(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "—", with: ",")
+            .replacingOccurrences(of: "–", with: ",")
+            .replacingOccurrences(of: #"\s*,\s*"#, with: ", ", options: .regularExpression)
+    }
+}
+
+private struct PlanWeekContextSheet: View {
+    let context: PlanWeekContextPresentation
+
+    var body: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("YOUR COACH'S PLAN")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(1.1)
+                    .foregroundStyle(HAYFColor.muted)
+
+                Text(context.headerTitle)
+                    .font(.system(size: 25, weight: .bold))
+                    .foregroundStyle(HAYFColor.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        ForEach(context.metadataLabels + [context.provenanceLabel], id: \.self) { label in
+                            Text(label)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(HAYFColor.secondary)
+                                .padding(.horizontal, 10)
+                                .frame(height: 28)
+                                .background(HAYFColor.surfaceRaised)
+                                .clipShape(Capsule())
+                                .overlay {
+                                    Capsule()
+                                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
+                                }
+                        }
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: context.isDraft ? "clock" : "checkmark.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(context.isDraft ? HAYFColor.orange : HAYFColor.secondary)
+                        .frame(width: 18, height: 20)
+
+                    Text(context.statusExplanation)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(HAYFColor.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HAYFColor.surfaceRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                Text(context.coachMessage)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(HAYFColor.secondary)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let adaptationMessage = context.adaptationMessage {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("PLAN UPDATE")
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(0.9)
+                            .foregroundStyle(HAYFColor.muted)
+
+                        Text(adaptationMessage)
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(HAYFColor.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 10)
+            .padding(.bottom, 28)
+            .frame(maxWidth: 520, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -1807,15 +2210,28 @@ private struct PlanWeeklyTargetCard: View {
 
 private struct PlanWeekStatusChip: View {
     let status: String
+    let open: () -> Void
 
     var body: some View {
-        Text(label)
-            .font(.system(size: 11, weight: .bold))
+        Button(action: open) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.system(size: 11, weight: .bold))
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
             .foregroundStyle(status == "draft" ? HAYFColor.orange : HAYFColor.primary)
-            .padding(.horizontal, 8)
-            .frame(height: 24)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
             .background((status == "draft" ? HAYFColor.orange : HAYFColor.primary).opacity(0.08))
             .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Open context for \(label.lowercased()) week")
+        .accessibilityHint("Shows the sessions and why your coach planned them")
     }
 
     private var label: String {

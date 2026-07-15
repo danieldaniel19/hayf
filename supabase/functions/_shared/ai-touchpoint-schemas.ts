@@ -78,14 +78,10 @@ const prescriptionSchema: Schema = {
   additionalProperties: false,
   required: ["warmup", "main", "cooldown", "successCriteria"],
   properties: {
-    schemaVersion: { type: "integer" },
-    summary: { type: "string" },
-    warmup: { type: ["string", "object"] },
-    main: { type: ["string", "array", "object"], items: { type: "string" } },
-    cooldown: { type: ["string", "object"] },
+    warmup: { type: "string" },
+    main: { type: ["string", "array"], items: { type: "string" } },
+    cooldown: { type: "string" },
     successCriteria: { type: "string" },
-    equipment: { type: "array", items: { type: "string" } },
-    constraintsApplied: { type: "array", items: { type: "string" } },
   },
 };
 

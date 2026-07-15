@@ -4,6 +4,7 @@ import {
   planningAITouchpoint,
   type AITouchpointConfig,
 } from "../_shared/ai-touchpoints.ts";
+import { touchpointResponseMetadata } from "../_shared/ai-touchpoint-schemas.ts";
 import {
   currentBodyMetricContext,
   healthSnapshotFreshness,
@@ -180,6 +181,9 @@ type GeneratedRhythm = {
   programStage: "launch" | "program";
   programWeekNumber: number | null;
   programStartDate: string;
+  weekContext: {
+    strategyExplanation: string;
+  };
   modalityTargets: Array<{
     modality: string;
     sessions: number;
@@ -589,6 +593,7 @@ const planSchema: Record<string, unknown> = {
           "programStage",
           "programWeekNumber",
           "programStartDate",
+          "weekContext",
           "modalityTargets",
           "objective",
           "priorityOrder",
@@ -603,6 +608,14 @@ const planSchema: Record<string, unknown> = {
           programStage: { type: "string", enum: ["launch", "program"] },
           programWeekNumber: { type: ["integer", "null"] },
           programStartDate: { type: "string" },
+          weekContext: {
+            type: "object",
+            additionalProperties: false,
+            required: ["strategyExplanation"],
+            properties: {
+              strategyExplanation: { type: "string", maxLength: 180 },
+            },
+          },
           modalityTargets: {
             type: "array",
             items: {
@@ -804,119 +817,6 @@ const pendingPlanReviewSchema: Record<string, unknown> = {
             },
           },
         },
-      },
-    },
-  },
-};
-
-const replacementSchema: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["candidates"],
-  properties: {
-    candidates: {
-      type: "array",
-      minItems: 2,
-      maxItems: 3,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "title",
-          "activityType",
-          "durationMinutes",
-          "estimatedDistanceKilometers",
-          "estimatedElevationMeters",
-          "plannedLocationLabel",
-          "intensityLabel",
-          "purpose",
-          "prescription",
-          "fuelingSummary",
-          "rationale",
-          "weeklyImpact",
-        ],
-        properties: {
-          title: { type: "string" },
-          activityType: { type: "string" },
-          durationMinutes: { type: "integer" },
-          estimatedDistanceKilometers: { type: ["number", "null"] },
-          estimatedElevationMeters: { type: ["number", "null"] },
-          plannedLocationLabel: { type: ["string", "null"] },
-          intensityLabel: { type: "string" },
-          purpose: { type: "string" },
-          prescription: {
-            type: "object",
-            additionalProperties: false,
-            required: ["warmup", "main", "cooldown", "successCriteria"],
-            properties: {
-              schemaVersion: { type: "integer" },
-              summary: { type: "string" },
-              warmup: { type: ["string", "object"] },
-              main: { type: ["string", "array", "object"], items: { type: "string" } },
-              cooldown: { type: ["string", "object"] },
-              successCriteria: { type: "string" },
-              equipment: { type: "array", items: { type: "string" } },
-              constraintsApplied: { type: "array", items: { type: "string" } },
-            },
-          },
-          fuelingSummary: { type: "string" },
-          rationale: { type: "string", maxLength: 96 },
-          weeklyImpact: { type: "string", maxLength: 96 },
-        },
-      },
-    },
-  },
-};
-
-const workoutCandidateSchema: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: false,
-  required: ["candidate"],
-  properties: {
-    candidate: {
-      type: "object",
-      additionalProperties: false,
-      required: [
-        "title",
-        "activityType",
-        "durationMinutes",
-        "estimatedDistanceKilometers",
-        "estimatedElevationMeters",
-        "plannedLocationLabel",
-        "intensityLabel",
-        "purpose",
-        "prescription",
-        "fuelingSummary",
-        "rationale",
-        "weeklyImpact",
-      ],
-      properties: {
-        title: { type: "string" },
-        activityType: { type: "string" },
-        durationMinutes: { type: "integer" },
-        estimatedDistanceKilometers: { type: ["number", "null"] },
-        estimatedElevationMeters: { type: ["number", "null"] },
-        plannedLocationLabel: { type: ["string", "null"] },
-        intensityLabel: { type: "string" },
-        purpose: { type: "string" },
-        prescription: {
-          type: "object",
-          additionalProperties: false,
-          required: ["warmup", "main", "cooldown", "successCriteria"],
-          properties: {
-            schemaVersion: { type: "integer" },
-            summary: { type: "string" },
-            warmup: { type: ["string", "object"] },
-            main: { type: ["string", "array", "object"], items: { type: "string" } },
-            cooldown: { type: ["string", "object"] },
-            successCriteria: { type: "string" },
-            equipment: { type: "array", items: { type: "string" } },
-            constraintsApplied: { type: "array", items: { type: "string" } },
-          },
-        },
-        fuelingSummary: { type: "string" },
-        rationale: { type: "string", maxLength: 96 },
-        weeklyImpact: { type: "string", maxLength: 96 },
       },
     },
   },
@@ -2556,7 +2456,14 @@ async function refreshPlanWindowForUserUnlocked(
     healthSnapshot: latestSnapshot?.snapshot_json ?? null,
     deviceTimezone: timezone,
     startDate: isoDate(start),
-    planOwnerStartDate: isoDate(dateOnlyInTimezone(new Date(), timezone)),
+    planOwnerStartDate: scope.strategy.context_json?.planOwnerStartDate ?? scope.strategy.start_date,
+    programStartDate: scope.strategy.start_date,
+    openingWeekPolicy: openingWeekGenerationPolicy(
+      start,
+      scope.strategy.context_json?.planOwnerStartDate ?? scope.strategy.start_date,
+      [],
+      scope.strategy.start_date,
+    ),
     weeklyPlanStatuses: [
       { weekStartDate: lifecycle.currentWeekStart, status: "committed" },
       { weekStartDate: lifecycle.nextWeekStart, status: "draft" },
@@ -2754,8 +2661,20 @@ async function recordPlanEdit(
       weeklyPlanID: targetPlan?.id ?? workout.weekly_plan_id ?? null,
       plannedWorkoutID: workout.id,
       eventType: "workout_moved",
-      payload: { from: workout.scheduled_date, to: edit.scheduled_date },
+      payload: {
+        from: workout.scheduled_date,
+        to: edit.scheduled_date,
+        fromWeeklyPlanID: workout.weekly_plan_id ?? null,
+        toWeeklyPlanID: targetPlan?.id ?? workout.weekly_plan_id ?? null,
+      },
     });
+    await updateWeeklyPlanProvenance(
+      admin,
+      userID,
+      [workout.weekly_plan_id, targetPlan?.id],
+      "user_changed_pending",
+      "You changed this week, and HAYF has not reviewed the surrounding sessions yet.",
+    );
   } else if (edit.type === "delete_workout") {
     await throwOnError(
       admin
@@ -2779,6 +2698,13 @@ async function recordPlanEdit(
       eventType: "workout_deleted",
       payload: { deletedWorkout: workout },
     });
+    await updateWeeklyPlanProvenance(
+      admin,
+      userID,
+      [workout.weekly_plan_id],
+      "user_changed_pending",
+      "You changed this week, and HAYF has not reviewed the surrounding sessions yet.",
+    );
   } else {
     throw new Error("record_plan_edit does not support replacement edits directly");
   }
@@ -2906,6 +2832,13 @@ async function recordWeeklyPlanConstraint(
     eventType: "weekly_plan_constraint_recorded",
     payload: { scheduledDate, kind, hasNote: Boolean(note) },
   });
+  await updateWeeklyPlanProvenance(
+    admin,
+    userID,
+    [weeklyPlanID],
+    "user_changed_pending",
+    "You changed this week's availability, and HAYF has not reviewed the surrounding sessions yet.",
+  );
 
   await expirePendingReplanProposals(admin, userID, scope.strategy.id);
 
@@ -4020,6 +3953,13 @@ async function replaceWorkout(
       candidate,
     },
   });
+  await updateWeeklyPlanProvenance(
+    admin,
+    userID,
+    [workout.weekly_plan_id],
+    "user_changed_pending",
+    "You changed this week, and HAYF has not reviewed the surrounding sessions yet.",
+  );
 
   const edit: PlanEditInput = {
     type: "replace_workout",
@@ -4147,6 +4087,13 @@ async function addWorkout(
       candidate,
     },
   });
+  await updateWeeklyPlanProvenance(
+    admin,
+    userID,
+    [context.weeklyPlan?.id],
+    "user_changed_pending",
+    "You added a session, and HAYF has not reviewed the surrounding week yet.",
+  );
 
   const edit: PlanEditInput = {
     type: "add_workout",
@@ -4218,6 +4165,31 @@ async function applyReplanProposal(
     await applyProposalMutations(admin, userID, proposal);
   }
 
+  const triggerEvent = proposal.trigger_event_id
+    ? await maybeSingle(
+      admin
+        .from("plan_events")
+        .select("weekly_plan_id,payload_json")
+        .eq("id", proposal.trigger_event_id)
+        .eq("user_id", userID)
+        .limit(1),
+    )
+    : null;
+  const metadataPlanIDs = Array.isArray(proposal.metadata_json?.affectedWeeklyPlanIDs)
+    ? proposal.metadata_json.affectedWeeklyPlanIDs
+    : [];
+  const mutationPlanIDs = Array.isArray(proposal.proposed_mutations_json)
+    ? proposal.proposed_mutations_json.map((mutation: Record<string, any>) => mutation.fields?.weekly_plan_id)
+    : [];
+  const affectedWeeklyPlanIDs = [
+    proposal.weekly_plan_id,
+    triggerEvent?.weekly_plan_id,
+    triggerEvent?.payload_json?.fromWeeklyPlanID,
+    triggerEvent?.payload_json?.toWeeklyPlanID,
+    ...metadataPlanIDs,
+    ...mutationPlanIDs,
+  ];
+
   await throwOnError(
     admin
       .from("replan_proposals")
@@ -4235,6 +4207,24 @@ async function applyReplanProposal(
     eventType: requestBody.decision === "accepted" ? "proposal_accepted" : "proposal_rejected",
     payload: { proposalID: proposal.id },
   });
+
+  if (requestBody.decision === "accepted") {
+    await updateWeeklyPlanProvenance(
+      admin,
+      userID,
+      affectedWeeklyPlanIDs,
+      "hayf_adapted",
+      proposal.metadata_json?.summary || proposal.reason || "HAYF adjusted the surrounding sessions to keep your changes aligned with the strategy.",
+    );
+  } else {
+    await updateWeeklyPlanProvenance(
+      admin,
+      userID,
+      affectedWeeklyPlanIDs,
+      "user_changes_kept",
+      "Your changes remain, and HAYF's suggested surrounding adjustments were not applied.",
+    );
+  }
 
   return { userID, proposalID: proposal.id, decision: requestBody.decision, eventID: event.id };
 }
@@ -4361,6 +4351,15 @@ async function createRepairProposalForPendingEdits(
   const pendingEvents = (await list(eventQuery)).filter((event: Record<string, any>) =>
     pendingReviewEventAppliesToVisibleWindow(event, weeklyPlanIDs)
   );
+  const affectedWeeklyPlanIDs: string[] = Array.from(new Set<string>(
+    pendingEvents
+      .flatMap((event: Record<string, any>) => [
+        String(event.weekly_plan_id ?? ""),
+        String(event.payload_json?.fromWeeklyPlanID ?? ""),
+        String(event.payload_json?.toWeeklyPlanID ?? ""),
+      ])
+      .filter(Boolean),
+  ));
 
   if (pendingEvents.length === 0) {
     return { userID, model: "deterministic", reviewed: false, pendingEditCount: 0, proposalID: null, proposal: null };
@@ -4474,6 +4473,13 @@ async function createRepairProposalForPendingEdits(
         mutationCount: 0,
       },
     });
+    await updateWeeklyPlanProvenance(
+      admin,
+      userID,
+      affectedWeeklyPlanIDs,
+      "reviewed_no_adjustment",
+      draft.summary || draft.reason || "HAYF reviewed your changes and the surrounding sessions still support the strategy.",
+    );
     return {
       userID,
       model,
@@ -4500,6 +4506,7 @@ async function createRepairProposalForPendingEdits(
       masterCoachContext: masterCoachContextForScope(scope),
       window,
       reviewedEventIDs,
+      affectedWeeklyPlanIDs,
       editCount: pendingEvents.length,
       summary: draft.summary,
       confidence: draft.confidence,
@@ -6111,6 +6118,14 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
   return JSON.parse(outputText) as GeneratedPlan;
 }
 
+function requiredPlanningResponseSchema(id: string): Record<string, unknown> {
+  const metadata = touchpointResponseMetadata("planning", id);
+  if (!metadata) {
+    throw new Error(`Missing structured output schema for planning/${id}`);
+  }
+  return metadata.schema;
+}
+
 async function runReplacementGeneration(context: Record<string, unknown>, model: string): Promise<{ candidates: ReplacementCandidateInput[] }> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
   const touchpointConfig = planningAITouchpoint("workout_replacements", { workoutTaxonomyRules });
@@ -6132,7 +6147,7 @@ async function runReplacementGeneration(context: Record<string, unknown>, model:
         type: "json_schema",
         name: "replacement_candidates",
         strict: true,
-        schema: replacementSchema,
+        schema: requiredPlanningResponseSchema("workout_replacements"),
       },
     )),
   });
@@ -6171,7 +6186,7 @@ async function runWorkoutAdditionGeneration(context: Record<string, unknown>, mo
         type: "json_schema",
         name: "workout_addition_candidates",
         strict: true,
-        schema: replacementSchema,
+        schema: requiredPlanningResponseSchema("workout_additions"),
       },
     )),
   });
@@ -6210,7 +6225,7 @@ async function runWorkoutDescriptionInterpretation(context: Record<string, unkno
         type: "json_schema",
         name: "workout_candidate",
         strict: true,
-        schema: workoutCandidateSchema,
+        schema: requiredPlanningResponseSchema("workout_interpretation"),
       },
     )),
   });
@@ -6870,11 +6885,14 @@ function openingWeekGenerationPolicy(
   committedWeekStart: Date,
   ownerStartDate: string,
   availableDays: string[] = [],
+  persistedProgramStartDate?: string,
 ) {
   const visibleStart = isoDate(committedWeekStart);
   const visibleEnd = isoDate(addDays(committedWeekStart, 6));
-  const programStartDate = initialProgramStartDate(committedWeekStart, ownerStartDate);
-  const partialWeek = programStartDate !== visibleStart;
+  const programStartDate = /^\d{4}-\d{2}-\d{2}$/.test(persistedProgramStartDate ?? "")
+    ? String(persistedProgramStartDate)
+    : initialProgramStartDate(committedWeekStart, ownerStartDate);
+  const partialWeek = visibleStart < programStartDate && ownerStartDate > visibleStart && ownerStartDate <= visibleEnd;
   const allowedDays = new Set(availableDays.map((day) => day.trim().toLowerCase()));
   let launchSlots = 0;
   if (partialWeek) {
@@ -6884,7 +6902,11 @@ function openingWeekGenerationPolicy(
     }
   }
   const hasLaunch = partialWeek && launchSlots > 0;
-  const firstProgramStart = partialWeek ? programStartDate : visibleStart;
+  const firstProgramStart = visibleStart < programStartDate ? programStartDate : visibleStart;
+  const firstProgramWeekNumber = Math.max(
+    1,
+    Math.floor(((parseDateOnly(firstProgramStart)?.getTime() ?? 0) - (parseDateOnly(programStartDate)?.getTime() ?? 0)) / (7 * 24 * 60 * 60 * 1000)) + 1,
+  );
   return {
     programStartDate,
     requiredRhythmCount: hasLaunch ? 3 : 2,
@@ -6895,8 +6917,8 @@ function openingWeekGenerationPolicy(
         { programStage: "program", programWeekNumber: 2, weekStartDate: isoDate(addDays(parseDateOnly(programStartDate) ?? committedWeekStart, 7)) },
       ]
       : [
-        { programStage: "program", programWeekNumber: 1, weekStartDate: firstProgramStart },
-        { programStage: "program", programWeekNumber: 2, weekStartDate: isoDate(addDays(parseDateOnly(firstProgramStart) ?? committedWeekStart, 7)) },
+        { programStage: "program", programWeekNumber: firstProgramWeekNumber, weekStartDate: firstProgramStart },
+        { programStage: "program", programWeekNumber: firstProgramWeekNumber + 1, weekStartDate: isoDate(addDays(parseDateOnly(firstProgramStart) ?? committedWeekStart, 7)) },
       ],
     rules: hasLaunch
       ? [
@@ -6906,7 +6928,7 @@ function openingWeekGenerationPolicy(
       ]
       : partialWeek
         ? ["No allowed Launch slot remains; Program Week 1 begins next Monday."]
-        : ["The current week is Program Week 1."],
+        : [`The current week is Program Week ${firstProgramWeekNumber}.`],
   };
 }
 
@@ -7538,6 +7560,31 @@ async function insertWeeklyPlansAndWorkouts(
   for (const rhythm of args.rhythms) {
     assertGeneratedRhythmHasOneWorkoutPerDay(rhythm);
     const status = rhythm.weekStartDate === args.committedWeekStart ? "committed" : "draft";
+    const existingPlan = await maybeSingle(
+      admin
+        .from("weekly_plans")
+        .select("id,context_json")
+        .eq("user_id", args.userID)
+        .eq("fitness_strategy_id", args.strategyID)
+        .eq("week_start_date", rhythm.weekStartDate)
+        .limit(1),
+    );
+    const existingContext = existingPlan?.context_json ?? {};
+    const generatedContext = {
+      schemaVersion: 1,
+      strategyExplanation: compactWeekContextSentence(rhythm.weekContext?.strategyExplanation || rhythm.objective),
+      provenance: "hayf_original",
+      adaptationExplanation: null,
+      updatedAt: new Date().toISOString(),
+    };
+    const contextJSON = existingContext.provenance && existingContext.provenance !== "hayf_original"
+      ? {
+        ...existingContext,
+        schemaVersion: 1,
+        strategyExplanation: generatedContext.strategyExplanation,
+        updatedAt: generatedContext.updatedAt,
+      }
+      : generatedContext;
     const savedPlan = await single(
       admin
         .from("weekly_plans")
@@ -7560,6 +7607,7 @@ async function insertWeeklyPlansAndWorkouts(
               badDayFloor: rhythm.badDayFloor,
               swapRules: rhythm.swapRules,
             },
+            context_json: contextJSON,
             generated_at: new Date().toISOString(),
           },
           { onConflict: "fitness_strategy_id,week_start_date" },
@@ -8199,6 +8247,22 @@ function compactNullableText(value: unknown) {
   return text.length > 0 ? text : null;
 }
 
+function compactWeekContextSentence(value: unknown) {
+  const plain = String(value ?? "")
+    .replace(/[—–]/g, ",")
+    .replace(/\b(?:RIR|RPE)\b/gi, "effort")
+    .replace(/\b[a-z][a-z0-9]*_[a-z0-9_]+\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const firstSentence = plain.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? plain;
+  const clipped = firstSentence.slice(0, 179).trim();
+  const bounded = firstSentence.length > 179 && clipped.includes(" ")
+    ? clipped.slice(0, clipped.lastIndexOf(" ")).trim()
+    : clipped;
+  if (!bounded) return "This week's sessions support the current strategy while keeping training repeatable.";
+  return /[.!?]$/.test(bounded) ? bounded : `${bounded.replace(/[,:;\s]+$/, "")}.`;
+}
+
 function onboardingHasWeatherBlocker(onboarding: Record<string, any> | null | undefined) {
   const blockers = onboarding?.selected_answers?.blockers;
   if (!Array.isArray(blockers)) return false;
@@ -8236,8 +8300,7 @@ async function generateAndPersistWeeklyTargets(
   },
 ) {
   const visiblePlans = args.weeklyPlans.filter((plan) =>
-    ["committed", "draft"].includes(plan.status) &&
-    String(plan.rhythm_json?.programStage ?? "program") !== "launch"
+    ["committed", "draft"].includes(plan.status)
   );
   if (visiblePlans.length === 0) return [];
 
@@ -8374,6 +8437,8 @@ function weeklyTargetGenerationContext(args: {
       return {
         weeklyPlanID: plan.id,
         status: plan.status,
+        programStage: plan.rhythm_json?.programStage ?? "program",
+        programWeekNumber: plan.rhythm_json?.programWeekNumber ?? null,
         weekStartDate: plan.week_start_date,
         weekEndDate: plan.week_end_date,
         objective: plan.objective,
@@ -8406,6 +8471,7 @@ function weeklyTargetGenerationContext(args: {
     targetReferenceRules: [
       "Targets must be measurable and computable from planned workouts, completed workouts, matched HealthKit workouts, in-app exercise logs, or explicit body/performance entries.",
       "Good weekly targets include completing planned sessions, completing a modality count, weekly minutes/distance, active days, support modality presence, no gap longer than N days, load guardrails, body-weight logging, or pace/power values when data supports them.",
+      "A launch week is a partial bridge, not a full program week. Give it small completion or modality goals based only on its actual scheduled sessions; never apply the normal weekly budget or invent extra volume.",
       "Bad weekly targets include feeling good, reviewing recovery, selecting a next goal, adjusting a plan, confidence improved, or any subjective reflection.",
       "When trainingArchitecture is present, targets must not introduce modalities outside its priorityOrder or modalityRoles.",
     ],
@@ -10954,6 +11020,50 @@ async function createPlanEvent(
       .single(),
     "Could not create plan event",
   );
+}
+
+type WeeklyPlanProvenance =
+  | "hayf_original"
+  | "user_changed_pending"
+  | "reviewed_no_adjustment"
+  | "hayf_adapted"
+  | "user_changes_kept";
+
+async function updateWeeklyPlanProvenance(
+  admin: SupabaseAdminClient,
+  userID: string,
+  candidateIDs: Array<string | null | undefined>,
+  provenance: WeeklyPlanProvenance,
+  adaptationExplanation: unknown,
+) {
+  const weeklyPlanIDs = Array.from(new Set(candidateIDs.filter((id): id is string => Boolean(id))));
+  if (weeklyPlanIDs.length === 0) return;
+  const plans = await list(
+    admin
+      .from("weekly_plans")
+      .select("id,objective,context_json")
+      .eq("user_id", userID)
+      .in("id", weeklyPlanIDs),
+  );
+  for (const plan of plans) {
+    const existing = plan.context_json ?? {};
+    await throwOnError(
+      admin
+        .from("weekly_plans")
+        .update({
+          context_json: {
+            ...existing,
+            schemaVersion: 1,
+            strategyExplanation: compactWeekContextSentence(existing.strategyExplanation || plan.objective),
+            provenance,
+            adaptationExplanation: compactWeekContextSentence(adaptationExplanation),
+            updatedAt: new Date().toISOString(),
+          },
+        })
+        .eq("id", plan.id)
+        .eq("user_id", userID),
+    );
+  }
 }
 
 async function createReplanProposal(

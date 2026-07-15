@@ -25,6 +25,7 @@ struct AuthenticatedHomeView: View {
                 .tag(AuthenticatedTab.today)
 
             PlanScreenView(
+                userName: accountProfile.name,
                 presentActiveBlockOnFirstLoad: presentActiveBlockOnFirstPlanLoad,
                 onDidPresentActiveBlockOnFirstLoad: onDidPresentActiveBlockOnFirstPlanLoad
             )
