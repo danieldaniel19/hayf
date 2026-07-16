@@ -139,3 +139,128 @@ final class TodayModelsTests: XCTestCase {
         """
     }
 }
+
+final class OnboardingPolicyTests: XCTestCase {
+    func testOnlySupportedModalitiesAreEnabled() {
+        XCTAssertEqual(
+            Set(TrainingOption.allCases.filter(\.isOnboardingEnabled)),
+            Set([.cycling, .strength, .running])
+        )
+        var draft = ConsistencyOnboardingDraft()
+        draft.toggleTrainingOption(.swimming)
+        XCTAssertTrue(draft.trainingOptions.isEmpty)
+    }
+
+    func testUnsureMotivationIsMutuallyExclusive() {
+        var draft = ConsistencyOnboardingDraft()
+        draft.toggleMotivationAnchor(.dailyEnergy)
+        draft.toggleMotivationAnchor(.unsure)
+        XCTAssertEqual(draft.motivationAnchors, [.unsure])
+        draft.toggleMotivationAnchor(.longTermHealth)
+        XCTAssertEqual(draft.motivationAnchors, [.longTermHealth])
+    }
+
+    func testUltraFlexibleAvailabilityAndManualOverride() {
+        var draft = ConsistencyOnboardingDraft()
+        draft.toggleUltraFlexibleAvailability()
+        XCTAssertTrue(draft.ultraFlexibleAvailability)
+        XCTAssertEqual(draft.availableDays, Set(Weekday.allCases))
+        XCTAssertEqual(draft.availableDayParts, Set(DayPart.allCases))
+
+        draft.setAvailableDays([.monday, .wednesday])
+        XCTAssertFalse(draft.ultraFlexibleAvailability)
+        XCTAssertEqual(draft.availableDays, [.monday, .wednesday])
+    }
+
+    func testVariableSessionLengthHasNoNumericFallback() {
+        XCTAssertEqual(SessionLength.varies.mode, "varies_by_modality")
+        XCTAssertNil(SessionLength.varies.minutes)
+        XCTAssertEqual(SessionLength.thirty.minutes, 30)
+    }
+
+    func testMergedWeeklyCapacityRequiresFrequencyAndSessionLength() {
+        var draft = ConsistencyOnboardingDraft()
+        XCTAssertFalse(draft.hasWeeklyCapacity)
+
+        draft.frequency = .changes
+        XCTAssertFalse(draft.hasWeeklyCapacity)
+
+        draft.sessionLength = .varies
+        XCTAssertTrue(draft.hasWeeklyCapacity)
+    }
+
+    func testMergedCapacityReducesEveryOnboardingStreamByOneStep() {
+        XCTAssertEqual(OnboardingStep.totalSegments(for: .stayConsistent), 16)
+        XCTAssertEqual(OnboardingStep.totalSegments(for: .concreteGoal), 20)
+        XCTAssertEqual(OnboardingStep.totalSegments(for: .findGoal), 20)
+
+        XCTAssertEqual(OnboardingStep.weeklyCapacity.activeSegments(for: .stayConsistent), 5)
+        XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .stayConsistent), 6)
+        XCTAssertEqual(OnboardingStep.weeklyCapacity.activeSegments(for: .concreteGoal), 8)
+        XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .findGoal), 9)
+    }
+
+    func testAdultBodyFatEstimateUsesBMIProfileAgeAndPhysiology() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let birthdate = try XCTUnwrap(calendar.date(from: DateComponents(year: 1996, month: 1, day: 1)))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 1, day: 1)))
+        let male = try XCTUnwrap(BodyFatEstimator.estimate(
+            bodyMassKilograms: 80,
+            heightCentimeters: 180,
+            birthdate: birthdate,
+            physiologyReference: .male,
+            now: now,
+            calendar: calendar
+        ))
+        let female = try XCTUnwrap(BodyFatEstimator.estimate(
+            bodyMassKilograms: 80,
+            heightCentimeters: 180,
+            birthdate: birthdate,
+            physiologyReference: .female,
+            now: now,
+            calendar: calendar
+        ))
+        XCTAssertEqual(male, 20.33, accuracy: 0.02)
+        XCTAssertEqual(female - male, 10.8, accuracy: 0.001)
+        XCTAssertEqual(BodyFatBand.band(containing: male, for: .male), .maleAbove20)
+        XCTAssertEqual(BodyFatBand.band(containing: 24, for: .female), .female21To25)
+    }
+
+    func testBodyFatProvenanceDistinguishesManualAndFormulaSelections() throws {
+        var draft = ConsistencyOnboardingDraft()
+        draft.bodyMassKilogramsInput = "80"
+        draft.heightCentimetersInput = "180"
+        draft.selectBodyFatBand(.male17To20)
+        var payload = try XCTUnwrap(BodyBaselinePayload(draft: draft))
+        XCTAssertEqual(payload.source, "self_reported_band")
+        XCTAssertEqual(payload.confidence, "estimated_band")
+
+        draft.selectEstimatedBodyFat(20.3, physiologyReference: .male)
+        payload = try XCTUnwrap(BodyBaselinePayload(draft: draft))
+        XCTAssertEqual(payload.source, "bmi_age_physiology_estimate")
+        XCTAssertEqual(payload.confidence, "rough_anthropometric_estimate")
+        XCTAssertEqual(payload.bodyFatEstimateMidpoint, 20.3, accuracy: 0.001)
+    }
+
+    func testVariableBadDayFloorSerializesAsModelDiscretion() {
+        XCTAssertTrue(BadDayFloor.varies.planningValue.hasPrefix("Model discretion:"))
+        XCTAssertNotEqual(BadDayFloor.varies.planningValue, BadDayFloor.varies.title)
+    }
+
+    func testRemovedBlockersStayUnavailableAndWeatherRemains() {
+        let titles = Set(ConsistencyBlocker.allCases.map(\.title))
+        XCTAssertTrue(titles.contains("Weather"))
+        XCTAssertTrue(titles.contains("Not having a plan"))
+        XCTAssertFalse(titles.contains("Gym access"))
+        XCTAssertFalse(titles.contains("All-or-nothing weeks"))
+    }
+
+    func testSummaryReadbackEnforcesCompactInterpretation() {
+        XCTAssertTrue(OnboardingSummaryOutput.isValidReadback(
+            "Reliable training matters more than perfect weeks, so your plan needs an adaptable rhythm."
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback("You chose cycling, strength, Monday, Tuesday, a gym, mornings, and a short fallback."))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(String(repeating: "A", count: 121)))
+    }
+}

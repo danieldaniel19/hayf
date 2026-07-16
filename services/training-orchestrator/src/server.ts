@@ -128,11 +128,13 @@ async function route(request: IncomingMessage, response: ServerResponse) {
     const packet = planningPacketFromPlanContext(context, architecture);
     const strategy = fitnessStrategyFromPlanContext(context, architecture);
     const planResult = await invokeTwoWeekPlanGraph(packet, architecture, strategy);
+    const usedFallback = planResult.nodes.some((node) => node.node_name === "deterministic_recovery_plan");
 
     writeJSON(response, 200, {
       plan: planResult.artifact,
       validation: {
         valid: true,
+        usedFallback,
         source: "training_orchestrator_service",
         graphVersion: serviceVersion,
       },
@@ -268,6 +270,8 @@ function planningPacketFromPlanContext(context: JsonRecord, architecture: Traini
       ])),
       frequency: stringAt(constraints, "frequency") ?? `${targetSessions} days per week`,
       session_length: stringAt(constraints, "sessionLength") ?? stringAt(constraints, "session_length"),
+      session_length_mode: stringAt(constraints, "sessionLengthMode") ?? stringAt(constraints, "session_length_mode"),
+      session_length_minutes: numberAt(constraints, "sessionLengthMinutes") ?? numberAt(constraints, "session_length_minutes"),
       injuries: stringAt(constraints, "injuries"),
       equipment_access: Array.from(new Set([
         ...stringArrayAt(constraints, "equipmentAccess"),

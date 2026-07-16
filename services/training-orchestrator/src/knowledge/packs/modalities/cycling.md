@@ -20,7 +20,7 @@
 
 ## Archetypes
 
-- `cycling_endurance_ride`: easy aerobic durability, 45-150 minutes, low-to-moderate fatigue.
+- `cycling_endurance_ride`: easy aerobic durability, 45-240 minutes, low-to-moderate fatigue. Use the upper range only when history, recovery, and strategy justify it.
 - `cycling_tempo_ride`: sustained aerobic pressure, 40-90 minutes, moderate fatigue.
 - `cycling_threshold_intervals`: controlled hard work, 45-90 minutes, high fatigue.
 - `cycling_vo2_intervals`: high-end aerobic power, 45-75 minutes, high fatigue, one exposure per week for mixed goals.

@@ -23,6 +23,7 @@ export type ToolOverride = {
 };
 
 const openAIURL = "https://api.openai.com/v1/responses";
+const defaultOpenAITimeoutMS = 150_000;
 const overrideStore = new AsyncLocalStorage<Record<string, ToolOverride>>();
 
 export function runWithToolOverrides<T>(overrides: Record<string, ToolOverride> | undefined, fn: () => Promise<T>) {
@@ -82,6 +83,7 @@ export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise
         },
       },
     }),
+    signal: AbortSignal.timeout(openAITimeoutMS()),
   });
 
   const payload = await response.json().catch(() => ({})) as JsonObject;
@@ -107,6 +109,11 @@ export async function runStructuredJSON<T>(args: StructuredJSONArgs<T>): Promise
       system,
     }),
   };
+}
+
+function openAITimeoutMS() {
+  const configured = Number(process.env.OPENAI_REQUEST_TIMEOUT_MS ?? defaultOpenAITimeoutMS);
+  return Number.isFinite(configured) && configured >= 1_000 ? Math.round(configured) : defaultOpenAITimeoutMS;
 }
 
 function buildToolCall<T>(value: {

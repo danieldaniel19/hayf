@@ -73,6 +73,16 @@ describe("trainingArchitectureGraph", () => {
     assert.equal(result.artifact.phase_logic.phases.length, 0);
   });
 
+  it("allows evidence-backed cycling endurance rides up to four hours", async () => {
+    const result = await invokeTrainingArchitectureGraph(basePacket({
+      selected_modality_order: ["Cycling", "Strength"],
+      normalized_goal: { title: "Build durable cycling", desiredOutcome: "ride longer consistently" },
+    }));
+    const enduranceRide = result.artifact.approved_archetypes.find((item) => item.id === "cycling_endurance_ride");
+    assert.ok(enduranceRide);
+    assert.equal(enduranceRide.typical_duration_minutes.max, 240);
+  });
+
   it("uses exactly two phases for a four-week time-bound goal", async () => {
     const result = await invokeTrainingArchitectureGraph(basePacket({
       goal_kind: "specific_goal",
@@ -174,6 +184,56 @@ describe("trainingArchitectureGraph", () => {
 });
 
 describe("fitnessStrategyGraph and twoWeekPlanGraph", () => {
+  it("returns a validated deterministic plan when the model is unavailable", async () => {
+    const packet = basePacket();
+    const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+    const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+    const previousAPIKey = process.env.OPENAI_API_KEY;
+    const previousStubSetting = process.env.HAYF_ALLOW_AI_STUB;
+    delete process.env.OPENAI_API_KEY;
+    process.env.HAYF_ALLOW_AI_STUB = "false";
+
+    try {
+      const result = await invokeTwoWeekPlanGraph(packet, architecture, strategy);
+      const workouts = result.artifact.rhythms.flatMap((rhythm) => rhythm.workouts);
+
+      assert.ok(result.nodes.some((node) => node.node_name === "deterministic_recovery_plan"));
+      assert.ok(result.tool_calls.some((tool) => tool.status === "failed"));
+      assert.equal(result.artifact.rhythms.length, 2);
+      assert.ok(workouts.length > 0);
+      assert.ok(workouts.every((workout) => workout.prescription.schemaVersion === 2));
+      assert.ok(workouts.every((workout) => architecture.priority_order.includes(workout.activityType)));
+    } finally {
+      if (previousAPIKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousAPIKey;
+      if (previousStubSetting === undefined) delete process.env.HAYF_ALLOW_AI_STUB;
+      else process.env.HAYF_ALLOW_AI_STUB = previousStubSetting;
+    }
+  });
+
+  it("sizes variable sessions by modality instead of using a shared 35-minute fallback", async () => {
+    const packet = basePacket({ selected_modality_order: ["Cycling", "Strength"] });
+    packet.planning_constraints.feasible_modalities = ["Cycling", "Strength"];
+    packet.planning_constraints.session_length = "Varies";
+    packet.planning_constraints.session_length_mode = "varies_by_modality";
+    packet.planning_constraints.session_length_minutes = null;
+    const architecture = (await invokeTrainingArchitectureGraph(packet)).artifact;
+    const strategy = (await invokeFitnessStrategyGraph(packet, architecture)).artifact;
+    const plannerInput = buildPlannerInputContract(packet, architecture, strategy);
+    const plan = await invokeTwoWeekPlanGraph(packet, architecture, strategy);
+    const workouts = plan.artifact.rhythms.flatMap((rhythm) => rhythm.workouts);
+    const cycling = workouts.find((workout) => workout.activityType === "cycling");
+    const strength = workouts.find((workout) => workout.activityType === "strength");
+
+    assert.equal(plannerInput.constraints.session_length_mode, "varies_by_modality");
+    assert.equal(plannerInput.constraints.session_length_minutes, null);
+    assert.ok(cycling && strength);
+    assert.ok(cycling.durationMinutes > strength.durationMinutes);
+    assert.ok(cycling.durationMinutes >= 80);
+    assert.ok(strength.durationMinutes <= 60);
+    assert.ok(workouts.every((workout) => workout.durationMinutes !== 35));
+  });
+
   it("maps body-composition-sensitive architecture into strategy targets and two visible weeks", async () => {
     const packet = basePacket({
       body_composition_intent: "fat_loss",

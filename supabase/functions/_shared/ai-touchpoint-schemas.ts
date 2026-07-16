@@ -505,7 +505,7 @@ export const AI_TOUCHPOINT_RESPONSE_METADATA: Record<AITouchpointGroup, Record<s
         additionalProperties: false,
         required: ["readback"],
         properties: {
-          readback: { type: "string" },
+          readback: { type: "string", maxLength: 120 },
         },
       },
     },

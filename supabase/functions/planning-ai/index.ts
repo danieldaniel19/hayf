@@ -14,6 +14,7 @@ import {
   availableDayPartsFromPlanningInputs,
   availableDaysFromPlanningInputs,
   badDayFloorFromPlanningInputs,
+  filterEnabledOnboardingModalities,
   timeframeWeeksFromPlanningInputs,
 } from "../_shared/planning-inputs.ts";
 import {
@@ -1507,7 +1508,7 @@ async function startAcceptPreparedStrategyAndCreateInitialPlan(
   }
 
   const leaseKey = `accept_prepared_strategy:${preparedStrategyID}`;
-  const acquired = await acquirePlanningGenerationLease(admin, userID, leaseKey);
+  const acquired = await acquirePlanningGenerationLease(admin, userID, leaseKey, 330);
   if (acquired) {
     runInBackground(
       acceptPreparedStrategyAndCreateInitialPlan(admin, userID, requestBody, model)
@@ -1619,6 +1620,50 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
     ),
   };
 
+  const recoveredWeeklyPlans = await recoverableInitialWeeklyPlans(
+    admin,
+    userID,
+    strategy.id,
+    context.weeklyPlanStatuses,
+  );
+  if (recoveredWeeklyPlans) {
+    const recoveredGraphRun = await latestInitialPlanGraphRun(admin, userID, strategy.id);
+    const activation = await finalizePreparedStrategyActivation(admin, {
+      userID,
+      goalID: goal.id,
+      strategyID: strategy.id,
+      trainingArchitectureID: trainingArchitecture?.id ?? null,
+      sourceOnboardingProfileID: onboarding?.id ?? goal.source_onboarding_profile_id ?? null,
+      programStartDate,
+      targetDate: acceptedTargetDate,
+      acceptedAt,
+      acceptedLocalDate,
+      ownerStartDate,
+      graphRunID: recoveredGraphRun?.id ?? null,
+      recoveredFromPersistedPlan: true,
+      eventPayload: {
+        usedAIInitialPlan: true,
+        usedFallback: false,
+        usedTrainingArchitecture: Boolean(trainingArchitecture?.id),
+        trainingArchitectureID: trainingArchitecture?.id ?? null,
+        committedWeekStart: isoDate(committedWeekStart),
+        draftWeekStart: isoDate(draftWeekStart),
+        planOwnerStartDate: ownerStartDate,
+      },
+    });
+    return {
+      userID,
+      model: "persisted-plan-recovery",
+      usedFallback: false,
+      recoveredFromPersistedPlan: true,
+      userGoalID: goal.id,
+      fitnessStrategyID: strategy.id,
+      trainingArchitectureID: trainingArchitecture?.id ?? null,
+      weeklyPlanIDs: recoveredWeeklyPlans.map((plan) => plan.id),
+      eventID: activation.eventID ?? null,
+    };
+  }
+
   const planGraphRun = await createAIGraphRun(admin, {
     userID,
     graphName: "two_week_plan",
@@ -1638,6 +1683,7 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
     },
   });
 
+  let activationCommitted = false;
   try {
     const planOrchestration = await runTwoWeekPlanOrchestration(context, model);
     await insertAIGraphNodeOutputs(admin, planGraphRun.id, userID, planOrchestration.nodes);
@@ -1684,8 +1730,49 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
       homeLocationLabel: profile?.main_city ?? null,
     });
 
+    const usedFallback = planOrchestration.validation?.usedFallback === true;
+    const activation = await finalizePreparedStrategyActivation(admin, {
+      userID,
+      goalID: goal.id,
+      strategyID: strategy.id,
+      trainingArchitectureID: trainingArchitecture?.id ?? null,
+      sourceOnboardingProfileID: onboarding?.id ?? goal.source_onboarding_profile_id ?? null,
+      programStartDate,
+      targetDate: acceptedTargetDate,
+      acceptedAt,
+      acceptedLocalDate,
+      ownerStartDate,
+      graphRunID: planGraphRun.id,
+      recoveredFromPersistedPlan: false,
+      eventPayload: {
+        usedAIInitialPlan: true,
+        usedFallback,
+        usedTrainingArchitecture: Boolean(trainingArchitecture?.id),
+        trainingArchitectureID: trainingArchitecture?.id ?? null,
+        committedWeekStart: isoDate(committedWeekStart),
+        draftWeekStart: isoDate(draftWeekStart),
+        planOwnerStartDate: ownerStartDate,
+      },
+    });
+    activationCommitted = true;
+
+    try {
+      await completeAIGraphRun(admin, planGraphRun.id, {
+        status: "succeeded",
+        output: {
+          plan: ownerAlignedGenerated,
+          validation: planOrchestration.validation,
+          activationCommitted: true,
+        },
+        model: planOrchestration.model,
+      });
+    } catch (error) {
+      console.error(`Initial plan trace finalization deferred: ${errorMessage(error)}`);
+    }
+
+    const postPlanWarnings: string[] = [];
     const planningScope: PlanningScope = {
-      goal,
+      goal: { ...goal, status: "active" },
       strategy: { ...strategy, status: "active" },
       trainingArchitectureID: trainingArchitecture?.id ?? null,
       trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
@@ -1704,8 +1791,13 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
         context_json: strategy.context_json ?? {},
       },
     };
-    const initialActualSync = await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? []);
-    const postPlanWarnings: string[] = [];
+    try {
+      await reconcileActualWorkouts(admin, userID, planningScope, requestBody.actualWorkouts ?? []);
+    } catch (error) {
+      const message = `Initial actual-workout sync deferred: ${errorMessage(error)}`;
+      postPlanWarnings.push(message);
+      console.error(message);
+    }
     try {
       await generateAndPersistWeeklyTargets(admin, {
         userID,
@@ -1722,7 +1814,6 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
       postPlanWarnings.push(message);
       console.error(message);
     }
-    await markCurrentWorkoutForStrategy(admin, userID, strategy.id, acceptedLocalDate);
 
     if (requestBody.healthSnapshot) {
       try {
@@ -1738,95 +1829,119 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
       }
     }
 
-    await supersedeActivePlanningRows(admin, userID);
-    await throwOnError(
-      admin
-        .from("user_goals")
-        .update({
-          status: "active",
-          source_onboarding_profile_id: onboarding?.id ?? goal.source_onboarding_profile_id ?? null,
-          start_date: programStartDate,
-          target_date: acceptedTargetDate,
-        })
-        .eq("id", goal.id)
-        .eq("user_id", userID),
-    );
-    await throwOnError(
-      admin
-        .from("fitness_strategies")
-        .update({
-          status: "active",
-          start_date: programStartDate,
-          target_date: acceptedTargetDate,
-          context_json: {
-            ...(strategy.context_json ?? {}),
-            acceptedAt: acceptedAt.toISOString(),
-            planOwnerStartDate: ownerStartDate,
-            programStartDate,
-          },
-        })
-        .eq("id", strategy.id)
-        .eq("user_id", userID),
-    );
-    if (trainingArchitecture?.id) {
-      await throwOnError(
-        admin
-          .from("training_architectures")
-          .update({ status: "active" })
-          .eq("id", trainingArchitecture.id)
-          .eq("user_id", userID),
-      );
-    }
-
-    const event = await createPlanEvent(admin, {
-      userID,
-      fitnessStrategyID: strategy.id,
-      userGoalID: goal.id,
-      eventType: "strategy_accepted",
-      payload: {
-        usedAIInitialPlan: true,
-        usedFallback: false,
-        usedTrainingArchitecture: Boolean(trainingArchitecture?.id),
-        trainingArchitectureID: trainingArchitecture?.id ?? null,
-        committedWeekStart: isoDate(committedWeekStart),
-        draftWeekStart: isoDate(draftWeekStart),
-        planOwnerStartDate: ownerStartDate,
-        actualSync: initialActualSync,
-        postPlanWarnings,
-      },
-    });
-
-    await completeAIGraphRun(admin, planGraphRun.id, {
-      status: "succeeded",
-      output: {
-        plan: ownerAlignedGenerated,
-        validation: planOrchestration.validation,
-      },
-      model: planOrchestration.model,
-    });
-
     return {
       userID,
       model,
-      usedFallback: false,
+      usedFallback,
       userGoalID: goal.id,
       fitnessStrategyID: strategy.id,
       trainingArchitectureID: trainingArchitecture?.id ?? null,
       weeklyPlanIDs: weeklyPlans.map((plan) => plan.id),
-      eventID: event.id,
+      eventID: activation.eventID ?? null,
+      postPlanWarnings,
       plan: ownerAlignedGenerated,
     };
   } catch (error) {
-    await completeAIGraphRun(admin, planGraphRun.id, {
-      status: "failed",
-      errorSummary: errorMessage(error),
-      model: {
-        provider: Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim() ? "hayf-training-orchestrator" : "supabase-planning-ai",
-        requestedModel: model,
-      },
-    });
+    if (!activationCommitted) {
+      await completeAIGraphRun(admin, planGraphRun.id, {
+        status: "failed",
+        errorSummary: errorMessage(error),
+        model: {
+          provider: Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim() ? "hayf-training-orchestrator" : "supabase-planning-ai",
+          requestedModel: model,
+        },
+      });
+    } else {
+      console.error(`Post-activation planning work failed: ${errorMessage(error)}`);
+    }
     throw error;
   }
+}
+
+async function recoverableInitialWeeklyPlans(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+  expectedPlans: Array<{ weekStartDate: string; status: string }>,
+): Promise<Record<string, any>[] | null> {
+  if (expectedPlans.length < 2) return null;
+  const plans: Record<string, any>[] = await list(
+    admin
+      .from("weekly_plans")
+      .select()
+      .eq("user_id", userID)
+      .eq("fitness_strategy_id", strategyID)
+      .in("status", ["committed", "draft"]),
+  );
+  const expected = new Map(expectedPlans.map((plan) => [plan.weekStartDate, plan.status]));
+  const matching = plans.filter((plan) => expected.get(String(plan.week_start_date)) === String(plan.status));
+  if (matching.length !== expected.size) return null;
+
+  const planIDs = matching.map((plan) => plan.id);
+  const workouts: Record<string, any>[] = await list(
+    admin
+      .from("planned_workouts")
+      .select("id,weekly_plan_id")
+      .eq("user_id", userID)
+      .in("weekly_plan_id", planIDs)
+      .not("status", "in", "(deleted,superseded)"),
+  );
+  if (matching.some((plan) => !workouts.some((workout) => workout.weekly_plan_id === plan.id))) return null;
+  return matching;
+}
+
+async function latestInitialPlanGraphRun(
+  admin: SupabaseAdminClient,
+  userID: string,
+  strategyID: string,
+) {
+  return maybeSingle(
+    admin
+      .from("ai_graph_runs")
+      .select("id,status,output_json,created_at")
+      .eq("user_id", userID)
+      .eq("graph_name", "two_week_plan")
+      .eq("source_fitness_strategy_id", strategyID)
+      .order("created_at", { ascending: false })
+      .limit(1),
+  );
+}
+
+async function finalizePreparedStrategyActivation(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    goalID: string;
+    strategyID: string;
+    trainingArchitectureID: string | null;
+    sourceOnboardingProfileID: string | null;
+    programStartDate: string;
+    targetDate: string | null;
+    acceptedAt: Date;
+    acceptedLocalDate: Date;
+    ownerStartDate: string;
+    graphRunID: string | null;
+    recoveredFromPersistedPlan: boolean;
+    eventPayload: Record<string, unknown>;
+  },
+) {
+  const { data, error } = await admin.rpc("finalize_initial_strategy_acceptance", {
+    p_user_id: args.userID,
+    p_user_goal_id: args.goalID,
+    p_fitness_strategy_id: args.strategyID,
+    p_training_architecture_id: args.trainingArchitectureID,
+    p_source_onboarding_profile_id: args.sourceOnboardingProfileID,
+    p_program_start_date: args.programStartDate,
+    p_target_date: args.targetDate,
+    p_accepted_at: args.acceptedAt.toISOString(),
+    p_accepted_local_date: isoDate(args.acceptedLocalDate),
+    p_plan_owner_start_date: args.ownerStartDate,
+    p_graph_run_id: args.graphRunID,
+    p_recovered_from_persisted_plan: args.recoveredFromPersistedPlan,
+    p_event_payload: args.eventPayload,
+  });
+  if (error) throw error;
+  return (data ?? {}) as Record<string, any>;
 }
 
 async function getPlanningGraphRunStatus(
@@ -6274,12 +6389,18 @@ async function fetchTrainingOrchestrator(url: string, body: Record<string, unkno
           : {}),
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(trainingOrchestratorTimeoutMS()),
     });
   } catch (error) {
     throw new Error(
       `Training orchestrator is unreachable at ${url}. Start it with tools/local-langgraph/start-orchestrator.sh. ${errorMessage(error)}`,
     );
   }
+}
+
+function trainingOrchestratorTimeoutMS() {
+  const configured = Number(Deno.env.get("TRAINING_ORCHESTRATOR_TIMEOUT_MS") ?? 310_000);
+  return Number.isFinite(configured) && configured >= 1_000 ? Math.round(configured) : 310_000;
 }
 
 function trainingOrchestratorRequired() {
@@ -6686,7 +6807,7 @@ function localSpecialistConsultation(modality: string, index: number, packet: Re
 function localArchetypesFor(modality: string, role: string, packet: Record<string, any>, knowledgeRefs: Array<Record<string, string>>) {
   if (modality === "cycling") {
     const archetypes = [
-      localArchetype("cycling_endurance_ride", modality, "Build durable low-intensity aerobic volume.", "aerobic base and durability", "easy aerobic", 45, 120, "low", knowledgeRefs),
+      localArchetype("cycling_endurance_ride", modality, "Build durable low-intensity aerobic volume.", "aerobic base and durability", "easy aerobic", 45, 240, "low", knowledgeRefs),
       localArchetype("cycling_tempo_ride", modality, "Add controlled sustained work without maximal strain.", "tempo durability", "tempo", 35, 75, "moderate", knowledgeRefs),
     ];
     if (role === "primary_driver" && packet.goal_context?.goal_kind !== "consistency") {
@@ -6961,6 +7082,7 @@ async function runPlanGeneration(task: PlanningTask, context: Record<string, unk
         schema: planSchema,
       },
     )),
+    signal: AbortSignal.timeout(150_000),
   });
 
   const payload = await response.json();
@@ -8019,6 +8141,8 @@ function buildCompactPlanningPacket(args: {
       feasible_modalities: modalities.length > 0 ? modalities : constraints.feasibleModalities,
       frequency: selected.frequency?.summary ?? selected.frequency ?? null,
       session_length: selected.sessionLength?.summary ?? selected.sessionCapacity?.summary ?? selected.sessionLength ?? null,
+      session_length_mode: selected.sessionLengthMode ?? selected.session_length_mode ?? null,
+      session_length_minutes: finiteNumber(selected.sessionLengthMinutes ?? selected.session_length_minutes),
       injuries: selected.injuries ?? selected.injuryNotes ?? null,
       equipment_access: constraints.equipmentAccess,
       avoidances: constraints.avoidances,
@@ -8061,7 +8185,7 @@ function selectedModalitiesFromOnboarding(onboarding: Record<string, any>) {
       return null;
     })
     .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
-  return Array.from(new Set(values.map(normalizedModalityLabel))).slice(0, 5);
+  return filterEnabledOnboardingModalities(values.map(normalizedModalityLabel)).slice(0, 3);
 }
 
 function planningConstraintsFromOnboarding(onboarding: Record<string, any>) {
@@ -8091,6 +8215,8 @@ function planContextConstraints(onboarding: Record<string, any> | null | undefin
     availableDayParts: constraints.availableDayParts,
     frequency: selected.frequency?.summary ?? selected.frequency ?? null,
     sessionLength: selected.sessionLength?.summary ?? selected.sessionCapacity?.summary ?? selected.sessionLength ?? null,
+    sessionLengthMode: selected.sessionLengthMode ?? selected.session_length_mode ?? null,
+    sessionLengthMinutes: finiteNumber(selected.sessionLengthMinutes ?? selected.session_length_minutes),
     injuries: selected.injuries ?? selected.injuryNotes ?? null,
     equipmentAccess: constraints.equipmentAccess,
     avoidances: constraints.avoidances,
@@ -9488,6 +9614,7 @@ async function runWeeklyTargetGeneration(context: Record<string, unknown>, model
         schema: weeklyTargetSchema,
       },
     )),
+    signal: AbortSignal.timeout(90_000),
   });
 
   const payload = await response.json();
@@ -11420,11 +11547,12 @@ async function acquirePlanningGenerationLease(
   admin: SupabaseAdminClient,
   userID: string,
   lockKey: string,
+  leaseSeconds = 600,
 ) {
   const { data, error } = await admin.rpc("acquire_planning_generation_lease", {
     p_user_id: userID,
     p_lock_key: lockKey,
-    p_lease_seconds: 600,
+    p_lease_seconds: leaseSeconds,
   });
   if (error) throw error;
   return data === true;

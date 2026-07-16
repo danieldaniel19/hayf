@@ -82,6 +82,7 @@ async function generatePlan(state: TwoWeekPlanState) {
       "Use only allowed modalities and approved workout archetypes from the planner input.",
       "Recovery-labelled workouts require a real preceding hard or long load or an explicit recovery trigger. A first session after a gap is easy, not recovery.",
       "Respect the validated Training Architecture, Fitness Strategy, recovery envelope, hard-day cap, bad-day floor, and weekly plan rules.",
+      "When sessionLengthMode is fixed_typical_duration, treat sessionLengthMinutes as the normal session target. When it is varies_by_modality, size each modality from its approved archetype and evidence instead of applying one shared duration. Cycling above 120 minutes requires supporting history, recovery, and strategy context.",
       "For each rhythm, write weekContext.strategyExplanation as one concrete, coach-to-athlete sentence of at most 180 characters. Name what the session mix develops, why its load fits this point in the phase, and the recovery tradeoff. Use you or your where natural.",
       "Do not emit deterministic fallback markers or generic templates. If the constraints conflict, still return the safest valid plan inside the provided architecture.",
       "Set block.context to an empty object; Supabase will add persisted context after validation.",
@@ -231,15 +232,81 @@ export async function invokeTwoWeekPlanGraph(
   training_architecture: TrainingArchitecture,
   fitness_strategy: FitnessStrategyArtifact,
 ): Promise<GraphResult<TwoWeekPlanArtifact>> {
-  const state = await twoWeekPlanGraph.invoke({ packet, training_architecture, fitness_strategy });
-  if (!state.artifact) {
-    throw new Error("Two-Week Plan graph completed without an artifact.");
+  try {
+    const state = await twoWeekPlanGraph.invoke({ packet, training_architecture, fitness_strategy });
+    if (!state.artifact) {
+      throw new Error("Two-Week Plan graph completed without an artifact.");
+    }
+    return {
+      artifact: state.artifact,
+      nodes: state.nodes,
+      tool_calls: state.tool_calls,
+    };
+  } catch (error) {
+    const recovery = deterministicRecoveryPlan(packet, training_architecture, fitness_strategy);
+    const message = error instanceof Error ? error.message : "Unknown plan generation error";
+    return {
+      artifact: recovery,
+      nodes: [{
+        node_name: "deterministic_recovery_plan",
+        input_summary: {
+          startDate: packet.planning_constraints.start_date,
+          priorityOrder: training_architecture.priority_order,
+        },
+        output: {
+          weekCount: recovery.rhythms.length,
+          workoutCount: recovery.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
+        },
+        validation: { valid: true, usedFallback: true, recoveryReason: message },
+        status: "succeeded",
+      }],
+      tool_calls: [{
+        tool_name: "compile_two_week_plan",
+        tool_version: "deterministic-recovery-v1",
+        graph_node_name: "deterministic_recovery_plan",
+        input: { startDate: packet.planning_constraints.start_date },
+        output: null,
+        status: "failed",
+        error_message: message,
+        latency_ms: null,
+        provider: "hayf-training-orchestrator",
+      }],
+    };
   }
-  return {
-    artifact: state.artifact,
-    nodes: state.nodes,
-    tool_calls: state.tool_calls,
-  };
+}
+
+function deterministicRecoveryPlan(
+  packet: PlanningPacket,
+  architecture: TrainingArchitecture,
+  fitnessStrategy: FitnessStrategyArtifact,
+) {
+  const start = parseDate(packet.planning_constraints.start_date);
+  const openingPlan = openingPlanContext(packet, architecture, start);
+  const plannerInput = buildPlannerInputContract(packet, architecture, fitnessStrategy, {
+    visible_horizon_weeks: packet.generation_policy.visible_horizon_weeks,
+    committed_week_start: openingPlan.rhythms[0].weekStartDate,
+    draft_week_start: openingPlan.rhythms[1].weekStartDate,
+    program_start_date: openingPlan.programStartDate,
+    owner_start_date: openingPlan.ownerStartDate,
+  });
+  const draft = validateDraftPlanArtifact(
+    applyPlanContractGuardrails(
+      deterministicTestPlan(packet, architecture, fitnessStrategy),
+      packet,
+      architecture,
+      openingPlan,
+    ),
+    plannerInput,
+    openingPlan,
+  );
+  return validateEnrichedPlanArtifact(
+    deterministicEnrichedPlan(draft, packet, architecture),
+    draft,
+    plannerInput,
+    openingPlan,
+    architecture,
+    packet,
+  );
 }
 
 export function buildPlannerInputContract(
@@ -1504,6 +1571,8 @@ function prescriptionContext(
     })),
     constraints: {
       sessionLength: packet.planning_constraints.session_length,
+      sessionLengthMode: packet.planning_constraints.session_length_mode ?? null,
+      sessionLengthMinutes: packet.planning_constraints.session_length_minutes ?? null,
       injuries: packet.planning_constraints.injuries,
       equipmentAccess: packet.planning_constraints.equipment_access,
       avoidances: packet.planning_constraints.avoidances,
@@ -1843,7 +1912,8 @@ function titleFromArchetype(archetype: WorkoutArchetypeRecommendation) {
 }
 
 function typicalDuration(archetype: WorkoutArchetypeRecommendation) {
-  return Math.round((archetype.typical_duration_minutes.min + archetype.typical_duration_minutes.max) / 2 / 5) * 5;
+  const { min, max } = archetype.typical_duration_minutes;
+  return Math.round((min + (max - min) * 0.20) / 5) * 5;
 }
 
 function intensityLabel(domain: string) {

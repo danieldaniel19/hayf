@@ -39,6 +39,7 @@ struct AppRootView: View {
                     } else if shouldShowOnboarding(for: accountProfile) {
                         OnboardingFlowView(
                             physiologyReference: accountProfile.physiologyReference.flatMap(PhysiologyReference.init(rawValue:)) ?? .male,
+                            birthdate: Self.profileBirthdate(from: accountProfile.birthdate),
                             onboardingProfileStore: onboardingProfileStore,
                             onExit: {
                                 shouldSkipOnboardingThisSession = true
@@ -119,6 +120,14 @@ struct AppRootView: View {
 
     private func shouldShowOnboarding(for _: StoredAccountProfile) -> Bool {
         !shouldSkipOnboardingThisSession && onboardingProfileStore.profile == nil
+    }
+
+    private static func profileBirthdate(from value: String) -> Date {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: value) ?? .distantPast
     }
 
     private func signOut() {

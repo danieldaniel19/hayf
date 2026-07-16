@@ -4,6 +4,7 @@ import OSLog
 
 struct OnboardingFlowView: View {
     let physiologyReference: PhysiologyReference
+    let birthdate: Date
     let onExit: () -> Void
     let onComplete: () -> Void
 
@@ -39,11 +40,13 @@ struct OnboardingFlowView: View {
 
     init(
         physiologyReference: PhysiologyReference,
+        birthdate: Date,
         onboardingProfileStore: OnboardingProfileStore,
         onExit: @escaping () -> Void = {},
         onComplete: @escaping () -> Void
     ) {
         self.physiologyReference = physiologyReference
+        self.birthdate = birthdate
         self.onboardingProfileStore = onboardingProfileStore
         self.onExit = onExit
         self.onComplete = onComplete
@@ -176,10 +179,8 @@ struct OnboardingFlowView: View {
             loadingScreen(title: "Blending those goals.", copy: "HAYF is combining the useful parts into one direction.")
         case .blendPreview:
             blendPreviewScreen
-        case .weeklyCommitment:
-            weeklyCommitmentScreen
-        case .sessionCapacity:
-            sessionCapacityScreen
+        case .weeklyCapacity:
+            weeklyCapacityScreen
         case .weeklyAvailability:
             weeklyAvailabilityScreen
         case .friction:
@@ -238,7 +239,7 @@ struct OnboardingFlowView: View {
     private var trainingOptionsScreen: some View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: selectedIntent == .concreteGoal ? "What else can HAYF\nuse around this?" : "What can HAYF\nrealistically recommend?",
+                title: "What modalities can\nHAYF recommend?",
                 copy: selectedIntent == .concreteGoal
                     ? "Tap the training options in the order you want HAYF to prioritize them around your goal."
                     : "Tap the training options in the order you want HAYF to prioritize them."
@@ -249,8 +250,10 @@ struct OnboardingFlowView: View {
                     SelectableTile(
                         title: option.title,
                         systemImage: option.systemImage,
-                        selectionRank: draft.trainingOptionRank(for: option)
+                        selectionRank: draft.trainingOptionRank(for: option),
+                        isLocked: !option.isOnboardingEnabled
                     ) {
+                        guard option.isOnboardingEnabled else { return }
                         draft.toggleTrainingOption(option)
                     }
                 }
@@ -356,7 +359,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "What are you trying\nto keep true?",
-                copy: "Consistency usually protects something. Pick what HAYF should help you come back to."
+                copy: "Consistency usually protects something. Help me understand you better."
             )
 
             VStack(spacing: 10) {
@@ -366,7 +369,7 @@ struct OnboardingFlowView: View {
                         systemImage: anchor.systemImage,
                         isSelected: draft.motivationAnchors.contains(anchor)
                     ) {
-                        draft.motivationAnchors.toggle(anchor)
+                        draft.toggleMotivationAnchor(anchor)
                     }
                 }
             }
@@ -451,7 +454,7 @@ struct OnboardingFlowView: View {
 
         return VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: "What do you\nactually have access to?",
+                title: "What do you\nhave access to?",
                 copy: "HAYF should only build around equipment and environments you can reliably use."
             )
 
@@ -648,46 +651,41 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var weeklyCommitmentScreen: some View {
+    private var weeklyCapacityScreen: some View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: currentIntent == .concreteGoal ? "How many days can\nyou train?" : "What feels realistic\nmost weeks?",
-                copy: currentIntent == .concreteGoal ? "This is your total weekly exercise budget: goal sessions plus support work." : "This helps HAYF protect consistency before ambition."
+                title: "What feels realistic\nmost weeks?",
+                copy: "Set a typical weekly rhythm. HAYF can still adapt when life or training changes."
             )
 
-            OptionGroup(title: currentIntent == .concreteGoal ? "Total training days per week" : "Days per week") {
-                WheelChoicePicker(
-                    options: TrainingFrequency.allCases,
-                    selection: Binding(
-                        get: { draft.frequency ?? .three },
-                        set: { draft.frequency = $0 }
+            HStack(alignment: .top, spacing: 12) {
+                CapacityWheelColumn(title: currentIntent == .concreteGoal ? "Total days / week" : "Days per week") {
+                    WheelChoicePicker(
+                        options: TrainingFrequency.allCases,
+                        selection: Binding(
+                            get: { draft.frequency ?? .three },
+                            set: { draft.frequency = $0 }
+                        ),
+                        accessibilityLabel: "Training days per week"
                     )
-                )
+                }
+                .frame(maxWidth: .infinity)
+
+                CapacityWheelColumn(title: "Session length") {
+                    WheelChoicePicker(
+                        options: SessionLength.allCases,
+                        selection: Binding(
+                            get: { draft.sessionLength ?? .thirty },
+                            set: { draft.sessionLength = $0 }
+                        ),
+                        accessibilityLabel: "Typical session length"
+                    )
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         .onAppear {
             draft.frequency = draft.frequency ?? .three
-        }
-    }
-
-    private var sessionCapacityScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "How much time\nfits one session?",
-                copy: "This tells HAYF how large a normal training unit can be before the week becomes unrealistic."
-            )
-
-            OptionGroup(title: "Typical session length") {
-                WheelChoicePicker(
-                    options: SessionLength.allCases,
-                    selection: Binding(
-                        get: { draft.sessionLength ?? .thirty },
-                        set: { draft.sessionLength = $0 }
-                    )
-                )
-            }
-        }
-        .onAppear {
             draft.sessionLength = draft.sessionLength ?? .thirty
         }
     }
@@ -700,12 +698,41 @@ struct OnboardingFlowView: View {
             )
 
             OptionGroup(title: "Available days") {
-                WeekdayAvailabilityRow(selection: $draft.availableDays)
+                WeekdayAvailabilityRow(selection: Binding(
+                    get: { draft.availableDays },
+                    set: { draft.setAvailableDays($0) }
+                ))
             }
 
             OptionGroup(title: "Available times") {
-                DayPartAvailabilityRow(selection: $draft.availableDayParts)
+                DayPartAvailabilityRow(selection: Binding(
+                    get: { draft.availableDayParts },
+                    set: { draft.setAvailableDayParts($0) }
+                ))
             }
+
+            Button {
+                draft.toggleUltraFlexibleAvailability()
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                    Text("Whenever, I’m ultra flexible")
+                    Spacer()
+                    Image(systemName: draft.ultraFlexibleAvailability ? "checkmark.square.fill" : "square")
+                }
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(draft.ultraFlexibleAvailability ? HAYFColor.orange : HAYFColor.primary)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(draft.ultraFlexibleAvailability ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(draft.ultraFlexibleAvailability ? HAYFColor.orange : HAYFColor.border, lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
         }
         .onAppear {
             draft.availableDayParts.remove(.midday)
@@ -743,7 +770,7 @@ struct OnboardingFlowView: View {
     private var injuryScreen: some View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: "Anything HAYF\nshould protect?",
+                title: "Anything HAYF should\nwatch out for?",
                 copy: "Even minor discomforts matter if they should change load, exercise choices, or progression."
             )
 
@@ -806,9 +833,30 @@ struct OnboardingFlowView: View {
                         systemImage: "figure",
                         isSelected: draft.bodyFatBand == band
                     ) {
-                        draft.bodyFatBand = band
+                        draft.selectBodyFatBand(band)
                     }
                 }
+
+                DetailedSelectableRow(
+                    title: "I’m not sure, estimate from my weight and height",
+                    subtitle: bodyFatEstimateOptionSubtitle,
+                    systemImage: "function",
+                    isSelected: draft.bodyFatEstimateSource == .bmiAgePhysiology,
+                    isEnabled: estimatedBodyFatPercentage != nil
+                ) {
+                    guard let estimate = estimatedBodyFatPercentage else { return }
+                    draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
+                }
+            }
+        }
+        .onAppear {
+            guard draft.bodyFatEstimateSource == .bmiAgePhysiology else { return }
+            if let estimate = estimatedBodyFatPercentage {
+                draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
+            } else {
+                draft.bodyFatBand = nil
+                draft.bodyFatEstimatedPercentage = nil
+                draft.bodyFatEstimateSource = nil
             }
         }
     }
@@ -816,7 +864,7 @@ struct OnboardingFlowView: View {
     private var supportStyleScreen: some View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: "When you're drifting,\nwhat kind of coach helps?",
+                title: "When you lose consistency,\nwhat helps?",
                 copy: "HAYF can adjust how it nudges you when the week starts slipping."
             )
 
@@ -855,6 +903,22 @@ struct OnboardingFlowView: View {
                 }
             }
         }
+    }
+
+    private var estimatedBodyFatPercentage: Double? {
+        BodyFatEstimator.estimate(
+            bodyMassKilograms: draft.bodyMassKilograms,
+            heightCentimeters: draft.heightCentimeters,
+            birthdate: birthdate,
+            physiologyReference: physiologyReference
+        )
+    }
+
+    private var bodyFatEstimateOptionSubtitle: String {
+        guard let estimate = estimatedBodyFatPercentage else {
+            return "Available for adults after valid weight and height are entered."
+        }
+        return "Use a rough BMI, age, and physiology estimate: about \(Int(estimate.rounded()))%. It may differ by several points."
     }
 
     private var summaryScreen: some View {
@@ -1326,10 +1390,8 @@ struct OnboardingFlowView: View {
             return blendCandidateIDs.count == 2
         case .blendPreview:
             return blendedCandidate != nil
-        case .weeklyCommitment:
-            return draft.frequency != nil
-        case .sessionCapacity:
-            return draft.sessionLength != nil
+        case .weeklyCapacity:
+            return draft.hasWeeklyCapacity
         case .weeklyAvailability:
             return !draft.availableDays.isEmpty && !draft.availableDayParts.isEmpty
         case .friction:
@@ -1377,12 +1439,12 @@ struct OnboardingFlowView: View {
             if selectedIntent == .findGoal {
                 step = .findDirection
             } else if selectedIntent == .concreteGoal {
-                step = .weeklyCommitment
+                step = .weeklyCapacity
             } else {
                 step = .anchor
             }
         case .anchor:
-            step = .weeklyCommitment
+            step = .weeklyCapacity
         case .findDirection:
             step = .findChallenge
         case .findChallenge:
@@ -1394,7 +1456,7 @@ struct OnboardingFlowView: View {
                 draft.chosenGoal = selectedCandidate
                 draft.goalTimeline = selectedCandidate.timeline
             }
-            step = .weeklyCommitment
+            step = .weeklyCapacity
         case .editCandidate:
             draft.chosenGoal = GoalCandidate(
                 id: "edited-goal",
@@ -1405,16 +1467,14 @@ struct OnboardingFlowView: View {
                 systemImage: "pencil"
             )
             draft.goalTimeline = editingGoalTimeline
-            step = .weeklyCommitment
+            step = .weeklyCapacity
         case .blendCandidates:
             step = .generatingBlend
         case .blendPreview:
             draft.chosenGoal = blendedCandidate
             draft.goalTimeline = blendedCandidate?.timeline
-            step = .weeklyCommitment
-        case .weeklyCommitment:
-            step = .sessionCapacity
-        case .sessionCapacity:
+            step = .weeklyCapacity
+        case .weeklyCapacity:
             step = .weeklyAvailability
         case .weeklyAvailability:
             step = .friction
@@ -1496,7 +1556,7 @@ struct OnboardingFlowView: View {
             step = .blendCandidates
         case .blendPreview:
             step = .blendCandidates
-        case .weeklyCommitment:
+        case .weeklyCapacity:
             if selectedIntent == .stayConsistent {
                 step = .anchor
             } else if selectedIntent == .findGoal {
@@ -1504,10 +1564,8 @@ struct OnboardingFlowView: View {
             } else {
                 step = .infrastructure
             }
-        case .sessionCapacity:
-            step = .weeklyCommitment
         case .weeklyAvailability:
-            step = .sessionCapacity
+            step = .weeklyCapacity
         case .friction:
             step = .weeklyAvailability
         case .injuries:
@@ -1641,10 +1699,9 @@ struct OnboardingFlowView: View {
         aiGenerationFailure = nil
         do {
             let output = try await aiProvider.generateSummary(intent: currentIntent, draft: draft)
-            guard output.isValid else {
-                throw OnboardingAIError.emptyOutput
-            }
-            summaryOutput = output
+            summaryOutput = output.isValid
+                ? output
+                : MockOnboardingAIProvider.fallbackSummary(intent: currentIntent, draft: draft)
             step = .summary
         } catch {
             aiGenerationFailure = OnboardingAIGenerationFailure(step: .generatingSummary, error: error)
@@ -1881,7 +1938,7 @@ struct OnboardingFlowView: View {
             } catch {
                 completionLogger.error("Onboarding completion failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
-                    completionErrorMessage = "HAYF could not generate your AI plan yet. Try again in a moment."
+                    completionErrorMessage = "HAYF saved your strategy but could not finish plan setup. Tap Accept strategy to resume."
                 }
             }
         }
@@ -2061,7 +2118,7 @@ struct OnboardingFlowView: View {
     }
 }
 
-private enum OnboardingStep: Equatable {
+enum OnboardingStep: Equatable {
     case intent
     case goalBrief
     case goalExperience
@@ -2079,8 +2136,7 @@ private enum OnboardingStep: Equatable {
     case blendCandidates
     case generatingBlend
     case blendPreview
-    case weeklyCommitment
-    case sessionCapacity
+    case weeklyCapacity
     case weeklyAvailability
     case friction
     case injuries
@@ -2109,11 +2165,11 @@ private enum OnboardingStep: Equatable {
     static func totalSegments(for intent: OnboardingIntent) -> Int {
         switch intent {
         case .stayConsistent:
-            return 17
+            return 16
         case .concreteGoal:
-            return 21
+            return 20
         case .findGoal:
-            return 21
+            return 20
         }
     }
 
@@ -2125,19 +2181,18 @@ private enum OnboardingStep: Equatable {
             case .options: return 2
             case .infrastructure: return 3
             case .anchor: return 4
-            case .weeklyCommitment: return 5
-            case .sessionCapacity: return 6
-            case .weeklyAvailability: return 7
-            case .friction: return 8
-            case .injuries: return 9
-            case .bodyBasics: return 10
-            case .bodyFatEstimate: return 11
-            case .support: return 12
-            case .floor, .generatingSummary: return 13
-            case .summary: return 14
-            case .health, .generatingBlueprint: return 15
-            case .athleteBlueprint, .generatingStrategy: return 16
-            case .fitnessStrategy: return 17
+            case .weeklyCapacity: return 5
+            case .weeklyAvailability: return 6
+            case .friction: return 7
+            case .injuries: return 8
+            case .bodyBasics: return 9
+            case .bodyFatEstimate: return 10
+            case .support: return 11
+            case .floor, .generatingSummary: return 12
+            case .summary: return 13
+            case .health, .generatingBlueprint: return 14
+            case .athleteBlueprint, .generatingStrategy: return 15
+            case .fitnessStrategy: return 16
             default: return 1
             }
         case .concreteGoal:
@@ -2149,20 +2204,19 @@ private enum OnboardingStep: Equatable {
             case .goalPriority: return 5
             case .options: return 6
             case .infrastructure: return 7
-            case .weeklyCommitment: return 8
-            case .sessionCapacity: return 9
-            case .weeklyAvailability: return 10
-            case .friction: return 11
-            case .injuries: return 12
-            case .bodyBasics: return 13
-            case .bodyFatEstimate: return 14
-            case .support: return 15
-            case .floor, .generatingSummary: return 16
-            case .summary: return 17
-            case .health, .generatingBlueprint: return 18
-            case .athleteBlueprint, .generatingStrategy: return 19
-            case .fitnessStrategy: return 20
-            case .fitnessStrategyPhases: return 21
+            case .weeklyCapacity: return 8
+            case .weeklyAvailability: return 9
+            case .friction: return 10
+            case .injuries: return 11
+            case .bodyBasics: return 12
+            case .bodyFatEstimate: return 13
+            case .support: return 14
+            case .floor, .generatingSummary: return 15
+            case .summary: return 16
+            case .health, .generatingBlueprint: return 17
+            case .athleteBlueprint, .generatingStrategy: return 18
+            case .fitnessStrategy: return 19
+            case .fitnessStrategyPhases: return 20
             default: return 1
             }
         case .findGoal:
@@ -2174,20 +2228,19 @@ private enum OnboardingStep: Equatable {
             case .findChallenge: return 5
             case .findAvoids, .generatingCandidates: return 6
             case .goalCandidates, .editCandidate, .blendCandidates, .generatingBlend, .blendPreview: return 7
-            case .weeklyCommitment: return 8
-            case .sessionCapacity: return 9
-            case .weeklyAvailability: return 10
-            case .friction: return 11
-            case .injuries: return 12
-            case .bodyBasics: return 13
-            case .bodyFatEstimate: return 14
-            case .support: return 15
-            case .floor, .generatingSummary: return 16
-            case .summary: return 17
-            case .health, .generatingBlueprint: return 18
-            case .athleteBlueprint, .generatingStrategy: return 19
-            case .fitnessStrategy: return 20
-            case .fitnessStrategyPhases: return 21
+            case .weeklyCapacity: return 8
+            case .weeklyAvailability: return 9
+            case .friction: return 10
+            case .injuries: return 11
+            case .bodyBasics: return 12
+            case .bodyFatEstimate: return 13
+            case .support: return 14
+            case .floor, .generatingSummary: return 15
+            case .summary: return 16
+            case .health, .generatingBlueprint: return 17
+            case .athleteBlueprint, .generatingStrategy: return 18
+            case .fitnessStrategy: return 19
+            case .fitnessStrategyPhases: return 20
             default: return 1
             }
         }
@@ -2237,7 +2290,7 @@ private struct OnboardingAIGenerationFailure: Equatable {
     }
 }
 
-private enum OnboardingIntent: String, CaseIterable, Identifiable {
+enum OnboardingIntent: String, CaseIterable, Identifiable {
     case stayConsistent
     case concreteGoal
     case findGoal
@@ -2254,7 +2307,7 @@ private enum OnboardingIntent: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .stayConsistent: return "No fixed goal. Keep me balanced and moving."
+        case .stayConsistent: return "No fixed goal. Keep me reliable and strong."
         case .concreteGoal: return "Build around a target, event, or timeline."
         case .findGoal: return "Suggest a direction that fits me."
         }
@@ -2288,7 +2341,7 @@ private enum OnboardingIntent: String, CaseIterable, Identifiable {
     }
 }
 
-private struct ConsistencyOnboardingDraft {
+struct ConsistencyOnboardingDraft {
     var trainingOptions: [TrainingOption] = []
     var infrastructureAccess: Set<InfrastructureAccess> = []
     var motivationAnchors: Set<MotivationAnchor> = []
@@ -2307,11 +2360,18 @@ private struct ConsistencyOnboardingDraft {
     var sessionLength: SessionLength?
     var availableDays: Set<Weekday> = []
     var availableDayParts: Set<DayPart> = []
+    var ultraFlexibleAvailability = false
     var blockers: Set<ConsistencyBlocker> = []
     var blockerNote = ""
     var bodyMassKilogramsInput = ""
     var heightCentimetersInput = ""
     var bodyFatBand: BodyFatBand?
+    var bodyFatEstimatedPercentage: Double?
+    var bodyFatEstimateSource: BodyFatEstimateSource?
+
+    var hasWeeklyCapacity: Bool {
+        frequency != nil && sessionLength != nil
+    }
     var supportStyle: CoachingSupportStyle?
     var badDayFloor: BadDayFloor?
 
@@ -2338,6 +2398,7 @@ private struct ConsistencyOnboardingDraft {
     }
 
     var availabilitySummary: String {
+        if ultraFlexibleAvailability { return "Ultra flexible" }
         let days = summary(for: availableDays.map(\.shortTitle), fallback: "No days set")
         let dayParts = summary(for: availableDayParts.map(\.title), fallback: "no times set")
         return "\(days); \(dayParts)"
@@ -2393,7 +2454,9 @@ private struct ConsistencyOnboardingDraft {
     var bodyBaselineSummary: String {
         let bodyMass = bodyMassKilograms.map { String(format: "%.1f kg", $0) } ?? "weight not set"
         let height = heightCentimeters.map { "\(Int($0.rounded())) cm" } ?? "height not set"
-        let bodyFat = bodyFatBand?.title ?? "body fat not set"
+        let bodyFat = bodyFatEstimateSource == .bmiAgePhysiology
+            ? bodyFatEstimatedPercentage.map { "≈\(Int($0.rounded()))% body fat" } ?? "body fat not set"
+            : bodyFatBand?.title ?? "body fat not set"
         return "\(bodyMass), \(height), \(bodyFat)"
     }
 
@@ -2438,7 +2501,7 @@ private struct ConsistencyOnboardingDraft {
     private func summary(for values: [String], fallback: String) -> String {
         let sortedValues = values.sorted()
         guard !sortedValues.isEmpty else { return fallback }
-        return sortedValues.prefix(3).joined(separator: ", ") + (sortedValues.count > 3 ? " +" : "")
+        return sortedValues.joined(separator: ", ")
     }
 
     private func summaryWithOptionalNote(values: [String], note: String, fallback: String) -> String {
@@ -2454,11 +2517,54 @@ private struct ConsistencyOnboardingDraft {
     }
 
     mutating func toggleTrainingOption(_ option: TrainingOption) {
+        guard option.isOnboardingEnabled else { return }
         if let index = trainingOptions.firstIndex(of: option) {
             trainingOptions.remove(at: index)
         } else {
             trainingOptions.append(option)
         }
+    }
+
+    mutating func toggleMotivationAnchor(_ anchor: MotivationAnchor) {
+        if anchor == .unsure {
+            motivationAnchors = motivationAnchors == [.unsure] ? [] : [.unsure]
+            return
+        }
+        motivationAnchors.remove(.unsure)
+        motivationAnchors.toggle(anchor)
+    }
+
+    mutating func setAvailableDays(_ days: Set<Weekday>) {
+        availableDays = days
+        ultraFlexibleAvailability = false
+    }
+
+    mutating func setAvailableDayParts(_ dayParts: Set<DayPart>) {
+        availableDayParts = dayParts
+        ultraFlexibleAvailability = false
+    }
+
+    mutating func toggleUltraFlexibleAvailability() {
+        ultraFlexibleAvailability.toggle()
+        if ultraFlexibleAvailability {
+            availableDays = Set(Weekday.allCases)
+            availableDayParts = Set(DayPart.allCases)
+        } else {
+            availableDays = []
+            availableDayParts = []
+        }
+    }
+
+    mutating func selectBodyFatBand(_ band: BodyFatBand) {
+        bodyFatBand = band
+        bodyFatEstimatedPercentage = nil
+        bodyFatEstimateSource = .selfReportedBand
+    }
+
+    mutating func selectEstimatedBodyFat(_ percentage: Double, physiologyReference: PhysiologyReference) {
+        bodyFatEstimatedPercentage = percentage
+        bodyFatBand = BodyFatBand.band(containing: percentage, for: physiologyReference)
+        bodyFatEstimateSource = .bmiAgePhysiology
     }
 
     var requiredInfrastructureOptions: [InfrastructureAccess] {
@@ -2554,8 +2660,11 @@ private struct OnboardingAICompactContext: Codable {
     let chosenGoal: GoalCandidatePayload?
     let frequency: String
     let sessionLength: String
+    let sessionLengthMode: String
+    let sessionLengthMinutes: Int?
     let availableDays: [String]
     let availableDayParts: [String]
+    let ultraFlexibleAvailability: Bool
     let blockers: [String]
     let blockerNote: String
     let supportStyle: String
@@ -2584,23 +2693,27 @@ private struct OnboardingAICompactContext: Codable {
         chosenGoal = draft.chosenGoal.map(GoalCandidatePayload.init(candidate:))
         frequency = draft.frequency?.summary ?? ""
         sessionLength = draft.sessionLength?.title ?? ""
+        sessionLengthMode = draft.sessionLength?.mode ?? ""
+        sessionLengthMinutes = draft.sessionLength?.minutes
         availableDays = draft.availableDays.map(\.rawValue).sorted()
         availableDayParts = draft.availableDayParts.map(\.rawValue).sorted()
+        ultraFlexibleAvailability = draft.ultraFlexibleAvailability
         blockers = draft.blockers.map(\.title).sorted()
         blockerNote = draft.blockerNote.trimmed
         supportStyle = draft.supportSummary
-        badDayFloor = draft.badDayFloor?.title ?? ""
+        badDayFloor = draft.badDayFloor?.planningValue ?? ""
         bodyBaseline = BodyBaselinePayload(draft: draft)
         self.healthSnapshot = healthSnapshot
     }
 }
 
-private struct BodyBaselinePayload: Codable {
+struct BodyBaselinePayload: Codable {
     let heightCentimeters: Double
     let bodyMassKilograms: Double
     let bodyFatBand: String
     let bodyFatEstimateMidpoint: Double
     let source: String
+    let confidence: String
 
     init?(draft: ConsistencyOnboardingDraft) {
         guard let heightCentimeters = draft.heightCentimeters,
@@ -2612,8 +2725,10 @@ private struct BodyBaselinePayload: Codable {
         self.heightCentimeters = heightCentimeters
         self.bodyMassKilograms = bodyMassKilograms
         self.bodyFatBand = bodyFatBand.title
-        bodyFatEstimateMidpoint = bodyFatBand.midpointEstimate
-        source = "onboarding_self_report"
+        bodyFatEstimateMidpoint = draft.bodyFatEstimatedPercentage ?? bodyFatBand.midpointEstimate
+        let estimateSource = draft.bodyFatEstimateSource ?? .selfReportedBand
+        source = estimateSource.rawValue
+        confidence = estimateSource.confidence
     }
 }
 
@@ -2702,20 +2817,7 @@ private struct AthleteBlueprintAICompactContext: Codable {
         feasibleTrainingOptions = draft.trainingOptions.enumerated().map { index, option in
             RankedTrainingOptionPayload(option: option, priority: index + 1)
         }
-        onboardingSignals = AthleteBlueprintAIOnboardingSignals(
-            goalPriority: draft.prioritySummary,
-            frequencyPreference: draft.frequency?.summary ?? "",
-            sessionLengthPreference: draft.sessionLength?.title ?? "",
-            availableDays: draft.availableDays.map(\.title).sorted(),
-            availableDayParts: draft.availableDayParts.map(\.title).sorted(),
-            infrastructureAccess: draft.infrastructureAccess.map(\.title).sorted(),
-            blockers: draft.blockers.map(\.title).sorted(),
-            blockerNote: draft.blockerNote.trimmed,
-            supportStyle: draft.supportSummary,
-            badDayFloor: draft.floorSummary,
-            injuryNotes: draft.injuryNotes.trimmed,
-            bodyBaseline: BodyBaselinePayload(draft: draft)
-        )
+        onboardingSignals = AthleteBlueprintAIOnboardingSignals(draft: draft)
         evidenceSummary = AthleteBlueprintAIEvidenceSummary(evidence: evidence)
         sectionSeeds = AthleteBlueprintAISectionSeeds(output: fallback)
         doNotClaim = [
@@ -2742,15 +2844,40 @@ private struct AthleteBlueprintAIOnboardingSignals: Codable {
     let goalPriority: String
     let frequencyPreference: String
     let sessionLengthPreference: String
+    let sessionLengthMode: String
+    let sessionLengthMinutes: Int?
     let availableDays: [String]
     let availableDayParts: [String]
+    let ultraFlexibleAvailability: Bool
     let infrastructureAccess: [String]
+    let motivationAnchors: [String]
+    let motivationNote: String
     let blockers: [String]
     let blockerNote: String
     let supportStyle: String
     let badDayFloor: String
     let injuryNotes: String
     let bodyBaseline: BodyBaselinePayload?
+
+    init(draft: ConsistencyOnboardingDraft) {
+        goalPriority = draft.prioritySummary
+        frequencyPreference = draft.frequency?.summary ?? ""
+        sessionLengthPreference = draft.sessionLength?.title ?? ""
+        sessionLengthMode = draft.sessionLength?.mode ?? ""
+        sessionLengthMinutes = draft.sessionLength?.minutes
+        availableDays = draft.availableDays.map(\.title).sorted()
+        availableDayParts = draft.availableDayParts.map(\.title).sorted()
+        ultraFlexibleAvailability = draft.ultraFlexibleAvailability
+        infrastructureAccess = draft.infrastructureAccess.map(\.title).sorted()
+        motivationAnchors = draft.motivationAnchors.map(\.title).sorted()
+        motivationNote = draft.motivationNote.trimmed
+        blockers = draft.blockers.map(\.title).sorted()
+        blockerNote = draft.blockerNote.trimmed
+        supportStyle = draft.supportSummary
+        badDayFloor = draft.badDayFloor?.planningValue ?? ""
+        injuryNotes = draft.injuryNotes.trimmed
+        bodyBaseline = BodyBaselinePayload(draft: draft)
+    }
 }
 
 private struct AthleteBlueprintAIEvidenceSummary: Codable {
@@ -2943,20 +3070,7 @@ private struct FitnessStrategyAICompactContext: Codable {
         self.intent = intent.rawValue
         normalizedGoal = AthleteBlueprintAIGoalPayload(goal: goal)
         self.blueprint = FitnessStrategyAIBlueprintSummary(blueprint: blueprint)
-        onboardingSignals = AthleteBlueprintAIOnboardingSignals(
-            goalPriority: draft.prioritySummary,
-            frequencyPreference: draft.frequency?.summary ?? "",
-            sessionLengthPreference: draft.sessionLength?.title ?? "",
-            availableDays: draft.availableDays.map(\.title).sorted(),
-            availableDayParts: draft.availableDayParts.map(\.title).sorted(),
-            infrastructureAccess: draft.infrastructureAccess.map(\.title).sorted(),
-            blockers: draft.blockers.map(\.title).sorted(),
-            blockerNote: draft.blockerNote.trimmed,
-            supportStyle: draft.supportSummary,
-            badDayFloor: draft.floorSummary,
-            injuryNotes: draft.injuryNotes.trimmed,
-            bodyBaseline: BodyBaselinePayload(draft: draft)
-        )
+        onboardingSignals = AthleteBlueprintAIOnboardingSignals(draft: draft)
         sectionSeeds = FitnessStrategyAISectionSeeds(strategy: fallback)
         doNotClaim = [
             "Do not repeat the user's goal summary back to them as the strategy.",
@@ -2985,20 +3099,7 @@ private struct FitnessStrategyAITargetGenerationContext: Codable {
         self.intent = intent.rawValue
         normalizedGoal = AthleteBlueprintAIGoalPayload(goal: goal)
         self.blueprint = FitnessStrategyAIBlueprintSummary(blueprint: blueprint)
-        onboardingSignals = AthleteBlueprintAIOnboardingSignals(
-            goalPriority: draft.prioritySummary,
-            frequencyPreference: draft.frequency?.summary ?? "",
-            sessionLengthPreference: draft.sessionLength?.title ?? "",
-            availableDays: draft.availableDays.map(\.title).sorted(),
-            availableDayParts: draft.availableDayParts.map(\.title).sorted(),
-            infrastructureAccess: draft.infrastructureAccess.map(\.title).sorted(),
-            blockers: draft.blockers.map(\.title).sorted(),
-            blockerNote: draft.blockerNote.trimmed,
-            supportStyle: draft.supportSummary,
-            badDayFloor: draft.floorSummary,
-            injuryNotes: draft.injuryNotes.trimmed,
-            bodyBaseline: BodyBaselinePayload(draft: draft)
-        )
+        onboardingSignals = AthleteBlueprintAIOnboardingSignals(draft: draft)
         targetBrief = FitnessStrategyAITargetBrief(goal: goal, draft: draft, blueprint: blueprint, fallback: fallback)
         targetSlots = FitnessStrategyAITargetSlots(strategy: fallback)
         doNotClaim = [
@@ -3223,14 +3324,16 @@ private struct FitnessStrategyAIConcreteTarget: Codable {
 private struct FitnessStrategyAIAvailabilityBrief: Codable {
     let daysPerWeek: Int
     let sessionLength: String
-    let sessionLengthMinutes: Int
+    let sessionLengthMode: String
+    let sessionLengthMinutes: Int?
     let days: [String]
     let dayParts: [String]
 
     init(draft: ConsistencyOnboardingDraft) {
         daysPerWeek = FitnessStrategyAIAvailabilityBrief.weeklySessions(from: draft.frequency)
         sessionLength = draft.sessionLength?.title ?? ""
-        sessionLengthMinutes = FitnessStrategyAIAvailabilityBrief.sessionMinutes(from: draft.sessionLength)
+        sessionLengthMode = draft.sessionLength?.mode ?? ""
+        sessionLengthMinutes = draft.sessionLength?.minutes
         days = draft.availableDays.map(\.title).sorted()
         dayParts = draft.availableDayParts.map(\.title).sorted()
     }
@@ -3245,15 +3348,6 @@ private struct FitnessStrategyAIAvailabilityBrief: Codable {
         }
     }
 
-    private static func sessionMinutes(from length: SessionLength?) -> Int {
-        switch length {
-        case .twenty: return 20
-        case .thirty: return 30
-        case .fortyFive: return 45
-        case .sixtyPlus: return 60
-        case .varies, nil: return 35
-        }
-    }
 }
 
 private struct FitnessStrategyAIBlueprintSummary: Codable {
@@ -4007,11 +4101,23 @@ private struct OnboardingAIGoalCandidatesPayload: Codable {
     let candidates: [GoalCandidatePayload]
 }
 
-private struct OnboardingSummaryOutput {
+struct OnboardingSummaryOutput {
     let readback: String
 
     var isValid: Bool {
-        !readback.trimmed.isEmpty
+        Self.isValidReadback(readback)
+    }
+
+    static func isValidReadback(_ value: String) -> Bool {
+        let trimmed = value.trimmed
+        let words = trimmed.split(whereSeparator: { $0.isWhitespace })
+        let sentenceEndings = trimmed.filter { ".!?".contains($0) }.count
+        let forbiddenOpening = trimmed.lowercased().hasPrefix("you chose")
+            || trimmed.lowercased().hasPrefix("you selected")
+        return (12...18).contains(words.count)
+            && trimmed.count <= 120
+            && sentenceEndings <= 1
+            && !forbiddenOpening
     }
 }
 
@@ -4022,7 +4128,7 @@ private struct SummaryItem: Identifiable {
     let value: String
 }
 
-private struct GoalCandidate: Identifiable, Equatable {
+struct GoalCandidate: Identifiable, Equatable {
     let id: String
     let title: String
     let rationale: String
@@ -4267,22 +4373,16 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
     static func fallbackSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) -> OnboardingSummaryOutput {
         switch intent {
         case .stayConsistent:
-            let frequency = draft.frequency?.summary ?? "a repeatable weekly rhythm"
             return OnboardingSummaryOutput(
-                readback: "You want \(frequency) to become durable, with a realistic floor for weeks that get messy."
+                readback: "Reliable training matters more than perfect weeks, so your plan needs an adaptable rhythm."
             )
         case .concreteGoal:
-            let goal = draft.goalSummary == "Not set" ? "a concrete target" : draft.goalSummary.lowercased()
             return OnboardingSummaryOutput(
-                readback: "You want HAYF to coach toward \(goal), while respecting your available training menu and recovery constraints."
+                readback: "Your goal needs focused progress without letting real-world constraints destabilize the wider training week."
             )
         case .findGoal:
-            let goal = draft.goalSummary == "Not set" ? "a goal direction" : draft.goalSummary.lowercased()
-            let primary = draft.trainingOptions.first?.title.lowercased() ?? "your preferred training"
-            let support = draft.trainingOptions.dropFirst().prefix(2).map { $0.title.lowercased() }
-            let supportClause = support.isEmpty ? "" : ", with \(support.joined(separator: " and ")) as support"
             return OnboardingSummaryOutput(
-                readback: "You landed on \(goal), led by \(primary)\(supportClause), because that gives the next block a clear fitness direction without ignoring what you actually want to train."
+                readback: "You need a motivating direction specific enough to guide training without creating unnecessary rigidity."
             )
         }
     }
@@ -4392,7 +4492,7 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
     }
 }
 
-private enum TrainingOption: String, CaseIterable, Identifiable {
+enum TrainingOption: String, CaseIterable, Identifiable {
     case strength
     case running
     case cycling
@@ -4406,6 +4506,10 @@ private enum TrainingOption: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+
+    var isOnboardingEnabled: Bool {
+        self == .strength || self == .running || self == .cycling
+    }
 
     var systemImage: String {
         switch self {
@@ -4444,7 +4548,7 @@ private enum TrainingOption: String, CaseIterable, Identifiable {
     }
 }
 
-private enum InfrastructureAccess: String, CaseIterable, Identifiable {
+enum InfrastructureAccess: String, CaseIterable, Identifiable {
     case gym
     case homeWeights
     case outdoorRoutes
@@ -4492,7 +4596,7 @@ private enum InfrastructureAccess: String, CaseIterable, Identifiable {
     }
 }
 
-private enum Weekday: String, CaseIterable, Identifiable {
+enum Weekday: String, CaseIterable, Identifiable {
     case monday, tuesday, wednesday, thursday, friday, saturday, sunday
 
     var id: String { rawValue }
@@ -4524,7 +4628,7 @@ private enum Weekday: String, CaseIterable, Identifiable {
     }
 }
 
-private enum DayPart: String, CaseIterable, Identifiable {
+enum DayPart: String, CaseIterable, Identifiable {
     case morning
     case midday
     case afternoon
@@ -4545,7 +4649,7 @@ private enum DayPart: String, CaseIterable, Identifiable {
     }
 }
 
-private enum BodyFatBand: String, CaseIterable, Identifiable {
+enum BodyFatBand: String, CaseIterable, Identifiable {
     case maleUnder10
     case male10To12
     case male12To15
@@ -4567,6 +4671,25 @@ private enum BodyFatBand: String, CaseIterable, Identifiable {
             return [.maleUnder10, .male10To12, .male12To15, .male15To17, .male17To20, .maleAbove20]
         case .female:
             return [.femaleUnder18, .female18To21, .female21To25, .female25To28, .female28To32, .femaleAbove32]
+        }
+    }
+
+    static func band(containing percentage: Double, for reference: PhysiologyReference) -> BodyFatBand {
+        switch reference {
+        case .male:
+            if percentage < 10 { return .maleUnder10 }
+            if percentage < 12 { return .male10To12 }
+            if percentage < 15 { return .male12To15 }
+            if percentage < 17 { return .male15To17 }
+            if percentage < 20 { return .male17To20 }
+            return .maleAbove20
+        case .female:
+            if percentage < 18 { return .femaleUnder18 }
+            if percentage < 21 { return .female18To21 }
+            if percentage < 25 { return .female21To25 }
+            if percentage < 28 { return .female25To28 }
+            if percentage < 32 { return .female28To32 }
+            return .femaleAbove32
         }
     }
 
@@ -4634,37 +4757,81 @@ private enum BodyFatBand: String, CaseIterable, Identifiable {
     }
 }
 
-private enum MotivationAnchor: String, CaseIterable, Identifiable {
-    case capable
-    case energy
-    case balanced
-    case momentum
-    case overthinking
+enum BodyFatEstimateSource: String, Codable {
+    case selfReportedBand = "self_reported_band"
+    case bmiAgePhysiology = "bmi_age_physiology_estimate"
+
+    var confidence: String {
+        switch self {
+        case .selfReportedBand: return "estimated_band"
+        case .bmiAgePhysiology: return "rough_anthropometric_estimate"
+        }
+    }
+}
+
+enum BodyFatEstimator {
+    static func estimate(
+        bodyMassKilograms: Double?,
+        heightCentimeters: Double?,
+        birthdate: Date,
+        physiologyReference: PhysiologyReference,
+        now: Date = .now,
+        calendar: Calendar = .current
+    ) -> Double? {
+        guard let bodyMassKilograms,
+              let heightCentimeters,
+              bodyMassKilograms > 0,
+              heightCentimeters > 0 else { return nil }
+        let age = calendar.dateComponents([.year], from: birthdate, to: now).year ?? 0
+        guard (18...120).contains(age) else { return nil }
+        let heightMeters = heightCentimeters / 100
+        let bmi = bodyMassKilograms / (heightMeters * heightMeters)
+        let maleReference = physiologyReference == .male ? 1.0 : 0.0
+        let estimate = 1.20 * bmi + 0.23 * Double(age) - 10.8 * maleReference - 5.4
+        return min(60, max(3, estimate))
+    }
+}
+
+enum MotivationAnchor: String, CaseIterable, Identifiable {
+    case strengthAndCapability
+    case dailyEnergy
+    case stressAndHeadspace
+    case bodyConfidence
+    case longTermHealth
+    case sportAndAdventure
+    case dependableRoutine
+    case unsure
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .capable: return "Feeling capable in my body"
-        case .energy: return "Having energy for my life"
-        case .balanced: return "Staying balanced, not extreme"
-        case .momentum: return "Not losing momentum again"
-        case .overthinking: return "Training without overthinking"
+        case .strengthAndCapability: return "Feel strong and physically capable"
+        case .dailyEnergy: return "Have more energy day to day"
+        case .stressAndHeadspace: return "Manage stress and clear my head"
+        case .bodyConfidence: return "Feel confident in my body"
+        case .longTermHealth: return "Protect my long-term health"
+        case .sportAndAdventure: return "Stay ready for sports and adventures"
+        case .dependableRoutine: return "Build a dependable routine"
+        case .unsure: return "I’m not sure yet"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .capable: return "figure.walk.motion"
-        case .energy: return "bolt.heart"
-        case .balanced: return "circle.lefthalf.filled"
-        case .momentum: return "arrow.triangle.2.circlepath"
-        case .overthinking: return "scope"
+        case .strengthAndCapability: return "figure.strengthtraining.traditional"
+        case .dailyEnergy: return "bolt.heart"
+        case .stressAndHeadspace: return "brain.head.profile"
+        case .bodyConfidence: return "figure.arms.open"
+        case .longTermHealth: return "heart.text.square"
+        case .sportAndAdventure: return "mountain.2"
+        case .dependableRoutine: return "calendar.badge.checkmark"
+        case .unsure: return "questionmark.circle"
         }
     }
 }
 
-private enum TrainingFrequency: String, CaseIterable, Identifiable {
+enum TrainingFrequency: String, CaseIterable, Identifiable {
     case two
     case three
     case four
@@ -4694,7 +4861,7 @@ private enum TrainingFrequency: String, CaseIterable, Identifiable {
     }
 }
 
-private enum SessionLength: String, CaseIterable, Identifiable {
+enum SessionLength: String, CaseIterable, Identifiable {
     case twenty
     case thirty
     case fortyFive
@@ -4719,12 +4886,26 @@ private enum SessionLength: String, CaseIterable, Identifiable {
         case .thirty: return "30 min"
         case .fortyFive: return "45 min"
         case .sixtyPlus: return "60 min"
-        case .varies: return "30-45 min"
+        case .varies: return "modality-specific windows"
+        }
+    }
+
+    var mode: String {
+        self == .varies ? "varies_by_modality" : "fixed_typical_duration"
+    }
+
+    var minutes: Int? {
+        switch self {
+        case .twenty: return 20
+        case .thirty: return 30
+        case .fortyFive: return 45
+        case .sixtyPlus: return 60
+        case .varies: return nil
         }
     }
 }
 
-private enum GoalExperience: String, CaseIterable, Identifiable {
+enum GoalExperience: String, CaseIterable, Identifiable {
     case underOneYear
     case oneToThreeYears
     case threeToFiveYears
@@ -4760,7 +4941,7 @@ private enum GoalExperience: String, CaseIterable, Identifiable {
     }
 }
 
-private enum GoalTimeline: String, CaseIterable, Identifiable {
+enum GoalTimeline: String, CaseIterable, Identifiable {
     case fourWeeks
     case eightWeeks
     case twelveWeeks
@@ -4798,7 +4979,7 @@ private enum GoalTimeline: String, CaseIterable, Identifiable {
     }
 }
 
-private enum GoalPriority: String, CaseIterable, Identifiable {
+enum GoalPriority: String, CaseIterable, Identifiable {
     case goalProgress
     case stayingBalanced
     case avoidInjury
@@ -4843,7 +5024,7 @@ private enum GoalPriority: String, CaseIterable, Identifiable {
     }
 }
 
-private enum GoalDirection: String, CaseIterable, Identifiable {
+enum GoalDirection: String, CaseIterable, Identifiable {
     case moreAthletic
     case stronger
     case betterEndurance
@@ -4887,7 +5068,7 @@ private enum GoalDirection: String, CaseIterable, Identifiable {
     }
 }
 
-private enum ChallengeStyle: String, CaseIterable, Identifiable {
+enum ChallengeStyle: String, CaseIterable, Identifiable {
     case numbersTargets
     case eventsDeadlines
     case skillProgression
@@ -4927,7 +5108,7 @@ private enum ChallengeStyle: String, CaseIterable, Identifiable {
     }
 }
 
-private enum GoalAvoidance: String, CaseIterable, Identifiable {
+enum GoalAvoidance: String, CaseIterable, Identifiable {
     case running
     case heavyLifting
     case longWorkouts
@@ -4963,7 +5144,7 @@ private enum GoalAvoidance: String, CaseIterable, Identifiable {
     }
 }
 
-private enum ConsistencyBlocker: String, CaseIterable, Identifiable {
+enum ConsistencyBlocker: String, CaseIterable, Identifiable {
     case workSchedule
     case lowEnergy
     case soreness
@@ -4971,8 +5152,6 @@ private enum ConsistencyBlocker: String, CaseIterable, Identifiable {
     case travel
     case motivation
     case weather
-    case gymAccess
-    case allOrNothing
 
     var id: String { rawValue }
 
@@ -4981,12 +5160,10 @@ private enum ConsistencyBlocker: String, CaseIterable, Identifiable {
         case .workSchedule: return "Work schedule"
         case .lowEnergy: return "Low energy"
         case .soreness: return "Soreness"
-        case .noPlan: return "No plan"
+        case .noPlan: return "Not having a plan"
         case .travel: return "Travel"
         case .motivation: return "Motivation"
         case .weather: return "Weather"
-        case .gymAccess: return "Gym access"
-        case .allOrNothing: return "All-or-nothing weeks"
         }
     }
 
@@ -4999,13 +5176,11 @@ private enum ConsistencyBlocker: String, CaseIterable, Identifiable {
         case .travel: return "airplane"
         case .motivation: return "bolt"
         case .weather: return "cloud.rain"
-        case .gymAccess: return "building.2"
-        case .allOrNothing: return "arrow.left.and.right"
         }
     }
 }
 
-private enum CoachingSupportStyle: String, CaseIterable, Identifiable {
+enum CoachingSupportStyle: String, CaseIterable, Identifiable {
     case calmReset
     case directPush
     case easiestUseful
@@ -5055,11 +5230,12 @@ private enum CoachingSupportStyle: String, CaseIterable, Identifiable {
     }
 }
 
-private enum BadDayFloor: String, CaseIterable, Identifiable {
+enum BadDayFloor: String, CaseIterable, Identifiable {
     case walkMobility
     case twentyEasy
     case strengthCircuit
     case intentionalRest
+    case varies
 
     var id: String { rawValue }
 
@@ -5069,6 +5245,7 @@ private enum BadDayFloor: String, CaseIterable, Identifiable {
         case .twentyEasy: return "20-min easy session"
         case .strengthCircuit: return "Short strength circuit"
         case .intentionalRest: return "Intentional rest"
+        case .varies: return "It varies"
         }
     }
 
@@ -5078,6 +5255,16 @@ private enum BadDayFloor: String, CaseIterable, Identifiable {
         case .twentyEasy: return "20-minute fallback"
         case .strengthCircuit: return "short strength circuit"
         case .intentionalRest: return "intentional rest option"
+        case .varies: return "model-selected useful fallback"
+        }
+    }
+
+    var planningValue: String {
+        switch self {
+        case .varies:
+            return "Model discretion: choose the smallest useful response from the day’s schedule, modality, recovery, and recent training."
+        default:
+            return title
         }
     }
 
@@ -5087,6 +5274,7 @@ private enum BadDayFloor: String, CaseIterable, Identifiable {
         case .twentyEasy: return "Enough to move without draining you."
         case .strengthCircuit: return "Simple, contained, effective."
         case .intentionalRest: return "Recovery counts when it is deliberate."
+        case .varies: return "Let HAYF choose from your schedule, modality, recovery, and recent training."
         }
     }
 
@@ -5096,6 +5284,7 @@ private enum BadDayFloor: String, CaseIterable, Identifiable {
         case .twentyEasy: return "heart"
         case .strengthCircuit: return "figure.strengthtraining.traditional"
         case .intentionalRest: return "moon"
+        case .varies: return "wand.and.stars"
         }
     }
 }
@@ -5215,6 +5404,7 @@ private struct SelectableTile: View {
     let title: String
     let systemImage: String
     let selectionRank: Int?
+    var isLocked = false
     let action: () -> Void
 
     private var isSelected: Bool {
@@ -5225,17 +5415,23 @@ private struct SelectableTile: View {
         Button(action: action) {
             VStack(spacing: 10) {
                 HAYFIcon(systemImage: systemImage, isSelected: isSelected)
+                    .opacity(isLocked ? 0.45 : 1)
 
                 Text(title)
                     .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(HAYFColor.primary)
+                    .foregroundStyle(isLocked ? HAYFColor.muted : HAYFColor.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 104)
             .overlay(alignment: .topTrailing) {
-                if let selectionRank {
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(HAYFColor.muted)
+                        .padding(12)
+                } else if let selectionRank {
                     PriorityBadge(rank: selectionRank)
                         .padding(10)
                 }
@@ -5248,6 +5444,9 @@ private struct SelectableTile: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(isLocked)
+        .accessibilityLabel(isLocked ? "\(title), not available yet" : title)
+        .accessibilityHint(isLocked ? "This modality is locked for testing." : "")
     }
 }
 
@@ -5301,17 +5500,19 @@ private struct DetailedSelectableRow: View {
     let subtitle: String
     let systemImage: String
     let isSelected: Bool
+    var isEnabled = true
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 15) {
                 HAYFIcon(systemImage: systemImage, isSelected: isSelected, size: 42, iconSize: 22)
+                    .opacity(isEnabled ? 1 : 0.45)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title)
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
+                        .foregroundStyle(isEnabled ? HAYFColor.primary : HAYFColor.muted)
 
                     Text(subtitle)
                         .font(.system(size: 14, weight: .regular))
@@ -5322,7 +5523,12 @@ private struct DetailedSelectableRow: View {
 
                 Spacer()
 
-                RadioDot(isSelected: isSelected)
+                if isEnabled {
+                    RadioDot(isSelected: isSelected)
+                } else {
+                    Image(systemName: "lock.fill")
+                        .foregroundStyle(HAYFColor.muted)
+                }
             }
             .padding(16)
             .background(HAYFColor.surface)
@@ -5333,6 +5539,7 @@ private struct DetailedSelectableRow: View {
             }
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
     }
 }
 
@@ -5345,6 +5552,24 @@ private struct OptionGroup<Content: View>: View {
             Text(title)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(HAYFColor.secondary)
+
+            content()
+        }
+    }
+}
+
+private struct CapacityWheelColumn<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(HAYFColor.secondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .bottomLeading)
 
             content()
         }
@@ -5403,6 +5628,11 @@ private struct WeekdayAvailabilityRow: View {
     var body: some View {
         HStack(spacing: 7) {
             ForEach(Weekday.allCases) { day in
+                if day == .saturday {
+                    Divider()
+                        .frame(height: 28)
+                        .padding(.horizontal, 1)
+                }
                 CompactWeekdayButton(
                     title: day.singleLetterTitle,
                     isSelected: selection.contains(day)
@@ -5514,13 +5744,16 @@ extension SessionLength: WheelDisplayable {
 private struct WheelChoicePicker<Option: Identifiable & Hashable & WheelDisplayable>: View {
     let options: [Option]
     @Binding var selection: Option
+    let accessibilityLabel: String
 
     var body: some View {
-        Picker("", selection: $selection) {
+        Picker(accessibilityLabel, selection: $selection) {
             ForEach(options) { option in
                 Text(option.wheelTitle)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
                     .tag(option)
             }
         }
@@ -5531,6 +5764,8 @@ private struct WheelChoicePicker<Option: Identifiable & Hashable & WheelDisplaya
         .frame(maxWidth: .infinity)
         .frame(height: 150)
         .clipped()
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityValue(selection.wheelTitle)
         .background(HAYFColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
@@ -6682,7 +6917,8 @@ private enum FitnessStrategyBuilder {
 
             let longestSwim = longestWorkout(containing: "swimming", snapshot: snapshot)
             let targetMinutes = longestSwim.map {
-                max(sessionMinutes(from: draft.sessionLength), Int(($0.durationMinutes * 1.1).rounded()))
+                let historySized = Int(($0.durationMinutes * 1.1).rounded())
+                return max(draft.sessionLength?.minutes ?? historySized, historySized)
             } ?? weeklyAerobicMinutes(from: draft)
 
             return FitnessStrategyTarget(
@@ -7021,7 +7257,7 @@ private enum FitnessStrategyBuilder {
             }
             if preferredOption == .swimming || (preferredOption == nil && goal.displayText.lowercased().contains("swim")) {
                 if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "swimming")?.targetValue ?? 1 }
-                return Double(max(sessionMinutes(from: draft.sessionLength), Int(Double(fallbackMinutes) * 1.1)))
+                return Double(max(draft.sessionLength?.minutes ?? fallbackMinutes, Int(Double(fallbackMinutes) * 1.1)))
             }
             if preferredOption == .cycling || (preferredOption == nil && goal.displayText.lowercased().contains("cycl")) {
                 if isSpeedGoal(goal) { return concreteGoalTarget(in: goal, modality: "cycling")?.targetValue ?? 1 }
@@ -7124,18 +7360,8 @@ private enum FitnessStrategyBuilder {
 
         private static func weeklyAerobicMinutes(from draft: ConsistencyOnboardingDraft) -> Int {
             let sessions = targetWeeklySessions(from: draft.frequency)
-            let minutes = sessionMinutes(from: draft.sessionLength)
+            guard let minutes = draft.sessionLength?.minutes else { return 60 }
             return max(60, sessions * minutes)
-        }
-
-        private static func sessionMinutes(from length: SessionLength?) -> Int {
-            switch length {
-            case .twenty: return 20
-            case .thirty: return 30
-            case .fortyFive: return 45
-            case .sixtyPlus: return 60
-            case .varies, nil: return 35
-            }
         }
 
         private static func longestWorkout(containing modality: String, snapshot: HealthFeatureSnapshot?) -> FitnessLongestWorkoutSummary? {
@@ -7691,7 +7917,9 @@ private enum AthleteBlueprintBuilder {
         var evidenceLines = [
             "Current self-reported body mass: \(String(format: "%.1f", bodyMassKilograms)) kg.",
             "Current self-reported height: \(Int(heightCentimeters.rounded())) cm.",
-            "Estimated body-fat band: \(bodyFatBand.title)."
+            draft.bodyFatEstimateSource == .bmiAgePhysiology
+                ? "Rough BMI, age, and physiology body-fat estimate: \(Int((draft.bodyFatEstimatedPercentage ?? bodyFatBand.midpointEstimate).rounded()))%."
+                : "Self-reported body-fat band: \(bodyFatBand.title)."
         ]
         if evidence.hasRecentBodyTrend {
             evidenceLines.append("Recent HealthKit body trend data is available as supporting context.")
@@ -7699,17 +7927,20 @@ private enum AthleteBlueprintBuilder {
         evidenceLines.append(contentsOf: evidence.bodyMemoryEvidenceLines)
 
         let bodyMassText = String(format: "%.1f", bodyMassKilograms)
-        let currentBaselineSummary = "You reported \(bodyMassText) kg, \(Int(heightCentimeters.rounded())) cm, and \(bodyFatBand.title) body fat today."
+        let bodyFatText = draft.bodyFatEstimateSource == .bmiAgePhysiology
+            ? "about \(Int((draft.bodyFatEstimatedPercentage ?? bodyFatBand.midpointEstimate).rounded()))% body fat"
+            : "\(bodyFatBand.title) body fat"
+        let currentBaselineSummary = "You reported \(bodyMassText) kg and \(Int(heightCentimeters.rounded())) cm, with \(bodyFatText) today."
 
         return AthleteBlueprintPhysicalBaseline(
-            label: "\(bodyMassText) kg, \(bodyFatBand.title) body fat",
+            label: "\(bodyMassText) kg, \(bodyFatText)",
             summary: currentBaselineSummary,
             detail: AthleteBlueprintDetail(
                     id: "physical_baseline",
                     title: "Physical baseline",
                     summary: "Today’s self-report is the current body baseline.",
                 body: currentBaselineSummary,
-                confidence: "Current self-report",
+                confidence: draft.bodyFatEstimateSource == .bmiAgePhysiology ? "Rough anthropometric estimate" : "Current self-report",
                 observationWindow: "Onboarding today",
                 evidence: evidenceLines,
                 caveat: evidence.hasRecentBodyTrend ? "Imported body trends can add context, but do not replace the baseline you gave today." : nil
@@ -9237,7 +9468,7 @@ final class OnboardingProfileStore: ObservableObject {
                 heightCentimeters: heightCentimeters,
                 bodyMassKilograms: bodyMassKilograms,
                 bodyFatBand: bodyFatBand.rawValue,
-                bodyFatEstimateMidpoint: bodyFatBand.midpointEstimate,
+                bodyFatEstimateMidpoint: draft.bodyFatEstimatedPercentage ?? bodyFatBand.midpointEstimate,
                 confidence: "estimated_band"
             )
 
@@ -9496,5 +9727,9 @@ private extension HealthRequestState {
 }
 
 #Preview {
-    OnboardingFlowView(physiologyReference: .male, onboardingProfileStore: OnboardingProfileStore()) {}
+    OnboardingFlowView(
+        physiologyReference: .male,
+        birthdate: Calendar.current.date(byAdding: .year, value: -30, to: .now) ?? .now,
+        onboardingProfileStore: OnboardingProfileStore()
+    ) {}
 }

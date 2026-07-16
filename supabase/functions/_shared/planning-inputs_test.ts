@@ -2,6 +2,7 @@ import {
   availableDayPartsFromPlanningInputs,
   availableDaysFromPlanningInputs,
   badDayFloorFromPlanningInputs,
+  filterEnabledOnboardingModalities,
   parseTimeframeWeeks,
   timeframeWeeksFromPlanningInputs,
 } from "./planning-inputs.ts";
@@ -44,7 +45,22 @@ Deno.test("normalizes exact Swift and legacy availability shapes", () => {
   }), ["morning", "afternoon", "evening"]);
 });
 
+Deno.test("expands explicit ultra-flexible availability", () => {
+  assertEquals(availableDaysFromPlanningInputs({ ultraFlexibleAvailability: true }), [
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  ]);
+  assertEquals(availableDayPartsFromPlanningInputs({ ultraFlexibleAvailability: true }), [
+    "morning", "afternoon", "evening",
+  ]);
+});
+
 Deno.test("normalizes direct and object bad-day floor values", () => {
   assertEquals(badDayFloorFromPlanningInputs({ badDayFloor: "10-min walk or mobility" }), "10-min walk or mobility");
   assertEquals(badDayFloorFromPlanningInputs({ badDayFloor: { summary: "Do 15 minutes of mobility" } }), "Do 15 minutes of mobility");
+});
+
+Deno.test("keeps only onboarding-enabled modalities", () => {
+  assertEquals(filterEnabledOnboardingModalities([
+    "cycling", "swimming", "strength", "running", "walking", "cycling",
+  ]), ["cycling", "strength", "running"]);
 });

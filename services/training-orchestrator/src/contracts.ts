@@ -32,6 +32,8 @@ export type PlanningPacket = {
     available_day_parts: string[];
     frequency: string | null;
     session_length: string | null;
+    session_length_mode?: string | null;
+    session_length_minutes?: number | null;
     injuries: string | null;
     equipment_access: string[];
     avoidances: string[];

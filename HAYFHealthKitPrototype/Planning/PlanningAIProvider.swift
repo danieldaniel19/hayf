@@ -113,26 +113,36 @@ struct PlanningAIProvider {
         deviceTimezone: String = TimeZone.current.identifier,
         acceptedAt: Date = Date()
     ) async throws {
-        if await preparedStrategyIsActive(preparedStrategyID) {
-            return
+        for attempt in 0..<2 {
+            if await preparedStrategyIsActive(preparedStrategyID) {
+                return
+            }
+
+            let acceptanceStartedAt = Date()
+            do {
+                let _: PlanningStartedPlanFunctionResponse = try await invokeTyped(
+                    PlanningFunctionRequest(
+                        task: .startAcceptPreparedStrategyAndCreateInitialPlan,
+                        healthSnapshot: healthSnapshot,
+                        actualWorkouts: actualWorkouts,
+                        deviceTimezone: deviceTimezone,
+                        preparedStrategyID: preparedStrategyID,
+                        acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
+                    )
+                )
+
+                try await waitForPreparedStrategyActivation(
+                    preparedStrategyID,
+                    startedAt: acceptanceStartedAt.addingTimeInterval(-2)
+                )
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard attempt == 0 else { throw error }
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+            }
         }
-
-        let acceptanceStartedAt = Date()
-        let _: PlanningStartedPlanFunctionResponse = try await invokeTyped(
-            PlanningFunctionRequest(
-                task: .startAcceptPreparedStrategyAndCreateInitialPlan,
-                healthSnapshot: healthSnapshot,
-                actualWorkouts: actualWorkouts,
-                deviceTimezone: deviceTimezone,
-                preparedStrategyID: preparedStrategyID,
-                acceptedAt: Self.isoDateTimeFormatter.string(from: acceptedAt)
-            )
-        )
-
-        try await waitForPreparedStrategyActivation(
-            preparedStrategyID,
-            startedAt: acceptanceStartedAt.addingTimeInterval(-2)
-        )
     }
 
     func preparedStrategyIsActive(_ preparedStrategyID: UUID) async -> Bool {

@@ -43,6 +43,12 @@ const dayPartAliases: Record<string, string> = {
   night: "evening",
 };
 
+export function filterEnabledOnboardingModalities(values: string[]): string[] {
+  const enabled = new Set(["cycling", "strength", "running"]);
+  return Array.from(new Set(values.map((value) => value.trim().toLowerCase())))
+    .filter((value) => enabled.has(value));
+}
+
 export function parseTimeframeWeeks(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return Math.round(value);
@@ -93,6 +99,9 @@ export function timeframeWeeksFromPlanningInputs(
 }
 
 export function availableDaysFromPlanningInputs(selectedAnswers: Record<string, unknown>): string[] {
+  if (selectedAnswers.ultraFlexibleAvailability === true || selectedAnswers.ultra_flexible_availability === true) {
+    return [...weekdays];
+  }
   const availability = objectValue(selectedAnswers.availability);
   const onboardingSignals = objectValue(selectedAnswers.onboardingSignals ?? selectedAnswers.onboarding_signals);
   return normalizedValues(
@@ -109,6 +118,9 @@ export function availableDaysFromPlanningInputs(selectedAnswers: Record<string, 
 }
 
 export function availableDayPartsFromPlanningInputs(selectedAnswers: Record<string, unknown>): string[] {
+  if (selectedAnswers.ultraFlexibleAvailability === true || selectedAnswers.ultra_flexible_availability === true) {
+    return ["morning", "afternoon", "evening"];
+  }
   const availability = objectValue(selectedAnswers.availability);
   const onboardingSignals = objectValue(selectedAnswers.onboardingSignals ?? selectedAnswers.onboarding_signals);
   return normalizedValues(

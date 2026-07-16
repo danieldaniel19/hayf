@@ -1288,7 +1288,7 @@ function archetypesFor(
   }
   if (modality === "cycling") {
     const proposals = [
-      archetype("cycling_endurance_ride", modality, "Build durable low-intensity aerobic volume.", "aerobic base and durability", "easy aerobic", 45, 120, "1 to 3 rides weekly", "Extend by 5 to 10 minutes when recovery is stable.", "low", ["Bike access"], ["Avoid adding after a failed minimum week."], ["Can anchor primary cycling weeks or support mixed goals."], refs),
+      archetype("cycling_endurance_ride", modality, "Build durable low-intensity aerobic volume.", "aerobic base and durability", "easy aerobic", 45, 240, "1 to 3 rides weekly", "Extend by 5 to 10 minutes when recovery is stable.", "low", ["Bike access"], ["Avoid adding after a failed minimum week."], ["Use durations above 120 minutes only when history, recovery, and strategy justify them."], refs),
       archetype("cycling_tempo_ride", modality, "Add controlled sustained work without maximal strain.", "tempo durability", "tempo", 35, 75, "0 to 1 ride weekly", "Add intervals before adding intensity.", "moderate", ["Basic cycling tolerance"], ["Do not place after hard lower-body strength."], ["Keep below all-out effort and preserve repeatability."], refs),
     ];
     if (role === "primary_driver" && packet.goal_context.goal_kind !== "consistency") {
