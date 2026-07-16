@@ -74,15 +74,24 @@ final class AccountProfileStore: ObservableObject {
         return formatter
     }()
 
-    func loadCurrentUserProfile() async {
+    func loadCurrentUserProfile(userID: UUID? = nil) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
-        do {
-            profile = try await fetchCurrentUserProfile()
-        } catch {
-            errorMessage = error.localizedDescription
+        for attempt in 0..<3 {
+            do {
+                profile = try await fetchCurrentUserProfile(userID: userID)
+                return
+            } catch {
+                guard attempt < 2 else {
+                    errorMessage = error.localizedDescription
+                    return
+                }
+
+                let delay = UInt64(attempt + 1) * 350_000_000
+                try? await Task.sleep(nanoseconds: delay)
+            }
         }
     }
 
@@ -160,14 +169,19 @@ final class AccountProfileStore: ObservableObject {
         isLoading = false
     }
 
-    private func fetchCurrentUserProfile() async throws -> StoredAccountProfile? {
-        let user = try await supabase.auth.session.user
+    private func fetchCurrentUserProfile(userID: UUID?) async throws -> StoredAccountProfile? {
+        let resolvedUserID: UUID
+        if let userID {
+            resolvedUserID = userID
+        } else {
+            resolvedUserID = try await supabase.auth.session.user.id
+        }
 
         do {
             let profile: StoredAccountProfile = try await supabase
                 .from("profiles")
                 .select()
-                .eq("id", value: user.id)
+                .eq("id", value: resolvedUserID)
                 .single()
                 .execute()
                 .value

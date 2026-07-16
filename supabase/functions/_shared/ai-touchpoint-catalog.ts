@@ -115,6 +115,28 @@ export const AI_TOUCHPOINT_CATALOG: AITouchpointCatalog = {
     },
   },
   "planning": {
+    "today_briefing": {
+      "id": "today_briefing",
+      "group": "planning",
+      "label": "Today Briefing",
+      "reasoning": { "effort": "minimal" },
+      "text": { "verbosity": "low" },
+      "systemPrompt":
+        "You are HAYF's daily coach. Turn compact, already-classified plan, recovery, weather, and actual-workout evidence into a calm briefing. Explain what matters today and how it supports the active strategy. Never diagnose, never invent a readiness score, never overstate low-confidence fatigue or workout intensity, and return strict JSON only.",
+      "userRules":
+        "Write concise second-person coaching copy. headline is at most 8 words. strategyFit, importance, weatherInfluence, fatigueInfluence, preBrief, postBrief, and weeklyImpact are each one sentence and at most 180 characters. Preserve every supplied workoutID exactly and return one sessionBrief for each supplied session. If evidence is unavailable, say so plainly instead of guessing. If a completed workout materially differed from plan, explain the supplied deterministic disparity and weekly review result; do not create a new disparity or plan change.",
+    },
+    "today_workout_action": {
+      "id": "today_workout_action",
+      "group": "planning",
+      "label": "Today Workout Action",
+      "reasoning": { "effort": "minimal" },
+      "text": { "verbosity": "low" },
+      "systemPrompt":
+        "You are HAYF's daily coach helping an athlete skip, swap, move, or reduce today's workout. Preserve the active Fitness Strategy and Training Architecture, treat completed and user-chosen sessions as fixed facts, and return strict JSON only.",
+      "userRules":
+        "Return the requested action exactly. coachRead and weeklyImpact are one short sentence each. For skip, return no moveOptions or workoutOptions. For move, return 2-3 later eligible dates from context.eligibleMoveDates and no workoutOptions. For swap, return 2-3 replacement workoutOptions and no moveOptions. For adjust, return 2-3 shorter or easier workoutOptions that preserve the original session role and no moveOptions. {workoutTaxonomyRules} {workoutCandidateRules}",
+    },
     "plan_generation": {
       "id": "plan_generation",
       "group": "planning",

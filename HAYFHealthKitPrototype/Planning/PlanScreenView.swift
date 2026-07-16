@@ -2660,7 +2660,7 @@ private struct PlanWorkoutCard: View {
             return 19
         case .planned, .checkedIn, .adjusted:
             return 18
-        case .done, .missed:
+        case .done, .missed, .skipped:
             return 18
         case .deleted, .superseded:
             return 17
@@ -2673,7 +2673,7 @@ private struct PlanWorkoutCard: View {
             return .bold
         case .planned, .checkedIn, .adjusted:
             return .medium
-        case .done, .missed:
+        case .done, .missed, .skipped:
             return .regular
         case .deleted, .superseded:
             return .regular
@@ -2861,7 +2861,7 @@ private enum WorkoutVisibleCopy {
     }
 }
 
-private struct WorkoutDetailScreen: View {
+struct WorkoutDetailScreen: View {
     let workout: PlanWorkout
     let fallbackLocationLabel: String?
     let dismiss: () -> Void
@@ -2998,6 +2998,7 @@ private struct WorkoutDetailStatusPill: View {
         case .adjusted: return "Adjusted"
         case .done: return "Done"
         case .missed: return "Missed"
+        case .skipped: return "Skipped"
         case .deleted: return "Deleted"
         case .superseded: return "Updated"
         }
@@ -3007,7 +3008,7 @@ private struct WorkoutDetailStatusPill: View {
         switch status {
         case .current:
             return HAYFColor.orange
-        case .missed, .deleted:
+        case .missed, .skipped, .deleted:
             return HAYFColor.error
         default:
             return HAYFColor.primary

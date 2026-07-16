@@ -102,9 +102,9 @@ struct AppRootView: View {
             await authViewModel.startAuthStateListener()
         }
         .task(id: authViewModel.userID) {
-            if authViewModel.userID != nil {
-                await accountProfileStore.loadCurrentUserProfile()
-                await onboardingProfileStore.loadCurrentUserOnboardingProfile()
+            if let userID = authViewModel.userID {
+                await accountProfileStore.loadCurrentUserProfile(userID: userID)
+                await onboardingProfileStore.loadCurrentUserOnboardingProfile(userID: userID)
             } else {
                 accountProfileStore.reset()
                 onboardingProfileStore.reset()

@@ -881,6 +881,7 @@ enum PlanWorkoutStatus: String, Decodable {
     case adjusted
     case done
     case missed
+    case skipped
     case deleted
     case superseded
 
@@ -898,6 +899,8 @@ enum PlanWorkoutStatus: String, Decodable {
             return "Done"
         case .missed:
             return "Missed"
+        case .skipped:
+            return "Skipped"
         case .deleted:
             return "Deleted"
         case .superseded:

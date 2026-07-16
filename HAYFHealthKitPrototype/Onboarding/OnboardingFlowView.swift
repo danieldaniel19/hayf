@@ -9181,16 +9181,25 @@ final class OnboardingProfileStore: ObservableObject {
     private let supabase = SupabaseClientProvider.shared
     private let completedAtFormatter = ISO8601DateFormatter()
 
-    func loadCurrentUserOnboardingProfile() async {
+    func loadCurrentUserOnboardingProfile(userID: UUID? = nil) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
 
-        do {
-            profile = try await fetchCurrentUserOnboardingProfile()
-        } catch {
-            errorMessage = error.localizedDescription
-            profile = nil
+        for attempt in 0..<3 {
+            do {
+                profile = try await fetchCurrentUserOnboardingProfile(userID: userID)
+                return
+            } catch {
+                guard attempt < 2 else {
+                    errorMessage = error.localizedDescription
+                    profile = nil
+                    return
+                }
+
+                let delay = UInt64(attempt + 1) * 350_000_000
+                try? await Task.sleep(nanoseconds: delay)
+            }
         }
     }
 
@@ -9266,14 +9275,19 @@ final class OnboardingProfileStore: ObservableObject {
         isLoading = false
     }
 
-    private func fetchCurrentUserOnboardingProfile() async throws -> StoredOnboardingProfile? {
-        let user = try await supabase.auth.session.user
+    private func fetchCurrentUserOnboardingProfile(userID: UUID?) async throws -> StoredOnboardingProfile? {
+        let resolvedUserID: UUID
+        if let userID {
+            resolvedUserID = userID
+        } else {
+            resolvedUserID = try await supabase.auth.session.user.id
+        }
 
         do {
             let profile: StoredOnboardingProfile = try await supabase
                 .from("onboarding_profiles")
                 .select("id, completed_at")
-                .eq("id", value: user.id)
+                .eq("id", value: resolvedUserID)
                 .single()
                 .execute()
                 .value

@@ -15,8 +15,6 @@ final class AuthViewModel: ObservableObject {
     private var didAttemptLocalLangGraphAutoLogin = false
 
     func startAuthStateListener() async {
-        await attemptLocalLangGraphAutoLoginIfNeeded()
-
         for await state in supabase.auth.authStateChanges {
             if [.initialSession, .signedIn, .signedOut].contains(state.event) {
                 if state.session == nil {
@@ -83,8 +81,9 @@ final class AuthViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let session = try await supabase.auth.signIn(email: email, password: password)
-            updateSession(session)
+            _ = try await supabase.auth.signIn(email: email, password: password)
+            // Publish authentication from authStateChanges, after Supabase has
+            // persisted the session and can authorize dependent profile loads.
         } catch {
             errorMessage = "Local LangGraph auto-login failed: \(error.localizedDescription)"
         }

@@ -34,7 +34,19 @@
 		C00000020000000000000001 /* ProfileScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000120000000000000001 /* ProfileScreenView.swift */; };
 		D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000110000000000000001 /* HealthFeatureSnapshotFixtureStore.swift */; };
 		D00000020000000000000001 /* daniel-health-snapshot.json in Resources */ = {isa = PBXBuildFile; fileRef = D00000120000000000000001 /* daniel-health-snapshot.json */; };
+		E00000010000000000000001 /* TodayScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000110000000000000001 /* TodayScreenView.swift */; };
+		F00000010000000000000001 /* TodayModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000110000000000000001 /* TodayModelsTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		F00000710000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000420000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000410000000000000001;
+			remoteInfo = HAYFHealthKitPrototype;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A00000110000000000000001 /* HAYFApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HAYFApp.swift; sourceTree = "<group>"; };
@@ -66,9 +78,19 @@
 		C00000120000000000000001 /* ProfileScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileScreenView.swift; sourceTree = "<group>"; };
 		D00000110000000000000001 /* HealthFeatureSnapshotFixtureStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthFeatureSnapshotFixtureStore.swift; sourceTree = "<group>"; };
 		D00000120000000000000001 /* daniel-health-snapshot.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "daniel-health-snapshot.json"; sourceTree = "<group>"; };
+		E00000110000000000000001 /* TodayScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayScreenView.swift; sourceTree = "<group>"; };
+		F00000110000000000000001 /* TodayModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayModelsTests.swift; sourceTree = "<group>"; };
+		F00000120000000000000001 /* HAYFHealthKitPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HAYFHealthKitPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		F00000210000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A00000210000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -87,6 +109,7 @@
 				A00000320000000000000001 /* HAYFHealthKitPrototype */,
 				A00000330000000000000001 /* Products */,
 				A00000340000000000000001 /* Frameworks */,
+				F00000310000000000000001 /* HAYFHealthKitPrototypeTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -98,6 +121,7 @@
 				A00000380000000000000001 /* DesignSystem */,
 				A00000390000000000000001 /* Health */,
 				B000003B000000000000001 /* Planning */,
+				E000003E000000000000001 /* Today */,
 				C000003C000000000000001 /* Profile */,
 				A000003A000000000000001 /* Onboarding */,
 				A00000140000000000000001 /* Assets.xcassets */,
@@ -112,6 +136,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000180000000000000001 /* HAYF.app */,
+				F00000120000000000000001 /* HAYFHealthKitPrototypeTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -204,6 +229,22 @@
 			path = Profile;
 			sourceTree = "<group>";
 		};
+		E000003E000000000000001 /* Today */ = {
+			isa = PBXGroup;
+			children = (
+				E00000110000000000000001 /* TodayScreenView.swift */,
+			);
+			path = Today;
+			sourceTree = "<group>";
+		};
+		F00000310000000000000001 /* HAYFHealthKitPrototypeTests */ = {
+			isa = PBXGroup;
+			children = (
+				F00000110000000000000001 /* TodayModelsTests.swift */,
+			);
+			path = HAYFHealthKitPrototypeTests;
+			sourceTree = "<group>";
+		};
 		A000003A000000000000001 /* Onboarding */ = {
 			isa = PBXGroup;
 			children = (
@@ -235,6 +276,24 @@
 			productReference = A00000180000000000000001 /* HAYF.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F00000410000000000000001 /* HAYFHealthKitPrototypeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F00000510000000000000001 /* Build configuration list for PBXNativeTarget "HAYFHealthKitPrototypeTests" */;
+			buildPhases = (
+				F00000220000000000000001 /* Sources */,
+				F00000210000000000000001 /* Frameworks */,
+				F00000230000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F00000720000000000000001 /* PBXTargetDependency */,
+			);
+			name = HAYFHealthKitPrototypeTests;
+			productName = HAYFHealthKitPrototypeTests;
+			productReference = F00000120000000000000001 /* HAYFHealthKitPrototypeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -247,6 +306,10 @@
 				TargetAttributes = {
 					A00000410000000000000001 = {
 						CreatedOnToolsVersion = 16.4;
+					};
+					F00000410000000000000001 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = A00000410000000000000001;
 					};
 				};
 			};
@@ -267,11 +330,19 @@
 			projectRoot = "";
 			targets = (
 				A00000410000000000000001 /* HAYFHealthKitPrototype */,
+				F00000410000000000000001 /* HAYFHealthKitPrototypeTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		F00000230000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A00000230000000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -285,6 +356,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		F00000220000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F00000010000000000000001 /* TodayModelsTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A00000220000000000000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -309,12 +388,21 @@
 				B00000020000000000000001 /* PlanningAIProvider.swift in Sources */,
 				B00000030000000000000001 /* PlanDataStore.swift in Sources */,
 				B00000040000000000000001 /* PlanScreenView.swift in Sources */,
+				E00000010000000000000001 /* TodayScreenView.swift in Sources */,
 				C00000010000000000000001 /* ProfileDataStore.swift in Sources */,
 				C00000020000000000000001 /* ProfileScreenView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		F00000720000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000410000000000000001 /* HAYFHealthKitPrototype */;
+			targetProxy = F00000710000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCRemoteSwiftPackageReference section */
 		A0000021000000000000001 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
@@ -390,6 +478,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
 				DEVELOPMENT_TEAM = C46LARA4B9;
+				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = HAYFHealthKitPrototype/Info.plist;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -404,6 +493,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -435,6 +525,51 @@
 			};
 			name = Release;
 		};
+		F00000610000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = C46LARA4B9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HAYF.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HAYF";
+			};
+			name = Debug;
+		};
+		F00000620000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = C46LARA4B9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HAYF.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HAYF";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -452,6 +587,15 @@
 			buildConfigurations = (
 				A00000610000000000000001 /* Debug */,
 				A00000620000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F00000510000000000000001 /* Build configuration list for PBXNativeTarget "HAYFHealthKitPrototypeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F00000610000000000000001 /* Debug */,
+				F00000620000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

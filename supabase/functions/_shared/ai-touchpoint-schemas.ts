@@ -119,6 +119,66 @@ const workoutSuggestionSchema: Schema = {
 };
 
 const planningOutputSchemas: Record<string, AITouchpointResponseMetadata> = {
+  today_briefing: {
+    formatName: "today_briefing",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["headline", "strategyFit", "importance", "weatherInfluence", "fatigueInfluence", "sessionBriefs"],
+      properties: {
+        headline: { type: "string", maxLength: 80 },
+        strategyFit: { type: "string", maxLength: 220 },
+        importance: { type: "string", maxLength: 220 },
+        weatherInfluence: { type: "string", maxLength: 220 },
+        fatigueInfluence: { type: "string", maxLength: 220 },
+        sessionBriefs: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["workoutID", "preBrief", "postBrief", "weeklyImpact"],
+            properties: {
+              workoutID: { type: "string" },
+              preBrief: { type: "string", maxLength: 220 },
+              postBrief: { type: "string", maxLength: 220 },
+              weeklyImpact: { type: "string", maxLength: 220 },
+            },
+          },
+        },
+      },
+    },
+  },
+  today_workout_action: {
+    formatName: "today_workout_action",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action", "coachRead", "weeklyImpact", "moveOptions", "workoutOptions"],
+      properties: {
+        action: { type: "string", enum: ["skip", "swap", "move", "adjust"] },
+        coachRead: { type: "string", maxLength: 220 },
+        weeklyImpact: { type: "string", maxLength: 220 },
+        moveOptions: {
+          type: "array",
+          maxItems: 3,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["date", "rationale"],
+            properties: {
+              date: { type: "string" },
+              rationale: { type: "string", maxLength: 140 },
+            },
+          },
+        },
+        workoutOptions: {
+          type: "array",
+          maxItems: 3,
+          items: workoutSuggestionSchema,
+        },
+      },
+    },
+  },
   plan_generation: {
     formatName: "planning_plan",
     schema: {

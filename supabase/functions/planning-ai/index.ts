@@ -16,6 +16,18 @@ import {
   badDayFloorFromPlanningInputs,
   timeframeWeeksFromPlanningInputs,
 } from "../_shared/planning-inputs.ts";
+import {
+  guardLaunchReplanMutations,
+  launchPlanReviewRules,
+} from "../_shared/launch-replan-guard.ts";
+import {
+  deriveTodayFatigueEstimate,
+  explanatoryStrategyTitle,
+  isTodayBriefingCacheHit,
+  todayDayState,
+  todayInputFingerprint,
+  workoutsForTodayPlan,
+} from "../_shared/today-briefing.ts";
 
 type SupabaseAdminClient = any;
 
@@ -30,6 +42,12 @@ type PlanningTask =
   | "refresh_plan_window"
   | "refresh_workout_weather_forecasts"
   | "generate_weekly_plan_targets"
+  | "refresh_today_briefing"
+  | "recommend_today_workout_action"
+  | "skip_workout"
+  | "adjust_workout"
+  | "mark_workout_complete"
+  | "record_workout_feedback"
   | "record_plan_edit"
   | "record_weekly_plan_constraint"
   | "recommend_workout_replacements"
@@ -75,6 +93,8 @@ type PlanningAIRequest = {
   decision?: "accepted" | "rejected";
   plannedWorkoutID?: string;
   planned_workout_id?: string;
+  actualWorkoutID?: string;
+  actual_workout_id?: string;
   scheduledDate?: string;
   scheduled_date?: string;
   sequenceOrder?: number;
@@ -89,6 +109,26 @@ type PlanningAIRequest = {
   current_derived_snapshot?: Record<string, unknown> | null;
   repairPolicy?: "immediate" | "deferred";
   repair_policy?: "immediate" | "deferred";
+  localDate?: string;
+  local_date?: string;
+  todayAction?: "skip" | "swap" | "move" | "adjust";
+  today_action?: "skip" | "swap" | "move" | "adjust";
+  feedback?: WorkoutFeedbackInput;
+};
+
+type WorkoutFeedbackInput = {
+  perceivedEffort?: number | null;
+  perceived_effort?: number | null;
+  feltRating?: number | null;
+  felt_rating?: number | null;
+  painFlag?: boolean | null;
+  pain_flag?: boolean | null;
+  painNotes?: string | null;
+  pain_notes?: string | null;
+  difficultyLabel?: "too_easy" | "right" | "too_hard" | null;
+  difficulty_label?: "too_easy" | "right" | "too_hard" | null;
+  freeText?: string | null;
+  free_text?: string | null;
 };
 
 type WeeklyPlanConstraintInput = {
@@ -361,6 +401,9 @@ type OpenMeteoDailyForecast = {
   conditionEmoji: string;
   precipitationProbability: number | null;
   precipitationMm: number | null;
+  rainStartTime: string | null;
+  rainEndTime: string | null;
+  peakRainProbability: number | null;
   windKph: number | null;
   outdoorRisk: "ok" | "watch" | "miserable";
 };
@@ -866,6 +909,18 @@ async function handleTask(args: {
       return refreshWorkoutWeatherForecasts(admin, userID!, requestBody);
     case "generate_weekly_plan_targets":
       return generateWeeklyPlanTargetsForVisiblePlan(admin, userID!, requestBody, touchpointModel("weekly_targets"));
+    case "refresh_today_briefing":
+      return refreshTodayBriefing(admin, userID!, requestBody, touchpointModel("today_briefing"));
+    case "recommend_today_workout_action":
+      return recommendTodayWorkoutAction(admin, userID!, requestBody, touchpointModel("today_workout_action"));
+    case "skip_workout":
+      return skipWorkout(admin, userID!, requestBody, touchpointModel("pending_plan_review"));
+    case "adjust_workout":
+      return adjustWorkout(admin, userID!, requestBody, touchpointModel("pending_plan_review"));
+    case "mark_workout_complete":
+      return markWorkoutComplete(admin, userID!, requestBody);
+    case "record_workout_feedback":
+      return recordWorkoutFeedback(admin, userID!, requestBody);
     case "record_plan_edit":
       return recordPlanEdit(admin, userID!, requestBody, touchpointModel("plan_edit_repair"));
     case "record_weekly_plan_constraint":
@@ -2020,6 +2075,842 @@ async function refreshWorkoutWeatherForecasts(
     refreshedWorkoutIDs: refreshed,
     skipped,
     failed,
+  };
+}
+
+type TodayAuthoredBriefing = {
+  headline: string;
+  strategyFit: string;
+  importance: string;
+  weatherInfluence: string;
+  fatigueInfluence: string;
+  sessionBriefs: Array<{
+    workoutID: string;
+    preBrief: string;
+    postBrief: string;
+    weeklyImpact: string;
+  }>;
+};
+
+type TodayActionDraft = {
+  action: "skip" | "swap" | "move" | "adjust";
+  coachRead: string;
+  weeklyImpact: string;
+  moveOptions: Array<{ date: string; rationale: string }>;
+  workoutOptions: WorkoutCandidateInput[];
+};
+
+async function refreshTodayBriefing(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const scope = await loadActivePlanningScope(admin, userID);
+  const timezone = requestBody.deviceTimezone || scope.timezone || "UTC";
+  const localDate = requestBody.localDate ?? requestBody.local_date ?? isoDate(todayInTimezone(timezone));
+  if (!parseDateOnly(localDate)) throw new Error("refresh_today_briefing requires a valid localDate");
+  const tomorrowDate = isoDate(addDays(parseDateOnly(localDate)!, 1));
+
+  const weeklyPlan = await weeklyPlanForDate(admin, userID, scope.strategy.id, localDate);
+  const tomorrowWeeklyPlan = await weeklyPlanForDate(admin, userID, scope.strategy.id, tomorrowDate);
+  const sessions: Record<string, any>[] = weeklyPlan
+    ? workoutsForTodayPlan<Record<string, any>>(
+        await list(
+          admin
+            .from("planned_workouts")
+            .select()
+            .eq("user_id", userID)
+            .eq("weekly_plan_id", weeklyPlan.id)
+            .eq("scheduled_date", localDate)
+            .not("status", "in", "(deleted,superseded)")
+            .order("sequence_order", { ascending: true }),
+        ),
+        weeklyPlan.id,
+      )
+    : [];
+  const sessionIDs = sessions.map((session: Record<string, any>) => session.id);
+  const noIDs = ["00000000-0000-0000-0000-000000000000"];
+  const [actualCandidates, debriefs, feedbackRows, actualOnlyDebriefs, actualOnlyFeedback, latestSnapshot, phases, recentEvents, pendingProposals, reviewEvents, tomorrowSessions] = await Promise.all([
+    list(
+      admin.from("actual_workouts").select()
+        .eq("user_id", userID)
+        .gte("start_date", `${isoDate(addDays(parseDateOnly(localDate)!, -1))}T00:00:00Z`)
+        .lt("start_date", `${isoDate(addDays(parseDateOnly(localDate)!, 2))}T00:00:00Z`)
+        .order("start_date", { ascending: true }),
+    ),
+    list(
+      admin.from("workout_debrief_requests").select()
+        .eq("user_id", userID)
+        .in("planned_workout_id", sessionIDs.length ? sessionIDs : noIDs),
+    ),
+    list(
+      admin.from("workout_feedback").select()
+        .eq("user_id", userID)
+        .in("planned_workout_id", sessionIDs.length ? sessionIDs : noIDs),
+    ),
+    list(
+      admin.from("workout_debrief_requests").select()
+        .eq("user_id", userID)
+        .is("planned_workout_id", null)
+        .not("actual_workout_id", "is", null),
+    ),
+    list(
+      admin.from("workout_feedback").select()
+        .eq("user_id", userID)
+        .is("planned_workout_id", null)
+        .not("actual_workout_id", "is", null),
+    ),
+    maybeSingle(
+      admin.from("health_feature_snapshots").select("generated_at,snapshot_json")
+        .eq("user_id", userID)
+        .order("generated_at", { ascending: false })
+        .limit(1),
+    ),
+    list(
+      admin.from("fitness_strategy_phases").select()
+        .eq("user_id", userID)
+        .eq("fitness_strategy_id", scope.strategy.id)
+        .order("sequence_order", { ascending: true }),
+    ),
+    list(
+      admin.from("plan_events").select()
+        .eq("user_id", userID)
+        .eq("fitness_strategy_id", scope.strategy.id)
+        .in("planned_workout_id", sessionIDs.length ? sessionIDs : noIDs)
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ),
+    list(
+      admin.from("replan_proposals").select()
+        .eq("user_id", userID)
+        .eq("fitness_strategy_id", scope.strategy.id)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(10),
+    ),
+    list(
+      admin.from("plan_events").select("id,event_type,payload_json,created_at")
+        .eq("user_id", userID)
+        .eq("fitness_strategy_id", scope.strategy.id)
+        .eq("event_type", "plan_review_completed")
+        .order("created_at", { ascending: false })
+        .limit(10),
+    ),
+    tomorrowWeeklyPlan
+      ? list(
+          admin.from("planned_workouts").select()
+            .eq("user_id", userID)
+            .eq("weekly_plan_id", tomorrowWeeklyPlan.id)
+            .eq("scheduled_date", tomorrowDate)
+            .not("status", "in", "(deleted,superseded,skipped)")
+            .order("sequence_order", { ascending: true }),
+        )
+      : Promise.resolve([]),
+  ]);
+
+  const actuals = actualCandidates.filter((actual: Record<string, any>) =>
+    actualWorkoutLocalDate(actual as ActualWorkoutInput, timezone) === localDate
+  );
+  const actualByWorkout = new Map<string, Record<string, any>>(actuals.map((actual: Record<string, any>) => [String(actual.matched_planned_workout_id), actual]));
+  const debriefByWorkout = new Map<string, Record<string, any>>(debriefs.map((debrief: Record<string, any>) => [String(debrief.planned_workout_id), debrief]));
+  const feedbackByWorkout = new Map<string, Record<string, any>>(feedbackRows.map((feedback: Record<string, any>) => [String(feedback.planned_workout_id), feedback]));
+  const debriefByActual = new Map<string, Record<string, any>>(actualOnlyDebriefs.map((debrief: Record<string, any>) => [String(debrief.actual_workout_id), debrief]));
+  const feedbackByActual = new Map<string, Record<string, any>>(actualOnlyFeedback.map((feedback: Record<string, any>) => [String(feedback.actual_workout_id), feedback]));
+  const eventByWorkout = new Map<string, Record<string, any>>();
+  for (const event of recentEvents) {
+    if (["actual_matched", "extra_workout_detected"].includes(event.event_type) && !eventByWorkout.has(String(event.planned_workout_id))) {
+      eventByWorkout.set(String(event.planned_workout_id), event);
+    }
+  }
+  const relatedEventIDs = new Set(recentEvents.map((event: Record<string, any>) => String(event.id)));
+  const pendingProposal = pendingProposals.find((proposal: Record<string, any>) =>
+    relatedEventIDs.has(String(proposal.trigger_event_id)) ||
+    sessionIDs.includes(String(proposal.metadata_json?.plannedWorkoutID ?? proposal.metadata_json?.planned_workout_id ?? ""))
+  ) ?? null;
+  const noChangeReview = reviewEvents.find((event: Record<string, any>) => {
+    const reviewedIDs = Array.isArray(event.payload_json?.reviewedEventIDs) ? event.payload_json.reviewedEventIDs : [];
+    return reviewedIDs.some((id: unknown) => relatedEventIDs.has(String(id)));
+  }) ?? null;
+  const phase = phases.find((candidate: Record<string, any>) =>
+    (!candidate.start_date || localDate >= candidate.start_date) && (!candidate.end_date || localDate <= candidate.end_date)
+  ) ?? null;
+  const fatigue = todayFatigueEstimate(latestSnapshot, sessions);
+  const weather = compactTodayWeather(sessions.find((session: Record<string, any>) =>
+    session.weather_forecast_json && Object.keys(session.weather_forecast_json).length > 0
+  )?.weather_forecast_json ?? null);
+  const replanReview = pendingProposal
+    ? {
+        status: "pending",
+        proposalID: pendingProposal.id,
+        reason: pendingProposal.reason,
+        summary: String(pendingProposal.metadata_json?.summary ?? "Review HAYF's proposed changes to the rest of the week."),
+        mutationCount: Array.isArray(pendingProposal.proposed_mutations_json) ? pendingProposal.proposed_mutations_json.length : 0,
+        mutations: pendingProposal.proposed_mutations_json ?? [],
+      }
+    : noChangeReview
+    ? {
+        status: "no_change",
+        proposalID: null,
+        reason: String(noChangeReview.payload_json?.reason ?? "HAYF reviewed today's result."),
+        summary: String(noChangeReview.payload_json?.summary ?? "The rest of the week can stay as planned."),
+        mutationCount: 0,
+        mutations: [],
+      }
+    : { status: "none", proposalID: null, reason: null, summary: null, mutationCount: 0, mutations: [] };
+
+  const plannedSessions = sessions.map((session: Record<string, any>) => {
+    const actual = actualByWorkout.get(String(session.id));
+    const matchEvent = eventByWorkout.get(String(session.id));
+    return {
+      workout: compactTodayWorkout(session),
+      actualWorkout: actual ? compactTodayActual(actual) : null,
+      state: todaySessionState(session, actual ?? null),
+      deviation: matchEvent?.event_type === "extra_workout_detected"
+        ? { needsReview: true, unexpected: true }
+        : matchEvent?.payload_json?.matchDisparity ?? null,
+      feedback: feedbackByWorkout.get(String(session.id)) ?? null,
+      debriefRequest: debriefByWorkout.get(String(session.id)) ?? null,
+    };
+  });
+  const scheduledIDs = new Set(sessionIDs);
+  const unexpectedSessions = actuals
+    .filter((actual: Record<string, any>) => !actual.matched_planned_workout_id || !scheduledIDs.has(String(actual.matched_planned_workout_id)))
+    .map((actual: Record<string, any>, index: number) => ({
+      workout: compactUnexpectedTodayWorkout(actual, localDate, sessions.length + index + 1),
+      actualWorkout: compactTodayActual(actual),
+      state: "completed",
+      deviation: { needsReview: true, unexpected: true },
+      feedback: feedbackByActual.get(String(actual.id)) ?? null,
+      debriefRequest: debriefByActual.get(String(actual.id)) ?? null,
+    }));
+  const canonicalSessions = [...plannedSessions, ...unexpectedSessions];
+  const dayState = todayDayState(canonicalSessions);
+  const compactEvidence = {
+    localDate,
+    strategy: {
+      id: scope.strategy.id,
+      title: explanatoryStrategyTitle(
+        scope.strategy.title,
+        scope.strategy.context_json?.acceptedStrategy?.goalTargetContext?.title,
+        "Active strategy",
+      ),
+      summary: scope.strategy.summary,
+      rationale: scope.strategy.rationale,
+    },
+    phase: phase ? { id: phase.id, name: phase.name, objective: phase.objective } : null,
+    week: weeklyPlan ? {
+      id: weeklyPlan.id,
+      objective: weeklyPlan.objective,
+      status: weeklyPlan.status,
+      context: {
+        strategyExplanation: weeklyPlan.context_json?.strategyExplanation ?? null,
+        provenance: weeklyPlan.context_json?.provenance ?? null,
+        adaptationExplanation: weeklyPlan.context_json?.adaptationExplanation ?? null,
+        programWeekNumber: weeklyPlan.context_json?.programWeekNumber ?? null,
+      },
+    } : null,
+    weather,
+    fatigue,
+    sessions: canonicalSessions.map((session: Record<string, any>) => ({
+      workout: session.workout,
+      actualWorkout: session.actualWorkout,
+      state: session.state,
+      deviation: session.deviation,
+      feedback: compactTodayFeedbackEvidence(session.feedback),
+      debriefStatus: session.debriefRequest?.status ?? null,
+    })),
+    tomorrowPreview: tomorrowSessions[0] ? compactTodayWorkout(tomorrowSessions[0]) : null,
+    replanReview,
+    latestSnapshotAt: latestSnapshot?.generated_at ?? null,
+  };
+  const inputFingerprint = await todayInputFingerprint(compactEvidence);
+  const cached = await maybeSingle(
+    admin.from("daily_briefings").select()
+      .eq("user_id", userID)
+      .eq("local_date", localDate)
+      .maybeSingle(),
+  );
+
+  let authored: TodayAuthoredBriefing;
+  let generation: Record<string, unknown>;
+  let cacheHit = false;
+  if (isTodayBriefingCacheHit(cached, inputFingerprint)) {
+    authored = cached.briefing_json.authored as TodayAuthoredBriefing;
+    generation = cached.generation_json ?? {};
+    cacheHit = true;
+  } else {
+    try {
+      authored = sanitizeTodayAuthoredBriefing(
+        await runTodayBriefingGeneration(compactEvidence, model),
+        canonicalSessions,
+        fallbackTodayBriefing(scope, canonicalSessions, weeklyPlan, weather, fatigue, replanReview),
+      );
+      generation = { status: "succeeded", model, generatedAt: new Date().toISOString() };
+    } catch (error) {
+      authored = fallbackTodayBriefing(scope, canonicalSessions, weeklyPlan, weather, fatigue, replanReview);
+      generation = { status: "fallback", model: "deterministic", error: errorMessage(error), generatedAt: new Date().toISOString() };
+    }
+    await throwOnError(
+      admin.from("daily_briefings").upsert({
+        user_id: userID,
+        fitness_strategy_id: scope.strategy.id,
+        weekly_plan_id: weeklyPlan?.id ?? null,
+        local_date: localDate,
+        timezone,
+        input_fingerprint: inputFingerprint,
+        briefing_json: { schemaVersion: 1, authored },
+        generation_json: generation,
+      }, { onConflict: "user_id,local_date" }),
+    );
+  }
+
+  const copyByWorkout = new Map(authored.sessionBriefs.map((brief) => [brief.workoutID, brief]));
+  return {
+    userID,
+    model: String(generation.model ?? model),
+    date: localDate,
+    timezone,
+    state: dayState,
+    cacheHit,
+    generation,
+    strategy: compactEvidence.strategy,
+    phase: compactEvidence.phase,
+    week: compactEvidence.week,
+    headline: authored.headline,
+    strategyFit: authored.strategyFit,
+    importance: authored.importance,
+    conditions: {
+      weather: weather ? { ...weather, influence: authored.weatherInfluence } : null,
+      fatigue: { ...fatigue, influence: authored.fatigueInfluence },
+    },
+    sessions: canonicalSessions.map((session: Record<string, any>) => ({
+      ...session,
+      briefing: copyByWorkout.get(String(session.workout.id)) ?? fallbackSessionBrief(session, weeklyPlan, replanReview),
+    })),
+    tomorrowPreview: compactEvidence.tomorrowPreview,
+    replanReview,
+  };
+}
+
+async function recommendTodayWorkoutAction(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
+  const action = requestBody.todayAction ?? requestBody.today_action;
+  if (!plannedWorkoutID || !action || !["skip", "swap", "move", "adjust"].includes(action)) {
+    throw new Error("recommend_today_workout_action requires plannedWorkoutID and a valid action");
+  }
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
+  if (["done", "missed", "skipped", "deleted", "superseded"].includes(String(workout.status))) {
+    throw new Error("This workout can no longer be changed.");
+  }
+  const context = await loadWorkoutPlanningContext(admin, userID, scope, workout.scheduled_date);
+  const eligibleMoveDates = Array.from({ length: 14 }, (_, index) => isoDate(addDays(parseDateOnly(workout.scheduled_date)!, index + 1)))
+    .filter((date) => date <= context.window.end);
+  const fallback = fallbackTodayActionDraft(action, workout, context.surroundingWorkouts, eligibleMoveDates, context.weatherContext);
+  let generated = fallback;
+  let usedFallback = false;
+  try {
+    generated = await runTodayActionGeneration({
+      action,
+      workout: compactTodayWorkout(workout),
+      masterCoachContext: masterCoachContextForScope(scope),
+      weeklyPlan: context.weeklyPlan,
+      surroundingWorkouts: context.surroundingWorkouts.map(compactWorkoutForReview),
+      weatherContext: context.weatherContext,
+      eligibleMoveDates,
+      userIntent: requestBody.textContext ?? null,
+    }, model);
+  } catch {
+    usedFallback = true;
+  }
+  const moveOptions = action === "move"
+    ? generated.moveOptions
+      .filter((option) => eligibleMoveDates.includes(option.date))
+      .slice(0, 3)
+    : [];
+  const rawWorkoutOptions = action === "swap" || action === "adjust" ? generated.workoutOptions : [];
+  const constrainedOptions = action === "adjust"
+    ? rawWorkoutOptions.map((option) => ({
+        ...option,
+        activityType: workout.activity_type,
+        purpose: workout.purpose,
+        durationMinutes: Math.min(Number(option.durationMinutes ?? workout.duration_minutes), Number(workout.duration_minutes)),
+      }))
+    : rawWorkoutOptions;
+  const workoutOptions = action === "swap" || action === "adjust"
+    ? sanitizeReplacementCandidates(
+        { candidates: constrainedOptions },
+        workout,
+        context.surroundingWorkouts,
+        context.weatherContext,
+      )
+    : [];
+  return {
+    userID,
+    model: usedFallback ? "deterministic" : model,
+    workoutID: workout.id,
+    action,
+    coachRead: compactWorkoutText(generated.coachRead || fallback.coachRead, 180),
+    weeklyImpact: compactWorkoutText(generated.weeklyImpact || fallback.weeklyImpact, 180),
+    moveOptions: moveOptions.length ? moveOptions : fallback.moveOptions,
+    workoutOptions,
+    usedFallback,
+  };
+}
+
+async function skipWorkout(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
+  if (!plannedWorkoutID) throw new Error("skip_workout requires plannedWorkoutID");
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
+  if (["done", "missed", "skipped", "deleted", "superseded"].includes(String(workout.status))) {
+    throw new Error("This workout can no longer be skipped.");
+  }
+  await expirePendingReplanProposals(admin, userID, scope.strategy.id);
+  await throwOnError(
+    admin.from("planned_workouts").update({
+      status: "skipped",
+      source: "user_skipped",
+      generation_key: null,
+      version: Number(workout.version ?? 1) + 1,
+    }).eq("id", workout.id).eq("user_id", userID),
+  );
+  const event = await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout.weekly_plan_id ?? null,
+    plannedWorkoutID: workout.id,
+    eventType: "workout_skipped",
+    payload: { skippedWorkout: compactPlannedWorkout(workout), userContext: requestBody.textContext ?? null },
+  });
+  await updateWeeklyPlanProvenance(admin, userID, [workout.weekly_plan_id], "user_changed_pending", "You skipped a session, and HAYF reviewed the surrounding week.");
+  const review = await createRepairProposalForPendingEdits(admin, userID, requestBody, model);
+  return { userID, model, eventID: event.id, workoutID: workout.id, review };
+}
+
+async function adjustWorkout(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+  model: string,
+) {
+  const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
+  const rawCandidate = requestBody.workoutCandidate ?? requestBody.workout_candidate ?? requestBody.replacementCandidate ?? requestBody.replacement_candidate;
+  if (!plannedWorkoutID || !rawCandidate) throw new Error("adjust_workout requires plannedWorkoutID and workoutCandidate");
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
+  if (["done", "missed", "skipped", "deleted", "superseded"].includes(String(workout.status))) {
+    throw new Error("This workout can no longer be adjusted.");
+  }
+  const context = await loadWorkoutPlanningContext(admin, userID, scope, workout.scheduled_date);
+  const fallback = fallbackTodayActionDraft("adjust", workout, context.surroundingWorkouts, [], context.weatherContext).workoutOptions[0];
+  const candidate = sanitizeWorkoutCandidate({
+    ...rawCandidate,
+    activityType: workout.activity_type,
+    purpose: workout.purpose,
+    durationMinutes: Math.min(Number(rawCandidate.durationMinutes ?? workout.duration_minutes), Number(workout.duration_minutes)),
+  }, sanitizeWorkoutCandidate(fallback, fallbackReplacementCandidate(workout, 0), "candidate-1"), "candidate-1");
+  await expirePendingReplanProposals(admin, userID, scope.strategy.id);
+  await throwOnError(
+    admin.from("planned_workouts").update({
+      duration_minutes: candidate.durationMinutes,
+      intensity_label: candidate.intensityLabel,
+      purpose: candidate.purpose,
+      estimated_distance_kilometers: candidate.estimatedDistanceKilometers,
+      estimated_elevation_meters: candidate.estimatedElevationMeters,
+      planned_location_label: resolvedCandidateLocationLabel(candidate) ?? workout.planned_location_label,
+      prescription_json: {
+        ...(candidate.prescription ?? {}),
+        adjustedFromWorkoutID: workout.id,
+        rationale: candidate.rationale,
+        weeklyImpact: candidate.weeklyImpact,
+      },
+      fueling_summary: candidate.fuelingSummary,
+      status: "adjusted",
+      source: "user_adjusted",
+      generation_key: null,
+      version: Number(workout.version ?? 1) + 1,
+    }).eq("id", workout.id).eq("user_id", userID),
+  );
+  const event = await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout.weekly_plan_id ?? null,
+    plannedWorkoutID: workout.id,
+    eventType: "workout_adjusted",
+    payload: { before: compactPlannedWorkout(workout), candidate },
+  });
+  await updateWeeklyPlanProvenance(admin, userID, [workout.weekly_plan_id], "user_changed_pending", "You reduced today's dose, and HAYF reviewed the surrounding week.");
+  const review = await createRepairProposalForPendingEdits(admin, userID, requestBody, model);
+  return { userID, model, eventID: event.id, workoutID: workout.id, adjustedWorkout: candidate, review };
+}
+
+async function markWorkoutComplete(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
+  if (!plannedWorkoutID) throw new Error("mark_workout_complete requires plannedWorkoutID");
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID);
+  if (["missed", "skipped", "deleted", "superseded"].includes(String(workout.status))) {
+    throw new Error("This workout cannot be marked complete.");
+  }
+  await throwOnError(
+    admin.from("planned_workouts").update({ status: "done", version: Number(workout.version ?? 1) + 1 })
+      .eq("id", workout.id).eq("user_id", userID),
+  );
+  const event = await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout.weekly_plan_id ?? null,
+    plannedWorkoutID: workout.id,
+    eventType: "workout_completed_manually",
+    payload: { completionSource: "manual", completedAt: new Date().toISOString() },
+  });
+  await createWorkoutDebriefRequest(admin, userID, null, workout.id, null);
+  return { userID, model: "deterministic", eventID: event.id, workoutID: workout.id, status: "done" };
+}
+
+async function recordWorkoutFeedback(
+  admin: SupabaseAdminClient,
+  userID: string,
+  requestBody: PlanningAIRequest,
+) {
+  const plannedWorkoutID = requestBody.plannedWorkoutID ?? requestBody.planned_workout_id;
+  const requestedActualWorkoutID = requestBody.actualWorkoutID ?? requestBody.actual_workout_id;
+  const input = requestBody.feedback;
+  if ((!plannedWorkoutID && !requestedActualWorkoutID) || !input) {
+    throw new Error("record_workout_feedback requires a workout ID and feedback");
+  }
+  const scope = await loadActivePlanningScope(admin, userID);
+  const workout = plannedWorkoutID
+    ? await loadPlannedWorkoutForActiveStrategy(admin, userID, scope.strategy.id, plannedWorkoutID)
+    : null;
+  const actual = requestedActualWorkoutID
+    ? await maybeSingle(
+      admin.from("actual_workouts").select("id").eq("user_id", userID).eq("id", requestedActualWorkoutID).limit(1),
+    )
+    : await maybeSingle(
+      admin.from("actual_workouts").select("id").eq("user_id", userID).eq("matched_planned_workout_id", plannedWorkoutID!).limit(1),
+    );
+  if (requestedActualWorkoutID && !actual) throw new Error("Actual workout was not found.");
+  const existing = plannedWorkoutID
+    ? await maybeSingle(
+      admin.from("workout_feedback").select().eq("user_id", userID).eq("planned_workout_id", plannedWorkoutID).limit(1),
+    )
+    : await maybeSingle(
+      admin.from("workout_feedback").select().eq("user_id", userID).eq("actual_workout_id", requestedActualWorkoutID!).limit(1),
+    );
+  const perceivedEffort = input.perceivedEffort ?? input.perceived_effort;
+  const feltRating = input.feltRating ?? input.felt_rating;
+  const difficultyLabel = input.difficultyLabel ?? input.difficulty_label;
+  const painFlag = input.painFlag ?? input.pain_flag;
+  if (perceivedEffort != null && (!Number.isFinite(perceivedEffort) || perceivedEffort < 1 || perceivedEffort > 10)) {
+    throw new Error("perceivedEffort must be between 1 and 10");
+  }
+  if (feltRating != null && (!Number.isFinite(feltRating) || feltRating < 1 || feltRating > 5)) {
+    throw new Error("feltRating must be between 1 and 5");
+  }
+  if (difficultyLabel != null && !["too_easy", "right", "too_hard"].includes(difficultyLabel)) {
+    throw new Error("Use a valid difficultyLabel");
+  }
+  const payload = {
+    user_id: userID,
+    active_block_id: null,
+    planned_workout_id: workout?.id ?? null,
+    actual_workout_id: actual?.id ?? existing?.actual_workout_id ?? null,
+    perceived_effort: perceivedEffort ?? existing?.perceived_effort ?? null,
+    felt_rating: feltRating ?? existing?.felt_rating ?? null,
+    pain_flag: painFlag ?? existing?.pain_flag ?? false,
+    pain_notes: painFlag === false
+      ? null
+      : compactNullableText(input.painNotes ?? input.pain_notes) ?? existing?.pain_notes ?? null,
+    difficulty_label: difficultyLabel ?? existing?.difficulty_label ?? null,
+    free_text: compactNullableText(input.freeText ?? input.free_text) ?? existing?.free_text ?? null,
+    feedback_json: { schemaVersion: 1, source: "today" },
+  };
+  const feedback = existing
+    ? await single(
+        admin.from("workout_feedback").update(payload).eq("id", existing.id).eq("user_id", userID).select().single(),
+        "Could not update workout feedback",
+      )
+    : await single(
+        admin.from("workout_feedback").insert(payload).select().single(),
+        "Could not record workout feedback",
+      );
+  let debriefUpdate = admin.from("workout_debrief_requests").update({ status: "completed" }).eq("user_id", userID);
+  debriefUpdate = plannedWorkoutID
+    ? debriefUpdate.eq("planned_workout_id", plannedWorkoutID)
+    : debriefUpdate.eq("actual_workout_id", requestedActualWorkoutID!);
+  await throwOnError(debriefUpdate);
+  const event = await createPlanEvent(admin, {
+    userID,
+    fitnessStrategyID: scope.strategy.id,
+    weeklyPlanID: workout?.weekly_plan_id ?? null,
+    plannedWorkoutID: workout?.id ?? null,
+    eventType: "workout_feedback_recorded",
+    payload: { feedbackID: feedback.id, actualWorkoutID: actual?.id ?? null, fields: Object.keys(input) },
+  });
+  return { userID, model: "deterministic", eventID: event.id, feedback };
+}
+
+function compactTodayWorkout(workout: Record<string, any>) {
+  return {
+    id: workout.id,
+    scheduledDate: workout.scheduled_date,
+    sequenceOrder: workout.sequence_order,
+    activityType: workout.activity_type,
+    title: workout.title,
+    durationMinutes: workout.duration_minutes,
+    estimatedDistanceKilometers: workout.estimated_distance_kilometers ?? null,
+    estimatedElevationMeters: workout.estimated_elevation_meters ?? null,
+    intensityLabel: workout.intensity_label,
+    purpose: workout.purpose,
+    status: workout.status,
+    source: workout.source,
+    fuelingSummary: workout.fueling_summary ?? null,
+    prescription: workout.prescription_json ?? {},
+    plannedLocationLabel: workout.planned_location_label ?? null,
+    weatherForecast: workout.weather_forecast_json ?? {},
+  };
+}
+
+function compactUnexpectedTodayWorkout(actual: Record<string, any>, localDate: string, sequenceOrder: number) {
+  const activity = String(actual.activity_type ?? "workout");
+  const activityLabel = activity.replaceAll("_", " ").replace(/\b\w/g, (value) => value.toUpperCase());
+  return {
+    id: actual.id,
+    scheduledDate: localDate,
+    sequenceOrder,
+    activityType: activity,
+    title: `Unplanned ${activityLabel}`,
+    durationMinutes: Math.max(1, Math.round(Number(actual.duration_minutes ?? 0))),
+    estimatedDistanceKilometers: finiteNumber(actual.distance_kilometers),
+    estimatedElevationMeters: null,
+    intensityLabel: "Logged",
+    purpose: "This workout was not on today's plan, so HAYF reviewed its load and recovery cost.",
+    status: "done",
+    source: "healthkit_detected",
+    fuelingSummary: null,
+    prescription: {
+      whyToday: "This was an unplanned workout imported from HealthKit.",
+      warmup: "No planned warm-up was available.",
+      main: "Review the imported workout metrics in Today.",
+      cooldown: "No planned cooldown was available.",
+      successCriteria: "HAYF reconciles the completed work without inventing instructions.",
+    },
+    plannedLocationLabel: null,
+    weatherForecast: {},
+  };
+}
+
+function compactTodayActual(actual: Record<string, any>) {
+  return {
+    id: actual.id,
+    startDate: actual.start_date,
+    activityType: actual.activity_type,
+    durationMinutes: actual.duration_minutes,
+    distanceKilometers: actual.distance_kilometers ?? null,
+    energyKilocalories: actual.energy_kilocalories ?? null,
+    loadValue: actual.load_value ?? null,
+    averageHeartRateBPM: actual.average_heart_rate_bpm ?? null,
+    maxHeartRateBPM: actual.max_heart_rate_bpm ?? null,
+  };
+}
+
+function compactTodayFeedbackEvidence(feedback: Record<string, any> | null) {
+  if (!feedback) return null;
+  return {
+    perceivedEffort: finiteNumber(feedback.perceived_effort),
+    feltRating: finiteNumber(feedback.felt_rating),
+    difficultyLabel: feedback.difficulty_label ?? null,
+    painFlag: Boolean(feedback.pain_flag),
+    painNotes: compactWorkoutText(feedback.pain_notes ?? "", 120) || null,
+    freeText: compactWorkoutText(feedback.free_text ?? "", 180) || null,
+    updatedAt: feedback.updated_at ?? feedback.created_at ?? null,
+  };
+}
+
+function todaySessionState(workout: Record<string, any>, actual: Record<string, any> | null) {
+  if (actual || workout.status === "done") return "completed";
+  if (workout.status === "skipped") return "skipped";
+  if (workout.status === "missed") return "missed";
+  if (workout.status === "checked_in" || workout.status === "adjusted") return "ready";
+  return "planned";
+}
+
+function compactTodayWeather(value: Record<string, any> | null) {
+  if (!value || typeof value !== "object" || Object.keys(value).length === 0) return null;
+  return {
+    source: value.source ?? "forecast",
+    fetchedAt: value.fetchedAt ?? null,
+    forecastDate: value.forecastDate ?? null,
+    locationLabel: value.locationLabel ?? null,
+    conditionLabel: value.conditionLabel ?? null,
+    conditionEmoji: value.conditionEmoji ?? "☁️",
+    temperatureCelsius: finiteNumber(value.temperatureCelsius),
+    precipitationProbability: finiteNumber(value.precipitationProbability),
+    rainStartTime: compactNullableText(value.rainStartTime),
+    rainEndTime: compactNullableText(value.rainEndTime),
+    peakRainProbability: finiteNumber(value.peakRainProbability),
+    windKph: finiteNumber(value.windKph),
+    outdoorRisk: value.outdoorRisk ?? "ok",
+  };
+}
+
+function todayFatigueEstimate(snapshotRow: Record<string, any> | null, sessions: Record<string, any>[]) {
+  const snapshot = snapshotRow?.snapshot_json ?? null;
+  if (!snapshot) {
+    return deriveTodayFatigueEstimate({
+      freshness: "missing",
+      evidenceAt: null,
+      sleepHoursLastNight: null,
+      averageSleepHours14Days: null,
+      currentVsNinetyDayMinutesRatio: null,
+      hasHRVBaseline: false,
+      hasRestingHeartRateBaseline: false,
+      hardSessionToday: sessions.some((session) => trainingProfile(session).load === "high"),
+    });
+  }
+  const freshness = healthSnapshotFreshness(snapshot);
+  const recovery = snapshot.recovery ?? {};
+  const load = snapshot.fitnessHistory?.load ?? snapshot.fitness_history?.load ?? {};
+  return deriveTodayFatigueEstimate({
+    freshness: freshness.status,
+    evidenceAt: snapshotRow?.generated_at ?? null,
+    sleepHoursLastNight: finiteNumber(recovery.sleepHoursLastNight),
+    averageSleepHours14Days: finiteNumber(recovery.averageSleepHours14Days),
+    currentVsNinetyDayMinutesRatio: finiteNumber(load.currentVsNinetyDayMinutesRatio),
+    hasHRVBaseline: finiteNumber(recovery.hrv14DayAverageMS) != null,
+    hasRestingHeartRateBaseline: finiteNumber(recovery.restingHeartRate14DayAverageBPM) != null,
+    hardSessionToday: sessions.some((session) => trainingProfile(session).load === "high"),
+  });
+}
+
+function fallbackTodayBriefing(
+  scope: PlanningScope,
+  sessions: Record<string, any>[],
+  weeklyPlan: Record<string, any> | null,
+  weather: Record<string, any> | null,
+  fatigue: Record<string, any>,
+  replanReview: Record<string, any>,
+): TodayAuthoredBriefing {
+  const hasCompleted = sessions.some((session) => session.state === "completed");
+  const headline = sessions.length === 0
+    ? "Recovery supports the plan"
+    : hasCompleted
+    ? "Today's work is logged"
+    : sessions.length > 1 ? "Your full day, in order" : String(sessions[0]?.workout?.title ?? "Today's session");
+  return {
+    headline,
+    strategyFit: weeklyPlan?.objective || scope.strategy.summary || `This day supports ${scope.strategy.title}.`,
+    importance: sessions.length === 0
+      ? "An open day protects recovery and makes the next useful session easier to absorb."
+      : "The dose and spacing matter as much as completing the session itself.",
+    weatherInfluence: weather
+      ? `${weather.conditionLabel ?? "Current conditions"} should be considered for location, hydration, and pacing.`
+      : "No reliable workout forecast is available, so use local conditions as your guide.",
+    fatigueInfluence: fatigue.level === "unknown"
+      ? "HAYF does not have enough fresh evidence to estimate fatigue confidently."
+      : `HAYF estimates ${fatigue.level} fatigue; keep the planned effort honest and use Adjust if your body disagrees.`,
+    sessionBriefs: sessions.map((session) => fallbackSessionBrief(session, weeklyPlan, replanReview)),
+  };
+}
+
+function fallbackSessionBrief(session: Record<string, any>, weeklyPlan: Record<string, any> | null, replanReview: Record<string, any>) {
+  const workout = session.workout;
+  const completed = session.state === "completed";
+  const deviation = session.deviation;
+  return {
+    workoutID: String(workout.id),
+    preBrief: workout.purpose
+      ? `${workout.purpose} is today's contribution to ${weeklyPlan?.objective ?? "the current strategy"}.`
+      : "Complete this session at the prescribed dose and leave room for the rest of the week.",
+    postBrief: completed
+      ? deviation?.needsReview
+        ? "The logged session differed materially from plan, so HAYF reviewed its load and recovery cost."
+        : "The logged work is close enough to the planned role to count as intended."
+      : "",
+    weeklyImpact: replanReview.status === "pending"
+      ? "HAYF has proposed changes to protect the rest of the week."
+      : replanReview.status === "no_change"
+      ? "HAYF reviewed the result and the week can stay as planned."
+      : "No surrounding week change is currently needed.",
+  };
+}
+
+function sanitizeTodayAuthoredBriefing(
+  generated: TodayAuthoredBriefing,
+  sessions: Record<string, any>[],
+  fallback: TodayAuthoredBriefing,
+) {
+  const generatedByID = new Map((generated.sessionBriefs ?? []).map((brief) => [brief.workoutID, brief]));
+  return {
+    headline: compactWorkoutText(generated.headline || fallback.headline, 80),
+    strategyFit: compactWorkoutText(generated.strategyFit || fallback.strategyFit, 220),
+    importance: compactWorkoutText(generated.importance || fallback.importance, 220),
+    weatherInfluence: compactWorkoutText(generated.weatherInfluence || fallback.weatherInfluence, 220),
+    fatigueInfluence: compactWorkoutText(generated.fatigueInfluence || fallback.fatigueInfluence, 220),
+    sessionBriefs: sessions.map((session, index) => {
+      const sessionFallback = fallback.sessionBriefs[index] ?? fallbackSessionBrief(session, null, { status: "none" });
+      const candidate = generatedByID.get(String(session.workout.id));
+      return {
+        workoutID: String(session.workout.id),
+        preBrief: compactWorkoutText(candidate?.preBrief || sessionFallback.preBrief, 220),
+        postBrief: compactWorkoutText(candidate?.postBrief || sessionFallback.postBrief, 220),
+        weeklyImpact: compactWorkoutText(candidate?.weeklyImpact || sessionFallback.weeklyImpact, 220),
+      };
+    }),
+  };
+}
+
+function fallbackTodayActionDraft(
+  action: "skip" | "swap" | "move" | "adjust",
+  workout: Record<string, any>,
+  surroundingWorkouts: Record<string, any>[],
+  eligibleMoveDates: string[],
+  weatherContext: Record<string, any> | null,
+): TodayActionDraft {
+  const adjusted = fallbackReplacementCandidates(workout, surroundingWorkouts, weatherContext).map((candidate, index) => ({
+    ...candidate,
+    id: `adjust-${index + 1}`,
+    activityType: workout.activity_type,
+    title: index === 0 ? "Shorter dose" : "Easier dose",
+    durationMinutes: index === 0 ? Math.max(15, Math.round(Number(workout.duration_minutes) * 0.65)) : Math.max(20, Math.round(Number(workout.duration_minutes) * 0.8)),
+    intensityLabel: "Low",
+    purpose: workout.purpose,
+    rationale: "This preserves today's role with less recovery cost.",
+    weeklyImpact: "The week should remain stable after the lower dose.",
+  }));
+  return {
+    action,
+    coachRead: action === "skip"
+      ? "Skipping is valid; HAYF will check whether the week needs a small repair."
+      : action === "move"
+      ? "A later slot can preserve the session if recovery spacing still works."
+      : action === "adjust"
+      ? "A smaller dose can preserve the training signal without forcing the full session."
+      : "A replacement should preserve today's role without competing with nearby sessions.",
+    weeklyImpact: "HAYF will review load, recovery spacing, and the week's main objective before applying anything else.",
+    moveOptions: action === "move"
+      ? eligibleMoveDates.slice(0, 3).map((date) => ({ date, rationale: "This is the next available later slot in the visible plan." }))
+      : [],
+    workoutOptions: action === "swap"
+      ? fallbackReplacementCandidates(workout, surroundingWorkouts, weatherContext)
+      : action === "adjust" ? adjusted.slice(0, 3) : [],
   };
 }
 
@@ -4308,7 +5199,7 @@ async function createRepairProposalForPendingEdits(
         .in("weekly_plan_id", weeklyPlanIDs)
         .gte("scheduled_date", window.start)
         .lte("scheduled_date", window.end)
-        .in("status", ["planned", "current", "checked_in", "adjusted", "done"])
+        .in("status", ["planned", "current", "checked_in", "adjusted", "done", "missed", "skipped", "deleted"])
         .order("scheduled_date", { ascending: true })
         .order("sequence_order", { ascending: true }),
     ),
@@ -4340,7 +5231,8 @@ async function createRepairProposalForPendingEdits(
       targets: goalTargets,
       pendingEvents: pendingEvents.map(compactPlanEventForReview),
       rules: [
-        "The user's edits are facts. Do not revert moved, deleted, replaced, added, or availability changes.",
+        ...launchPlanReviewRules(weeklyPlans),
+        "The user's edits are facts. Do not revert moved, deleted, skipped, adjusted, replaced, added, or availability changes.",
         "Only propose small surrounding adjustments needed to keep the committed/draft window aligned with the strategy.",
         "Do not create, update, move, or delete workouts before today. If the best theoretical repair is in the past, choose a today/future repair or return no mutations.",
         "Return no mutations when the edited plan is acceptable.",
@@ -4384,6 +5276,29 @@ async function createRepairProposalForPendingEdits(
       timezone,
       homeLocationLabel: scope.homeLocationLabel,
     });
+  }
+
+  const launchGuard = guardLaunchReplanMutations(mutations, weeklyPlans, workouts);
+  mutations = launchGuard.mutations;
+  if (launchGuard.removedCreateCount > 0) {
+    const guardNote = `Removed ${launchGuard.removedCreateCount} model-proposed launch addition(s) that exceeded the saved launch targets.`;
+    if (mutations.length === 0) {
+      draft = {
+        ...draft,
+        reviewNeeded: false,
+        reason: "The launch rhythm overrides regular-week volume targets, so no quota backfill is needed.",
+        summary: "Keep the launch week compact; your edits do not require extra sessions.",
+        notes: guardNote,
+        mutations: [],
+      };
+    } else {
+      draft = {
+        ...draft,
+        reason: "The launch rhythm overrides regular-week volume targets, so only a missing launch-session role should be repaired.",
+        summary: "Keep the launch week compact; adjust only the missing launch-session role.",
+        notes: [draft.notes, guardNote].filter(Boolean).join(" "),
+      };
+    }
   }
 
   if (draft.reviewNeeded && draft.mutations.length > 0 && mutations.length === 0) {
@@ -4539,7 +5454,16 @@ async function reconstructPlanEditFromEvent(
 }
 
 function pendingReviewEditEventTypes() {
-  return ["workout_moved", "workout_deleted", "workout_added", "weekly_plan_constraint_recorded", "extra_workout_detected", "actual_matched"];
+  return [
+    "workout_moved",
+    "workout_deleted",
+    "workout_skipped",
+    "workout_adjusted",
+    "workout_added",
+    "weekly_plan_constraint_recorded",
+    "extra_workout_detected",
+    "actual_matched",
+  ];
 }
 
 function pendingReviewEventAppliesToVisibleWindow(event: Record<string, any>, weeklyPlanIDs: string[]) {
@@ -6060,6 +6984,62 @@ function requiredPlanningResponseSchema(id: string): Record<string, unknown> {
   return metadata.schema;
 }
 
+async function runTodayBriefingGeneration(
+  context: Record<string, unknown>,
+  model: string,
+): Promise<TodayAuthoredBriefing> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("today_briefing");
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(responsesRequestPayload(
+      model,
+      touchpointConfig,
+      { task: "refresh_today_briefing", context, rules: touchpointConfig.userRules },
+      {
+        type: "json_schema",
+        name: "today_briefing",
+        strict: true,
+        schema: requiredPlanningResponseSchema("today_briefing"),
+      },
+    )),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  const outputText = extractOutputText(payload);
+  if (!outputText) throw new Error("OpenAI returned no Today briefing output");
+  return JSON.parse(outputText) as TodayAuthoredBriefing;
+}
+
+async function runTodayActionGeneration(
+  context: Record<string, unknown>,
+  model: string,
+): Promise<TodayActionDraft> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const touchpointConfig = planningAITouchpoint("today_workout_action", { workoutTaxonomyRules });
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(responsesRequestPayload(
+      model,
+      touchpointConfig,
+      { task: "recommend_today_workout_action", context, rules: touchpointConfig.userRules },
+      {
+        type: "json_schema",
+        name: "today_workout_action",
+        strict: true,
+        schema: requiredPlanningResponseSchema("today_workout_action"),
+      },
+    )),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message ?? "OpenAI request failed");
+  const outputText = extractOutputText(payload);
+  if (!outputText) throw new Error("OpenAI returned no Today action output");
+  return JSON.parse(outputText) as TodayActionDraft;
+}
+
 async function runReplacementGeneration(context: Record<string, unknown>, model: string): Promise<{ candidates: ReplacementCandidateInput[] }> {
   const apiKey = mustGetEnv("OPENAI_API_KEY");
   const touchpointConfig = planningAITouchpoint("workout_replacements", { workoutTaxonomyRules });
@@ -7292,10 +8272,12 @@ function acceptedStrategyGoalTitle(strategy: Record<string, unknown>, onboarding
 
 function acceptedStrategyTitle(strategy: Record<string, unknown>, goalKind: string) {
   const explicit = stringAt(strategy, "title");
-  if (explicit) return explicit;
+  const goalTargetTitle = stringAt(objectAt(strategy, "goalTargetContext"), "title");
   const hasPhases = acceptedStrategyPhases(strategy).length > 0;
-  if (goalKind === "consistency") return "Consistency Strategy";
-  return hasPhases ? "Goal Build Strategy" : "Fitness Strategy";
+  const fallback = goalKind === "consistency"
+    ? "Consistency Strategy"
+    : hasPhases ? "Goal Build Strategy" : "Fitness Strategy";
+  return explanatoryStrategyTitle(explicit, goalTargetTitle, fallback);
 }
 
 function acceptedStrategyTimeframeWeeks(strategy: Record<string, unknown>, onboarding: Record<string, any>) {
@@ -7905,6 +8887,10 @@ async function fetchOpenMeteoWorkoutForecast(
       "precipitation_sum",
       "wind_speed_10m_max",
     ].join(","),
+    hourly: [
+      "precipitation_probability",
+      "precipitation",
+    ].join(","),
     timezone: "auto",
     forecast_days: "16",
     temperature_unit: "celsius",
@@ -7935,6 +8921,25 @@ async function fetchOpenMeteoWorkoutForecast(
   const precipitationProbability = finiteNumber(daily.precipitation_probability_max?.[index]);
   const precipitationMm = finiteNumber(daily.precipitation_sum?.[index]);
   const windKph = finiteNumber(daily.wind_speed_10m_max?.[index]);
+  const hourly = payload?.hourly ?? {};
+  const hourlyTimes = Array.isArray(hourly.time) ? hourly.time : [];
+  const rainyHourIndexes: number[] = hourlyTimes.flatMap((time: unknown, hourlyIndex: number) => {
+    if (!String(time ?? "").startsWith(`${scheduledDate}T`)) return [];
+    const probability = finiteNumber(hourly.precipitation_probability?.[hourlyIndex]) ?? 0;
+    const precipitation = finiteNumber(hourly.precipitation?.[hourlyIndex]) ?? 0;
+    return probability >= 30 || precipitation >= 0.1 ? [hourlyIndex] : [];
+  });
+  const firstRainIndex = rainyHourIndexes[0];
+  const lastRainIndex = rainyHourIndexes.at(-1);
+  const rainStartTime = firstRainIndex == null ? null : String(hourlyTimes[firstRainIndex]);
+  const rainEndTime = lastRainIndex == null
+    ? null
+    : String(hourlyTimes[Math.min(lastRainIndex + 1, hourlyTimes.length - 1)]);
+  const peakRainProbability = rainyHourIndexes.length === 0
+    ? null
+    : Math.max(...rainyHourIndexes.map((hourlyIndex) =>
+      finiteNumber(hourly.precipitation_probability?.[hourlyIndex]) ?? 0
+    ));
   const condition = openMeteoCondition(Number(conditionCode));
   const forecast: OpenMeteoDailyForecast = {
     source: "open-meteo",
@@ -7950,6 +8955,9 @@ async function fetchOpenMeteoWorkoutForecast(
     conditionEmoji: condition.emoji,
     precipitationProbability,
     precipitationMm,
+    rainStartTime,
+    rainEndTime,
+    peakRainProbability,
     windKph,
     outdoorRisk: outdoorRiskForForecast(Number(conditionCode), temperature, precipitationProbability, precipitationMm, windKph),
   };
@@ -8171,6 +9179,9 @@ function storedOpenMeteoForecastForDate(value: unknown, scheduledDate: string): 
     conditionEmoji: String(forecast.conditionEmoji),
     precipitationProbability: finiteNumber(forecast.precipitationProbability),
     precipitationMm: finiteNumber(forecast.precipitationMm),
+    rainStartTime: compactNullableText(forecast.rainStartTime),
+    rainEndTime: compactNullableText(forecast.rainEndTime),
+    peakRainProbability: finiteNumber(forecast.peakRainProbability),
     windKph: finiteNumber(forecast.windKph),
     outdoorRisk: forecast.outdoorRisk === "miserable" || forecast.outdoorRisk === "watch" ? forecast.outdoorRisk : "ok",
   };
@@ -9927,6 +10938,7 @@ async function weeklyPlanForDate(admin: SupabaseAdminClient, userID: string, str
       .eq("user_id", userID)
       .eq("fitness_strategy_id", strategyID)
       .eq("week_start_date", weekStart)
+      .in("status", ["committed", "draft"])
       .limit(1),
   );
 }
@@ -10145,11 +11157,21 @@ async function findWorkoutMatch(
       .eq("user_id", userID)
       .eq("weekly_plan_id", weeklyPlan.id)
       .eq("scheduled_date", actualDate)
-      .in("status", ["planned", "current", "checked_in", "adjusted"]),
+      .in("status", ["planned", "current", "checked_in", "adjusted", "done"]),
   );
 
+  const candidateIDs = candidates.map((candidate: Record<string, any>) => candidate.id);
+  const alreadyMatched = candidateIDs.length > 0
+    ? await list(
+      admin.from("actual_workouts").select("matched_planned_workout_id")
+        .eq("user_id", userID)
+        .in("matched_planned_workout_id", candidateIDs),
+    )
+    : [];
+  const matchedIDs = new Set(alreadyMatched.map((row: Record<string, any>) => String(row.matched_planned_workout_id)));
+
   let best: { workout: Record<string, any>; confidence: number; disparity: WorkoutMatchDisparity | null } | null = null;
-  for (const workout of candidates) {
+  for (const workout of candidates.filter((candidate: Record<string, any>) => !matchedIDs.has(String(candidate.id)))) {
     const match = workoutMatchScore(actual, workout);
     if (match && (!best || compareWorkoutMatches(match, workout, best) > 0)) {
       const confidence = match.confidence;
@@ -10725,29 +11747,44 @@ async function createWorkoutDebriefRequest(
   plannedWorkoutID: string | null,
   actualWorkoutID: string | null,
 ) {
-  if (!actualWorkoutID) {
-    return;
-  }
+  if (!actualWorkoutID && !plannedWorkoutID) return;
 
-  await throwOnError(
-    admin.from("workout_debrief_requests").upsert(
-      {
-        user_id: userID,
-        active_block_id: activeBlockID,
-        planned_workout_id: plannedWorkoutID,
-        actual_workout_id: actualWorkoutID,
-        status: "needed",
-        prompt_reason: "completed_workout_detected",
-      },
-      { onConflict: "user_id,actual_workout_id" },
-    ),
-  );
+  const existing = plannedWorkoutID
+    ? await maybeSingle(
+      admin.from("workout_debrief_requests").select()
+        .eq("user_id", userID)
+        .eq("planned_workout_id", plannedWorkoutID)
+        .maybeSingle(),
+      )
+    : actualWorkoutID
+    ? await maybeSingle(
+      admin.from("workout_debrief_requests").select()
+        .eq("user_id", userID)
+        .eq("actual_workout_id", actualWorkoutID)
+        .maybeSingle(),
+    )
+    : null;
+  const payload = {
+    user_id: userID,
+    active_block_id: activeBlockID,
+    planned_workout_id: plannedWorkoutID,
+    actual_workout_id: actualWorkoutID ?? existing?.actual_workout_id ?? null,
+    status: existing?.status === "completed" ? "completed" : "needed",
+    prompt_reason: actualWorkoutID ? "completed_workout_detected" : "completed_workout_marked_manually",
+  };
+  if (existing) {
+    await throwOnError(
+      admin.from("workout_debrief_requests").update(payload).eq("id", existing.id).eq("user_id", userID),
+    );
+  } else {
+    await throwOnError(admin.from("workout_debrief_requests").insert(payload));
+  }
   await createPlanEvent(admin, {
     userID,
     activeBlockID,
     plannedWorkoutID,
     eventType: "workout_debrief_requested",
-    payload: { actualWorkoutID },
+    payload: { actualWorkoutID, completionSource: actualWorkoutID ? "healthkit" : "manual" },
   });
 }
 
@@ -10900,7 +11937,7 @@ async function planWindowSatisfiesWeeklyTargets(
 }
 
 function plannedConstraintValue(workouts: Record<string, any>[], constraint: WeeklyTargetConstraint) {
-  const activeWorkouts = workouts.filter((workout) => !["deleted", "superseded"].includes(String(workout.status)));
+  const activeWorkouts = workouts.filter((workout) => !["deleted", "superseded", "skipped"].includes(String(workout.status)));
   const modalityWorkouts = constraint.modality
     ? activeWorkouts.filter((workout) => workoutMatchesModality(workout, constraint.modality!))
     : activeWorkouts;

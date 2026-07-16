@@ -290,6 +290,79 @@ struct PlanningAIProvider {
         )
     }
 
+    func refreshTodayBriefing(localDate: Date = Date()) async throws -> TodayBriefingOutput {
+        let response: TodayBriefingFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .refreshTodayBriefing,
+                deviceTimezone: TimeZone.current.identifier,
+                localDate: Self.dateOnlyFormatter.string(from: localDate)
+            )
+        )
+        return response.output
+    }
+
+    func recommendTodayWorkoutAction(
+        plannedWorkoutID: UUID,
+        action: TodayWorkoutAction,
+        textContext: String? = nil
+    ) async throws -> TodayWorkoutActionRecommendation {
+        let response: TodayWorkoutActionFunctionResponse = try await invokeTyped(
+            PlanningFunctionRequest(
+                task: .recommendTodayWorkoutAction,
+                plannedWorkoutID: plannedWorkoutID,
+                textContext: textContext,
+                todayAction: action
+            )
+        )
+        return response.output
+    }
+
+    func skipWorkout(plannedWorkoutID: UUID, textContext: String? = nil) async throws {
+        _ = try await invoke(
+            PlanningFunctionRequest(
+                task: .skipWorkout,
+                deviceTimezone: TimeZone.current.identifier,
+                plannedWorkoutID: plannedWorkoutID,
+                textContext: textContext
+            )
+        )
+    }
+
+    func adjustWorkout(plannedWorkoutID: UUID, candidate: PlanningWorkoutCandidate) async throws {
+        _ = try await invoke(
+            PlanningFunctionRequest(
+                task: .adjustWorkout,
+                deviceTimezone: TimeZone.current.identifier,
+                plannedWorkoutID: plannedWorkoutID,
+                workoutCandidate: candidate
+            )
+        )
+    }
+
+    func markWorkoutComplete(plannedWorkoutID: UUID) async throws {
+        _ = try await invoke(
+            PlanningFunctionRequest(
+                task: .markWorkoutComplete,
+                plannedWorkoutID: plannedWorkoutID
+            )
+        )
+    }
+
+    func recordWorkoutFeedback(
+        plannedWorkoutID: UUID? = nil,
+        actualWorkoutID: UUID? = nil,
+        feedback: WorkoutFeedbackDraft
+    ) async throws {
+        _ = try await invoke(
+            PlanningFunctionRequest(
+                task: .recordWorkoutFeedback,
+                plannedWorkoutID: plannedWorkoutID,
+                actualWorkoutID: actualWorkoutID,
+                feedback: feedback
+            )
+        )
+    }
+
     func generateWeeklyPlanTargets(windowStart: Date? = nil) async throws -> PlanningFunctionResponse {
         try await invoke(
             PlanningFunctionRequest(
@@ -871,6 +944,18 @@ private struct PlanningWorkoutInterpretationFunctionResponse: Decodable {
     let output: PlanningWorkoutInterpretationOutput
 }
 
+private struct TodayBriefingFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: TodayBriefingOutput
+}
+
+private struct TodayWorkoutActionFunctionResponse: Decodable {
+    let task: PlanningAITask
+    let model: String
+    let output: TodayWorkoutActionRecommendation
+}
+
 enum PlanningAITask: String, Codable {
     case acceptStrategyAndCreateInitialPlan = "accept_strategy_and_create_initial_plan"
     case prepareInitialStrategyAfterBlueprint = "prepare_initial_strategy_after_blueprint"
@@ -893,6 +978,12 @@ enum PlanningAITask: String, Codable {
     case createRepairProposalForPendingEdits = "create_repair_proposal_for_pending_edits"
     case applyReplanProposal = "apply_replan_proposal"
     case checkInToWorkout = "check_in_to_workout"
+    case refreshTodayBriefing = "refresh_today_briefing"
+    case recommendTodayWorkoutAction = "recommend_today_workout_action"
+    case skipWorkout = "skip_workout"
+    case adjustWorkout = "adjust_workout"
+    case markWorkoutComplete = "mark_workout_complete"
+    case recordWorkoutFeedback = "record_workout_feedback"
     case scheduledRefreshDueWindows = "scheduled_refresh_due_windows"
 }
 
@@ -915,6 +1006,7 @@ private struct PlanningFunctionRequest: Encodable {
     let eventID: UUID?
     let decision: PlanningProposalDecision?
     let plannedWorkoutID: UUID?
+    let actualWorkoutID: UUID?
     let scheduledDate: String?
     let sequenceOrder: Int?
     let replacementCandidate: PlanningWorkoutCandidate?
@@ -924,6 +1016,9 @@ private struct PlanningFunctionRequest: Encodable {
     let currentDerivedSnapshot: HealthFeatureSnapshot?
     let repairPolicy: PlanningRepairPolicy?
     let weeklyPlanConstraint: PlanningWeeklyPlanConstraintInput?
+    let localDate: String?
+    let todayAction: TodayWorkoutAction?
+    let feedback: WorkoutFeedbackDraft?
 
     init(
         task: PlanningAITask,
@@ -944,6 +1039,7 @@ private struct PlanningFunctionRequest: Encodable {
         eventID: UUID? = nil,
         decision: PlanningProposalDecision? = nil,
         plannedWorkoutID: UUID? = nil,
+        actualWorkoutID: UUID? = nil,
         scheduledDate: String? = nil,
         sequenceOrder: Int? = nil,
         replacementCandidate: PlanningWorkoutCandidate? = nil,
@@ -952,7 +1048,10 @@ private struct PlanningFunctionRequest: Encodable {
         textContext: String? = nil,
         currentDerivedSnapshot: HealthFeatureSnapshot? = nil,
         repairPolicy: PlanningRepairPolicy? = nil,
-        weeklyPlanConstraint: PlanningWeeklyPlanConstraintInput? = nil
+        weeklyPlanConstraint: PlanningWeeklyPlanConstraintInput? = nil,
+        localDate: String? = nil,
+        todayAction: TodayWorkoutAction? = nil,
+        feedback: WorkoutFeedbackDraft? = nil
     ) {
         self.task = task
         self.healthSnapshot = healthSnapshot
@@ -972,6 +1071,7 @@ private struct PlanningFunctionRequest: Encodable {
         self.eventID = eventID
         self.decision = decision
         self.plannedWorkoutID = plannedWorkoutID
+        self.actualWorkoutID = actualWorkoutID
         self.scheduledDate = scheduledDate
         self.sequenceOrder = sequenceOrder
         self.replacementCandidate = replacementCandidate
@@ -981,6 +1081,9 @@ private struct PlanningFunctionRequest: Encodable {
         self.currentDerivedSnapshot = currentDerivedSnapshot
         self.repairPolicy = repairPolicy
         self.weeklyPlanConstraint = weeklyPlanConstraint
+        self.localDate = localDate
+        self.todayAction = todayAction
+        self.feedback = feedback
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1002,6 +1105,7 @@ private struct PlanningFunctionRequest: Encodable {
         case eventID = "event_id"
         case decision
         case plannedWorkoutID = "planned_workout_id"
+        case actualWorkoutID = "actual_workout_id"
         case scheduledDate
         case sequenceOrder
         case replacementCandidate = "replacement_candidate"
@@ -1011,6 +1115,9 @@ private struct PlanningFunctionRequest: Encodable {
         case currentDerivedSnapshot = "current_derived_snapshot"
         case repairPolicy = "repair_policy"
         case weeklyPlanConstraint = "weekly_plan_constraint"
+        case localDate
+        case todayAction
+        case feedback
     }
 
     func encode(to encoder: Encoder) throws {
@@ -1037,6 +1144,7 @@ private struct PlanningFunctionRequest: Encodable {
         try container.encodeIfPresent(eventID?.uuidString.lowercased(), forKey: .eventID)
         try container.encodeIfPresent(decision, forKey: .decision)
         try container.encodeIfPresent(plannedWorkoutID?.uuidString.lowercased(), forKey: .plannedWorkoutID)
+        try container.encodeIfPresent(actualWorkoutID?.uuidString.lowercased(), forKey: .actualWorkoutID)
         try container.encodeIfPresent(scheduledDate, forKey: .scheduledDate)
         try container.encodeIfPresent(sequenceOrder, forKey: .sequenceOrder)
         try container.encodeIfPresent(replacementCandidate, forKey: .replacementCandidate)
@@ -1049,6 +1157,9 @@ private struct PlanningFunctionRequest: Encodable {
         }
         try container.encodeIfPresent(repairPolicy, forKey: .repairPolicy)
         try container.encodeIfPresent(weeklyPlanConstraint, forKey: .weeklyPlanConstraint)
+        try container.encodeIfPresent(localDate, forKey: .localDate)
+        try container.encodeIfPresent(todayAction, forKey: .todayAction)
+        try container.encodeIfPresent(feedback, forKey: .feedback)
     }
 }
 

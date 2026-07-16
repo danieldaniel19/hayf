@@ -720,6 +720,80 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
   },
   {
     group: "planning",
+    id: "today_briefing",
+    name: "Planned day briefing",
+    description:
+      "A compact daily briefing for one planned workout with fresh recovery and weather evidence.",
+    fixture: {
+      task: "refresh_today_briefing",
+      context: {
+        localDate: "2026-07-15",
+        strategy: {
+          id: strategyRow.id,
+          title: strategyRow.title,
+          summary: strategyRow.summary,
+          rationale: strategyRow.rationale,
+        },
+        phase: acceptedStrategy.phases[0],
+        week: {
+          id: weeklyPlans[0].id,
+          objective: weeklyPlans[0].objective,
+          status: weeklyPlans[0].status,
+        },
+        weather: plannedWorkouts[0].weather_forecast_json,
+        fatigue: {
+          level: "low",
+          confidence: "medium",
+          freshness: "fresh",
+          factors: [
+            "Sleep is close to your recent norm",
+            "Recent training volume is within your broader pattern",
+          ],
+          adjustmentSuggested: false,
+        },
+        sessions: [{
+          workout: plannedWorkouts[1],
+          state: "planned",
+          actualWorkout: null,
+          deviation: null,
+          feedback: null,
+          debriefStatus: null,
+        }],
+        tomorrowPreview: plannedWorkouts[2],
+        replanReview: {
+          status: "none",
+          proposalID: null,
+          reason: null,
+          summary: null,
+          mutationCount: 0,
+          mutations: [],
+        },
+        latestSnapshotAt: healthSnapshotSummary.generatedAt,
+      },
+    },
+  },
+  {
+    group: "planning",
+    id: "today_workout_action",
+    name: "Reduce today's workout",
+    description:
+      "Shorter and easier options that preserve today's planned session role.",
+    fixture: {
+      task: "recommend_today_workout_action",
+      context: {
+        action: "adjust",
+        workout: plannedWorkouts[1],
+        masterCoachContext,
+        weeklyPlan: weeklyPlans[0],
+        surroundingWorkouts: plannedWorkouts,
+        weatherContext,
+        eligibleMoveDates: ["2026-07-16", "2026-07-17", "2026-07-18"],
+        userIntent: "I slept poorly and only have 30 minutes.",
+      },
+    },
+  },
+  {
+    group: "planning",
     id: "plan_generation",
     name: "Two-week refresh",
     description:

@@ -9,16 +9,12 @@ struct AuthenticatedHomeView: View {
     let restartOnboarding: () -> Void
     let signOut: () -> Void
 
-    @State private var selectedTab: AuthenticatedTab = .plan
+    @State private var selectedTab: AuthenticatedTab = .today
     @State private var isShowingHealthDebug = false
-    @State private var didRunPlanningRefresh = false
-
-    private let healthSyncService = HealthSyncService()
-    private let planningAIProvider = PlanningAIProvider()
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            TodayGhostView()
+            TodayScreenView(userName: accountProfile.name)
                 .tabItem {
                     Label("Today", systemImage: "house")
                 }
@@ -60,20 +56,6 @@ struct AuthenticatedHomeView: View {
         .sheet(isPresented: $isShowingHealthDebug) {
             HealthDebugView()
         }
-        .task {
-            await refreshPlanningOnOpen()
-        }
-    }
-
-    private func refreshPlanningOnOpen() async {
-        guard !didRunPlanningRefresh else { return }
-        didRunPlanningRefresh = true
-
-        if let payload = try? await healthSyncService.buildSyncPayload(daysBack: 14) {
-            _ = try? await planningAIProvider.syncHealthKitAndReconcile(payload: payload)
-        }
-
-        _ = try? await planningAIProvider.refreshPlanWindow()
     }
 }
 
@@ -82,16 +64,6 @@ private enum AuthenticatedTab: Hashable {
     case plan
     case profile
     case dev
-}
-
-private struct TodayGhostView: View {
-    var body: some View {
-        HAYFGhostScreen(
-            title: "Today",
-            message: "The daily recommendation card will live here soon.",
-            systemImage: "house"
-        )
-    }
 }
 
 private struct DevToolsView: View {
