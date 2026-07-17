@@ -258,8 +258,9 @@ final class OnboardingPolicyTests: XCTestCase {
 
     func testSummaryReadbackEnforcesCompactInterpretation() {
         XCTAssertTrue(OnboardingSummaryOutput.isValidReadback(
-            "Reliable training matters more than perfect weeks, so your plan needs an adaptable rhythm."
+            "You are looking for a consistent five-day routine that can withstand low energy and travel."
         ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback("Consistent training needs an adaptable rhythm that can withstand low energy and frequent travel."))
         XCTAssertFalse(OnboardingSummaryOutput.isValidReadback("You chose cycling, strength, Monday, Tuesday, a gym, mornings, and a short fallback."))
         XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(String(repeating: "A", count: 121)))
     }

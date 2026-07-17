@@ -282,7 +282,7 @@ struct OnboardingFlowView: View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
                 title: "How long have\nyou trained?",
-                copy: "HAYF will read your workout history from Apple Health later, but your own input helps when tracked history is patchy."
+                copy: "HAYF will merge this data point with your workout history sync later to create a comprehensive context."
             )
 
             OptionGroup(title: "How experienced are you with training?") {
@@ -334,7 +334,7 @@ struct OnboardingFlowView: View {
     private var goalPriorityScreen: some View {
         VStack(alignment: .leading, spacing: 24) {
             OnboardingIntro(
-                title: "When tradeoffs show up,\nwhat should win?",
+                title: "How should HAYF\nprioritize sessions?",
                 copy: "This gives HAYF a clear rule for busy weeks."
             )
 
@@ -831,17 +831,19 @@ struct OnboardingFlowView: View {
                         title: band.title,
                         subtitle: band.subtitle,
                         systemImage: "figure",
-                        isSelected: draft.bodyFatBand == band
+                        isSelected: draft.bodyFatBand == band,
+                        badge: band.badgeTitle
                     ) {
                         draft.selectBodyFatBand(band)
                     }
                 }
 
                 DetailedSelectableRow(
-                    title: "I’m not sure, estimate from my weight and height",
+                    title: "I’m not sure",
                     subtitle: bodyFatEstimateOptionSubtitle,
                     systemImage: "function",
                     isSelected: draft.bodyFatEstimateSource == .bmiAgePhysiology,
+                    badge: "Our estimate",
                     isEnabled: estimatedBodyFatPercentage != nil
                 ) {
                     guard let estimate = estimatedBodyFatPercentage else { return }
@@ -916,9 +918,9 @@ struct OnboardingFlowView: View {
 
     private var bodyFatEstimateOptionSubtitle: String {
         guard let estimate = estimatedBodyFatPercentage else {
-            return "Available for adults after valid weight and height are entered."
+            return "Enter valid weight and height to unlock our rough estimate."
         }
-        return "Use a rough BMI, age, and physiology estimate: about \(Int(estimate.rounded()))%. It may differ by several points."
+        return "About \(Int(estimate.rounded()))%. Rough BMI, age and physiology approximation—not the most accurate."
     }
 
     private var summaryScreen: some View {
@@ -1430,11 +1432,11 @@ struct OnboardingFlowView: View {
         case .goalExperience:
             step = .goalTimeline
         case .goalTimeline:
-            step = .goalPriority
-        case .goalPriority:
             step = .options
-        case .options:
+        case .goalPriority:
             step = .infrastructure
+        case .options:
+            step = selectedIntent == .concreteGoal ? .goalPriority : .infrastructure
         case .infrastructure:
             if selectedIntent == .findGoal {
                 step = .findDirection
@@ -1531,11 +1533,11 @@ struct OnboardingFlowView: View {
         case .goalTimeline:
             step = .goalExperience
         case .goalPriority:
-            step = .goalTimeline
-        case .options:
-            step = selectedIntent == .concreteGoal ? .goalPriority : .intent
-        case .infrastructure:
             step = .options
+        case .options:
+            step = selectedIntent == .concreteGoal ? .goalTimeline : .intent
+        case .infrastructure:
+            step = selectedIntent == .concreteGoal ? .goalPriority : .options
         case .anchor:
             step = .options
         case .findDirection:
@@ -2201,8 +2203,8 @@ enum OnboardingStep: Equatable {
             case .goalBrief: return 2
             case .goalExperience: return 3
             case .goalTimeline: return 4
-            case .goalPriority: return 5
-            case .options: return 6
+            case .options: return 5
+            case .goalPriority: return 6
             case .infrastructure: return 7
             case .weeklyCapacity: return 8
             case .weeklyAvailability: return 9
@@ -4112,11 +4114,14 @@ struct OnboardingSummaryOutput {
         let trimmed = value.trimmed
         let words = trimmed.split(whereSeparator: { $0.isWhitespace })
         let sentenceEndings = trimmed.filter { ".!?".contains($0) }.count
-        let forbiddenOpening = trimmed.lowercased().hasPrefix("you chose")
-            || trimmed.lowercased().hasPrefix("you selected")
+        let lowercased = trimmed.lowercased()
+        let addressesUserDirectly = lowercased.hasPrefix("you ")
+        let forbiddenOpening = lowercased.hasPrefix("you chose")
+            || lowercased.hasPrefix("you selected")
         return (12...18).contains(words.count)
             && trimmed.count <= 120
             && sentenceEndings <= 1
+            && addressesUserDirectly
             && !forbiddenOpening
     }
 }
@@ -4374,11 +4379,11 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
         switch intent {
         case .stayConsistent:
             return OnboardingSummaryOutput(
-                readback: "Reliable training matters more than perfect weeks, so your plan needs an adaptable rhythm."
+                readback: "You need an adaptable routine that stays reliable when ordinary weeks become imperfect."
             )
         case .concreteGoal:
             return OnboardingSummaryOutput(
-                readback: "Your goal needs focused progress without letting real-world constraints destabilize the wider training week."
+                readback: "You need focused progress that protects your goal without letting real-world constraints destabilize the wider week."
             )
         case .findGoal:
             return OnboardingSummaryOutput(
@@ -4712,30 +4717,37 @@ enum BodyFatBand: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .maleUnder10:
-            return "Athlete-level leanness; uncommon outside serious training or physique focus."
+        case .maleUnder10, .femaleUnder18:
+            return "Uncommon outside serious and professional sport."
         case .male10To12:
-            return "Visibly lean with clear abs and vascularity; usually demands sustained discipline."
+            return "Clear abs and vascularity that demand years of discipline."
         case .male12To15:
-            return "Lean around major muscle groups; some vascularity, with abs depending on genetics and diet."
+            return "Some abs and vascularity around major muscles."
         case .male15To17:
-            return "Strong and sporty without necessarily looking lean; muscle outlines remain clear."
+            return "Muscle outlines are clear without pronounced leanness."
         case .male17To20:
-            return "Athletic build with softer definition; strength can show more than leanness."
-        case .maleAbove20:
-            return "Less visible definition day to day; body-composition goals may matter more than appearance cues."
-        case .femaleUnder18:
-            return "Very lean and athletic; uncommon without high training load or physique focus."
+            return "Less leanness and more strength in an athletic build."
+        case .maleAbove20, .femaleAbove32:
+            return "Visual cues need some work to show up."
         case .female18To21:
-            return "Visibly lean and athletic with clear muscle shape and some definition."
+            return "Clear muscle shape and visible definition."
         case .female21To25:
-            return "Fit and toned; muscle definition shows, especially with regular training."
+            return "Fit with definition supported by regular training."
         case .female25To28:
-            return "Strong and healthy-looking with softer definition but clear athletic potential."
+            return "Muscle outlines are clear without pronounced leanness."
         case .female28To32:
-            return "Active-looking with less visible definition; performance can still be strong."
-        case .femaleAbove32:
-            return "Less visible definition day to day; body-composition goals may matter more than appearance cues."
+            return "Less definition with an active, capable build."
+        }
+    }
+
+    var badgeTitle: String {
+        switch self {
+        case .maleUnder10, .femaleUnder18: return "Pro Athlete"
+        case .male10To12, .female18To21: return "Visibly Lean"
+        case .male12To15, .female21To25: return "Somewhat Lean"
+        case .male15To17, .female25To28: return "Sporty"
+        case .male17To20, .female28To32: return "Softer Definition"
+        case .maleAbove20, .femaleAbove32: return "Low Definition"
         }
     }
 
@@ -4806,12 +4818,12 @@ enum MotivationAnchor: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .strengthAndCapability: return "Feel strong and physically capable"
-        case .dailyEnergy: return "Have more energy day to day"
-        case .stressAndHeadspace: return "Manage stress and clear my head"
+        case .strengthAndCapability: return "Feel strong and capable"
+        case .dailyEnergy: return "Have more daily energy"
+        case .stressAndHeadspace: return "Manage stress"
         case .bodyConfidence: return "Feel confident in my body"
         case .longTermHealth: return "Protect my long-term health"
-        case .sportAndAdventure: return "Stay ready for sports and adventures"
+        case .sportAndAdventure: return "Stay ready for sports"
         case .dependableRoutine: return "Build a dependable routine"
         case .unsure: return "I’m not sure yet"
         }
@@ -4925,8 +4937,8 @@ enum GoalExperience: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .underOneYear: return "Still building your base."
-        case .oneToThreeYears: return "Some history, still plenty of room to shape."
-        case .threeToFiveYears: return "A solid base HAYF should respect."
+        case .oneToThreeYears: return "Some history but room to learn."
+        case .threeToFiveYears: return "You already have a solid base."
         case .fivePlusYears: return "Long-term training experience."
         }
     }
@@ -5007,10 +5019,10 @@ enum GoalPriority: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .goalProgress: return "Keep the target moving, even if extras drop."
-        case .stayingBalanced: return "Do not let the goal take over the whole week."
-        case .avoidInjury: return "Progress only if the risk stays reasonable."
-        case .preserveStrength: return "Keep the hybrid base alive around the goal."
+        case .goalProgress: return "Focus on my targets and cut extras"
+        case .stayingBalanced: return "Don't focus on a single target"
+        case .avoidInjury: return "Take a protective approach"
+        case .preserveStrength: return "Focus on a strength/cardio balance"
         }
     }
 
@@ -5193,9 +5205,9 @@ enum CoachingSupportStyle: String, CaseIterable, Identifiable {
         switch self {
         case .calmReset: return "Give me a calm reset"
         case .directPush: return "Push me directly"
-        case .easiestUseful: return "Offer the easiest useful option"
+        case .easiestUseful: return "Offer the easiest option"
         case .explainTradeoff: return "Explain the tradeoff"
-        case .remindWhy: return "Remind me why this matters"
+        case .remindWhy: return "Remind me why"
         }
     }
 
@@ -5213,8 +5225,8 @@ enum CoachingSupportStyle: String, CaseIterable, Identifiable {
         switch self {
         case .calmReset: return "Help me restart without guilt."
         case .directPush: return "Be clear when I'm avoiding it."
-        case .easiestUseful: return "Reduce the workout, keep the rhythm."
-        case .explainTradeoff: return "Show what changes if I skip or swap."
+        case .easiestUseful: return "Keep load manageable."
+        case .explainTradeoff: return "Show what changes if I skip."
         case .remindWhy: return "Connect it back to my reason."
         }
     }
@@ -5271,10 +5283,10 @@ enum BadDayFloor: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .walkMobility: return "Keep the streak alive gently."
-        case .twentyEasy: return "Enough to move without draining you."
+        case .twentyEasy: return "Move without draining yourself."
         case .strengthCircuit: return "Simple, contained, effective."
-        case .intentionalRest: return "Recovery counts when it is deliberate."
-        case .varies: return "Let HAYF choose from your schedule, modality, recovery, and recent training."
+        case .intentionalRest: return "Make recovery intentional."
+        case .varies: return "Let HAYF choose."
         }
     }
 
@@ -5477,6 +5489,9 @@ private struct SelectableRow: View {
                 Text(title)
                     .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(HAYFColor.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .layoutPriority(1)
 
                 Spacer()
 
@@ -5500,6 +5515,7 @@ private struct DetailedSelectableRow: View {
     let subtitle: String
     let systemImage: String
     let isSelected: Bool
+    var badge: String? = nil
     var isEnabled = true
     let action: () -> Void
 
@@ -5510,9 +5526,22 @@ private struct DetailedSelectableRow: View {
                     .opacity(isEnabled ? 1 : 0.45)
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(isEnabled ? HAYFColor.primary : HAYFColor.muted)
+                    HStack(spacing: 8) {
+                        Text(title)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(isEnabled ? HAYFColor.primary : HAYFColor.muted)
+
+                        if let badge {
+                            Text(badge)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(isEnabled ? HAYFColor.orange : HAYFColor.muted)
+                                .lineLimit(1)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(HAYFColor.orange.opacity(isEnabled ? 0.09 : 0.04))
+                                .clipShape(Capsule())
+                        }
+                    }
 
                     Text(subtitle)
                         .font(.system(size: 14, weight: .regular))
@@ -5954,8 +5983,19 @@ private struct SummaryRow: View {
     let label: String
     let value: String
 
+    private var valueItems: [String] {
+        value
+            .split(separator: ",")
+            .map { fragment in
+                String(fragment)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: #"^\d+\.\s*"#, with: "", options: .regularExpression)
+            }
+            .filter { !$0.isEmpty }
+    }
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(alignment: .center, spacing: 14) {
             HAYFIcon(systemImage: systemImage, isSelected: true, size: 34, iconSize: 18)
 
             Text(label)
@@ -5963,11 +6003,26 @@ private struct SummaryRow: View {
                 .foregroundStyle(HAYFColor.primary)
                 .frame(width: 116, alignment: .leading)
 
-            Text(value)
+            if valueItems.count > 1 {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(valueItems.enumerated()), id: \.offset) { _, item in
+                        HStack(alignment: .top, spacing: 6) {
+                            Text("•")
+                            Text(item)
+                        }
+                    }
+                }
                 .font(.system(size: 14, weight: .regular))
                 .lineSpacing(3)
                 .foregroundStyle(HAYFColor.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(value)
+                    .font(.system(size: 14, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)

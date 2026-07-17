@@ -30,7 +30,11 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
     additionalProperties: false,
     required: ["readback"],
     properties: {
-      readback: { type: "string", maxLength: 120 },
+      readback: {
+        type: "string",
+        maxLength: 120,
+        description: "One natural sentence beginning with 'You' and speaking directly to the user.",
+      },
     },
   },
   generate_goal_candidates: {

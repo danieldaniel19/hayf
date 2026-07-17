@@ -505,7 +505,11 @@ export const AI_TOUCHPOINT_RESPONSE_METADATA: Record<AITouchpointGroup, Record<s
         additionalProperties: false,
         required: ["readback"],
         properties: {
-          readback: { type: "string", maxLength: 120 },
+          readback: {
+            type: "string",
+            maxLength: 120,
+            description: "One natural sentence beginning with 'You' and speaking directly to the user.",
+          },
         },
       },
     },

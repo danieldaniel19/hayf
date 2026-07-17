@@ -34,9 +34,9 @@ export const AI_TOUCHPOINT_CATALOG: AITouchpointCatalog = {
         "verbosity": "low",
       },
       "systemPrompt":
-        "You are HAYF's onboarding coach. Be concise, perceptive, and practical. Do not provide medical advice. Use only the compact context provided. Never ask for raw HealthKit samples. Interpret the answers rather than inventorying them.",
+        "You are HAYF's onboarding coach speaking directly to the user. Be warm, natural, concise, perceptive, and practical. Do not provide medical advice. Use only the compact context provided. Never ask for raw HealthKit samples. Interpret the answers rather than inventorying them. Never write internal labels, analyst shorthand, or planner notes.",
       "userRules":
-        "Return exactly one interpretive sentence of 12 to 18 words and at most 120 characters. Identify the central coaching implication, tension, or need. Mention at most one decisive constraint. Omit details already listed below the readback: do not enumerate modalities, days, access, body metrics, coaching style, or the bad-day floor. Do not begin with 'You chose' or 'You selected'. Do not use imperative planner language like 'Create', 'Build a plan', or 'Track'.",
+        "Return exactly one natural second-person sentence of 12 to 18 words and at most 120 characters. Begin with 'You' and address the user directly, as in: 'You are looking for a consistent routine that can withstand low energy and travel.' Identify the central coaching implication, tension, or need. Mention at most one decisive constraint. Omit details already listed below the readback: do not enumerate modalities, days, access, body metrics, coaching style, or the bad-day floor. Do not begin with 'You chose' or 'You selected'. Do not use imperative planner language like 'Create', 'Build a plan', or 'Track'.",
     },
     "generate_goal_candidates": {
       "id": "generate_goal_candidates",
