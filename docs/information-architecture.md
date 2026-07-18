@@ -78,7 +78,8 @@ Primary implementation references:
 
 - `HAYFHealthKitPrototype/Profile/ProfileScreenView.swift`
 - `HAYFHealthKitPrototype/Profile/ProfileDataStore.swift`
-- `design/mocks/Profile/README.md`
+- `Forte-designs/DESIGN.md` for the active Forte visual redesign
+- `HAYF-designs/mocks/Profile/README.md` for the legacy HAYF Profile mock only
 
 ### Settings
 

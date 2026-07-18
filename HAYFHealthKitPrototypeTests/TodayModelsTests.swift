@@ -189,15 +189,53 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertTrue(draft.hasWeeklyCapacity)
     }
 
-    func testMergedCapacityReducesEveryOnboardingStreamByOneStep() {
+    func testGoalIntensityAddsOneGoalDiscoveryStep() {
         XCTAssertEqual(OnboardingStep.totalSegments(for: .stayConsistent), 16)
         XCTAssertEqual(OnboardingStep.totalSegments(for: .concreteGoal), 20)
-        XCTAssertEqual(OnboardingStep.totalSegments(for: .findGoal), 20)
+        XCTAssertEqual(OnboardingStep.totalSegments(for: .findGoal), 21)
 
         XCTAssertEqual(OnboardingStep.weeklyCapacity.activeSegments(for: .stayConsistent), 5)
         XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .stayConsistent), 6)
-        XCTAssertEqual(OnboardingStep.weeklyCapacity.activeSegments(for: .concreteGoal), 8)
-        XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .findGoal), 9)
+        XCTAssertEqual(OnboardingStep.weeklyCapacity.activeSegments(for: .concreteGoal), 7)
+        XCTAssertEqual(OnboardingStep.findIntensity.activeSegments(for: .findGoal), 7)
+        XCTAssertEqual(OnboardingStep.generatingCandidates.activeSegments(for: .findGoal), 7)
+        XCTAssertEqual(OnboardingStep.goalCandidates.activeSegments(for: .findGoal), 8)
+        XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .findGoal), 10)
+    }
+
+    func testGoalIntensityContractAndCopy() throws {
+        XCTAssertEqual(GoalIntensity.allCases.map(\.rawValue), [0, 1, 2, 3])
+        XCTAssertEqual(GoalIntensity.allCases.map(\.identifier), ["gentle", "steady", "ambitious", "extreme"])
+        XCTAssertEqual(GoalIntensity.allCases.map(\.title), ["Gentle", "Steady", "Ambitious", "Extreme"])
+        XCTAssertEqual(
+            GoalIntensity.allCases.map(\.explanation),
+            [
+                "HAYF will suggest approachable goals with modest demands and room to build confidence.",
+                "HAYF will suggest meaningful goals that require consistent effort without making the outcome overly aggressive.",
+                "HAYF will suggest demanding goals with a clear stretch outcome and stronger commitment.",
+                "HAYF will suggest the boldest defensible goals while respecting your selected training setup and avoidances."
+            ]
+        )
+
+        let payload = GoalIntensityPayload(intensity: .extreme)
+        XCTAssertEqual(payload.level, 3)
+        XCTAssertEqual(payload.identifier, "extreme")
+        XCTAssertTrue(payload.generationGuidance.contains("absence of capacity or Health baselines"))
+    }
+
+    func testGoalIntensityDefaultsAndSnaps() {
+        var draft = ConsistencyOnboardingDraft()
+        XCTAssertNil(draft.goalIntensity)
+
+        draft.initializeGoalIntensityForDiscovery()
+        XCTAssertEqual(draft.goalIntensity, .steady)
+
+        XCTAssertEqual(GoalIntensity.nearest(to: -1), .gentle)
+        XCTAssertEqual(GoalIntensity.nearest(to: 0.49), .gentle)
+        XCTAssertEqual(GoalIntensity.nearest(to: 0.51), .steady)
+        XCTAssertEqual(GoalIntensity.nearest(to: 1.51), .ambitious)
+        XCTAssertEqual(GoalIntensity.nearest(to: 2.51), .extreme)
+        XCTAssertEqual(GoalIntensity.nearest(to: 8), .extreme)
     }
 
     func testAdultBodyFatEstimateUsesBMIProfileAgeAndPhysiology() throws {
@@ -256,12 +294,60 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertFalse(titles.contains("All-or-nothing weeks"))
     }
 
-    func testSummaryReadbackEnforcesCompactInterpretation() {
+    func testSummaryReadbackAllowsSpecificOneOrTwoSentenceInterpretation() {
         XCTAssertTrue(OnboardingSummaryOutput.isValidReadback(
-            "You are looking for a consistent five-day routine that can withstand low energy and travel."
+            "You want cycling and strength to support a durable 10K goal, while protecting your left knee and keeping training enjoyable."
         ))
-        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback("Consistent training needs an adaptable rhythm that can withstand low energy and frequent travel."))
-        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback("You chose cycling, strength, Monday, Tuesday, a gym, mornings, and a short fallback."))
-        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(String(repeating: "A", count: 121)))
+        XCTAssertTrue(OnboardingSummaryOutput.isValidReadback(
+            "You are building cycling endurance with strength as support. The goal should feel ambitious while respecting the knee discomfort that follows excess riding volume."
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(
+            "You need a motivating direction specific enough to guide training without creating unnecessary rigidity."
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(
+            "You want cycling to lead. Strength should support it. Running should remain optional because it is not central to this goal."
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(
+            "You chose cycling, strength, and running as the modalities that should guide a demanding endurance goal while protecting your wider training balance."
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(
+            "You " + Array(repeating: "longword", count: 40).joined(separator: " ")
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(
+            "You want cycling and strength to support a durable 10K goal—while protecting your left knee and keeping training enjoyable throughout the process."
+        ))
+        XCTAssertFalse(OnboardingSummaryOutput.isValidReadback(
+            "You want cycling and strength to support a durable 10K goal while protecting your left knee and keeping training enjoyable throughout the process"
+        ))
+    }
+
+    func testSummaryReadbackNormalizesPunctuationForDisplay() {
+        let output = OnboardingSummaryOutput(
+            readback: "You want cycling to lead while strength supports your goal—and recovery remains protected!"
+        )
+
+        XCTAssertEqual(
+            output.readback,
+            "You want cycling to lead while strength supports your goal, and recovery remains protected."
+        )
+        XCTAssertFalse(output.readback.contains("—"))
+        XCTAssertTrue(output.readback.hasSuffix("."))
+    }
+
+    func testSummaryValueParserPreservesDecimalBodyMass() {
+        XCTAssertEqual(
+            SummaryValueParser.items(
+                from: "68.0 kg, 175 cm, 15-17%",
+                presentsAsSingleBullet: false
+            ),
+            ["68.0 kg", "175 cm", "15-17%"]
+        )
+        XCTAssertEqual(
+            SummaryValueParser.items(
+                from: "1. Cycling, 2. Strength, 3. Running",
+                presentsAsSingleBullet: false
+            ),
+            ["Cycling", "Strength", "Running"]
+        )
     }
 }

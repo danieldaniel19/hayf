@@ -173,10 +173,12 @@ Product decisions:
 - Profile > Fitness Profile is the user-facing home for long-term highlights. Plan and Today should consume the same evidence but stay focused on action.
 - Onboarding Flow C should run HealthKit consent and feature extraction before suggesting goals.
 
-First Profile mock:
+Legacy first Profile mock:
 
-- `design/mocks/Profile/profile-fitness-profile-entry-and-sheet.png`
+- `HAYF-designs/mocks/Profile/profile-fitness-profile-entry-and-sheet.png`
 - Shows a Profile tab entry point plus a pull-up Fitness Profile detail card, matching the active block sheet pattern from Plan.
+
+Current visual redesign guidance lives in `Forte-designs/DESIGN.md`; new screen assets and references should be added under `Forte-designs/`.
 
 ### Window Refresh
 

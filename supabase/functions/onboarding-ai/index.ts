@@ -32,8 +32,8 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
     properties: {
       readback: {
         type: "string",
-        maxLength: 120,
-        description: "One natural sentence beginning with 'You' and speaking directly to the user.",
+        maxLength: 280,
+        description: "One or two natural sentences beginning with 'You', containing no em dashes, and each ending with a period.",
       },
     },
   },
@@ -321,7 +321,8 @@ function validateRequest(value: OnboardingAIRequest | null): asserts value is On
 
 function compactPromptContext(task: OnboardingTask, context: Record<string, unknown>) {
   if (task === "generate_goal_candidates") {
-    return pick(context, [
+    return {
+      ...pick(context, [
       "intent",
       "trainingOptions",
       "infrastructureAccess",
@@ -329,11 +330,14 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "challengeStyle",
       "goalAvoidances",
       "injuryNotes",
-    ]);
+      ]),
+      goalIntensity: normalizedGoalIntensity(context.goalIntensity),
+    };
   }
 
   if (task === "generate_blended_candidate") {
-    return pick(context, [
+    return {
+      ...pick(context, [
       "intent",
       "trainingOptions",
       "infrastructureAccess",
@@ -341,7 +345,9 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "challengeStyle",
       "goalAvoidances",
       "injuryNotes",
-    ]);
+      ]),
+      goalIntensity: normalizedGoalIntensity(context.goalIntensity),
+    };
   }
 
   if (task === "generate_athlete_blueprint") {
@@ -383,21 +389,11 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     return pick(context, [
       "intent",
       "trainingOptions",
-      "infrastructureAccess",
       "motivationAnchors",
       "motivationNote",
-      "frequency",
-      "sessionLength",
-      "sessionLengthMode",
-      "sessionLengthMinutes",
-      "availableDays",
-      "availableDayParts",
-      "ultraFlexibleAvailability",
       "blockers",
       "blockerNote",
-      "supportStyle",
-      "badDayFloor",
-      "bodyBaseline",
+      "injuryNotes",
     ]);
   }
 
@@ -410,19 +406,8 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "goalTimeline",
       "goalPriority",
       "trainingOptions",
-      "infrastructureAccess",
-      "frequency",
-      "sessionLength",
-      "sessionLengthMode",
-      "sessionLengthMinutes",
-      "availableDays",
-      "availableDayParts",
-      "ultraFlexibleAvailability",
       "blockers",
       "blockerNote",
-      "supportStyle",
-      "badDayFloor",
-      "bodyBaseline",
     ]);
   }
 
@@ -430,25 +415,52 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
     "intent",
     "chosenGoal",
     "trainingOptions",
-    "infrastructureAccess",
     "goalDirection",
     "challengeStyle",
     "goalAvoidances",
+    "goalIntensity",
     "injuryNotes",
     "goalTimeline",
-    "frequency",
-    "sessionLength",
-    "sessionLengthMode",
-    "sessionLengthMinutes",
-    "availableDays",
-    "availableDayParts",
-    "ultraFlexibleAvailability",
     "blockers",
     "blockerNote",
-    "supportStyle",
-    "badDayFloor",
-    "bodyBaseline",
   ]);
+}
+
+const goalIntensityLevels = [
+  {
+    level: 0,
+    identifier: "gentle",
+    title: "Gentle",
+    generationGuidance: "Generate approachable outcomes with modest demands and room to build confidence.",
+  },
+  {
+    level: 1,
+    identifier: "steady",
+    title: "Steady",
+    generationGuidance: "Generate meaningful outcomes that require consistent effort without becoming overly aggressive.",
+  },
+  {
+    level: 2,
+    identifier: "ambitious",
+    title: "Ambitious",
+    generationGuidance: "Generate demanding stretch outcomes that require stronger commitment.",
+  },
+  {
+    level: 3,
+    identifier: "extreme",
+    title: "Extreme",
+    generationGuidance: "Generate the boldest defensible outcomes, while strictly respecting selected modalities, access, avoidances, safety, and the absence of capacity or Health baselines.",
+  },
+] as const;
+
+function normalizedGoalIntensity(value: unknown) {
+  const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const identifier = typeof input.identifier === "string" ? input.identifier.toLowerCase() : "";
+  const identifierMatch = goalIntensityLevels.find((intensity) => intensity.identifier === identifier);
+  const numericLevel = typeof input.level === "number" && Number.isFinite(input.level)
+    ? Math.min(3, Math.max(0, Math.round(input.level)))
+    : null;
+  return identifierMatch ?? goalIntensityLevels[numericLevel ?? 1];
 }
 
 function pick(source: Record<string, unknown>, keys: string[]) {

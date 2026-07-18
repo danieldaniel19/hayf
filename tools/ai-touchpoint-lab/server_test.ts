@@ -105,6 +105,10 @@ Deno.test("buildOpenAIRequestBody includes structured output schema metadata", (
   assertEquals(text.format.name, "generate_summary");
   assertEquals(text.format.strict, true);
   assert(text.format.schema.properties.readback);
+  assertEquals(text.format.schema.properties.readback.maxLength, 280);
+  const userRules = entry.userRules ?? "";
+  assert(userRules.includes("End every sentence with a period"));
+  assert(userRules.includes("Never use em dashes"));
 });
 
 Deno.test("interactive planning schemas satisfy strict structured output object rules", () => {

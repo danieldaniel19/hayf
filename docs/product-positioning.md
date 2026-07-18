@@ -105,17 +105,21 @@ Future context sources that strengthen this coach model:
 
 ## Brand and design direction
 
-HAYF should not look like a generic fitness app.
+The active visual identity redesign is **Forte**. `Forte-designs/DESIGN.md` is the source of truth for its brand principles, visual system, components, voice, and accessibility guidance. Approved Forte assets and screen references live alongside it under `Forte-designs/`.
+
+`HAYF-designs/` contains the older HAYF visual identity and should be used only for historical comparison, not as guidance for new redesign work.
+
+Forte should not look like a generic fitness app.
 
 Desired feel:
 
 - highly personal
 - calm
 - coach-like
-- intelligent
-- minimal
-- functional before aesthetic
-- somewhere between elite and everyday
+- encouraging without hype or guilt
+- editorial, warm, and quietly confident
+- intelligent, with AI present but not the visual hero
+- functional and easy to scan
 
 It should not feel like:
 
@@ -128,21 +132,14 @@ It should not feel like:
 
 ## Visual direction
 
-Lean toward an almost brutal monochrome system:
+Use the detailed system in `Forte-designs/DESIGN.md`. At a high level, it combines:
 
-- whites
-- greys
-- black
-- a very restrained HAYF orange accent
+- warm off-white foundations
+- dark editorial typography for coach-led moments
+- clean sans-serif typography for body copy and utility UI
+- indigo brand and interaction accents
+- atmospheric editorial illustrations for major moments
+- tactile 3D isometric icons for prominent concepts
+- simple outline icons for navigation and utility actions
 
-Also worth testing:
-
-- cool whites with graphite and black plus the same HAYF orange accent
-
-Hybrid-athlete positioning should be visually explicit:
-
-- strength
-- endurance
-- cardio
-
-But the product world should still feel restrained, premium, and systematic rather than visually busy.
+When this summary conflicts with `Forte-designs/DESIGN.md`, the design document wins.
