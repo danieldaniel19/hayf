@@ -116,7 +116,7 @@ spacing:
 iconography:
   largeIllustration:
     minWidth: 160px
-    style: "artistic, atmospheric, abstracted editorial illustration"
+    style: "calm Bauhaus-inspired balanced-object still life with sculptural matte geometry and soft shadows"
   mediumIcon:
     sizeRange: "32px–80px"
     style: "3D isometric skeuomorphism"
@@ -432,7 +432,7 @@ The geometry should feel soft but controlled. Avoid excessive bubble shapes, mis
 
 Forte uses three deliberately different visual tiers. Do not mix their roles.
 
-### Tier 1: Large Editorial Illustrations
+### Tier 1: Large Balanced-Object Illustrations
 
 Use for:
 
@@ -446,17 +446,20 @@ Use for:
 
 Style:
 
-- artistic and atmospheric
-- editorial rather than literal
-- abstracted natural scenes, people, movement, landscapes, and environments
-- soft depth, layered shapes, and painterly tonal transitions
-- restrained detail in text-heavy areas
-- calm, optimistic, and slightly dreamlike
-- visually rich enough to create mood, but never the main information layer
+- geometric still life with an editorial, sculptural quality
+- abstract object compositions inspired by Zen balance and Bauhaus geometry
+- stacked or carefully balanced spheres, bowls, arches, blocks, and related simple forms
+- matte plaster-like surfaces with subtle tactile grain
+- soft daylight, restrained contact shadows, and quiet depth
+- calm, minimal compositions with generous negative space
+- warm neutrals supported by muted lilac, jade, sand, indigo, and other palette colors
+- restrained detail in text-heavy areas so the composition never becomes the main information layer
 
-Large illustrations should usually sit behind or beside content rather than behave like icons. They may use indigo, lilac, blue, green, sand, peach, and natural tones freely as long as the final composition remains soft and harmonious.
+This direction is also called **Geometric still life**, **Abstract object composition**, **Zen balance illustration**, or **Bauhaus-inspired object composition**. Core keywords are **stacked spheres, balance, calm, sculptural, minimal, soft shadows**.
 
-Do not use photorealism, stock-photo aesthetics, glossy 3D scenes, cartoon mascots, or flat line-art for large illustrations.
+Large illustrations should usually sit behind or beside content rather than behave like icons. They may use indigo, lilac, blue, green, sand, peach, and warm neutrals freely as long as the final composition remains soft and harmonious. Use `Assets/illustration-balanced-objects.png` as the canonical reference for composition, material, lighting, and shadow softness.
+
+Do not use mountains, natural scenery, landscape vistas, or atmospheric environment paintings as the Forte illustration language. Also avoid photorealism, stock-photo aesthetics, glossy 3D scenes, cartoon mascots, and flat line-art for large illustrations.
 
 ### Tier 2: Medium Skeuomorphic Icons
 
@@ -680,7 +683,7 @@ Inactive navigation uses Ink Muted outline icons and labels. Avoid illustrated o
 
 Onboarding should feel immersive, calm, and personal.
 
-- Use large editorial illustrations to establish atmosphere.
+- Use large balanced-object compositions to establish calm and visual character.
 - Keep the main question in serif.
 - Use sans serif for explanation and progress metadata.
 - Use medium skeuomorphic icons inside answer cards.
@@ -763,7 +766,7 @@ Motion should feel gentle and natural.
 - Use serif selectively for coach voice and editorial emphasis.
 - Use softly tinted surfaces instead of constant outlines.
 - Allow supporting color freedom inside illustrations and medium icons.
-- Use large artistic illustrations for atmosphere and storytelling.
+- Use large geometric still-life illustrations for atmosphere and storytelling.
 - Use medium 3D isometric skeuomorphic icons for recognisable concepts.
 - Use small outline icons for utility and navigation.
 - Use generous corners and calm spacing.
@@ -776,6 +779,7 @@ Motion should feel gentle and natural.
 - Do not use emoji as modality or metric icons.
 - Do not use claymorphism for the medium icon family.
 - Do not use large outline illustrations as hero imagery.
+- Do not use mountain scenes, landscape vistas, or other natural scenery as the primary illustration style.
 - Do not use 3D skeuomorphic icons for chevrons, tabs, filters, or other small utilities.
 - Do not make every content block a bordered white card.
 - Do not permanently assign one color to every sport or metric.
