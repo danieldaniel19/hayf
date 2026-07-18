@@ -44,7 +44,9 @@ The intended product feel is:
 - calm
 - coach-like
 - intelligent, with AI clearly present but not marketed as the hero
-- minimal, with a mostly black, white, and grey palette plus a restrained HAYF orange accent
+- warm and editorial, with off-white foundations, dark typography, and restrained indigo interaction accents
+
+The active Forte visual redesign is defined in `Forte-designs/DESIGN.md`. Assets and approved screen references for that redesign also live under `Forte-designs/`. `HAYF-designs/` contains legacy HAYF visual material and is not the source of truth for new redesign work.
 
 ## Current Status
 
@@ -67,6 +69,9 @@ The prototype has proved the first important hypothesis: HAYF can authenticate a
 
 - `HAYFHealthKitPrototype.xcodeproj`: current Xcode project
 - `HAYFHealthKitPrototype/`: app source code
+- `Forte-designs/DESIGN.md`: active, provisional source of truth for the Forte redesign
+- `Forte-designs/Assets/` and `Forte-designs/Screens/`: current Forte visual assets and approved screen references
+- `HAYF-designs/`: legacy HAYF design material retained for historical comparison only
 - `docs/product-positioning.md`: ICP, product promise, and design direction
 - `docs/account-creation.md`: post-auth account setup flow, profile schema, and Supabase wiring
 - `docs/onboarding-flow.md`: adaptive onboarding flow and branch design

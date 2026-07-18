@@ -25,6 +25,13 @@ const goalDiscoveryContext = {
   goalDirection: "be more athletic and consistent without over-planning",
   challengeStyle: "measurable but not obsessive",
   goalAvoidances: ["daily weigh-ins", "all-out intervals every week"],
+  goalIntensity: {
+    level: 1,
+    identifier: "steady",
+    title: "Steady",
+    generationGuidance:
+      "Generate meaningful outcomes that require consistent effort without becoming overly aggressive.",
+  },
   injuryNotes: "Occasional left knee irritation after steep downhill running.",
   goalTimeline: "8 to 12 weeks",
   frequency: "4 days per week",
@@ -505,15 +512,22 @@ export const MOCK_TOUCHPOINT_FIXTURES: TouchpointMockFixture[] = [
     group: "onboarding",
     id: "generate_summary",
     name: "Concrete goal readback",
-    description: "Compact onboarding summary context for a specific 10K goal.",
+    description: "High-signal onboarding context for a concise two-sentence readback.",
     fixture: {
       task: "generate_summary",
       context: {
-        ...goalDiscoveryContext,
         intent: "concreteGoal",
         goalBrief: "Run a comfortable 10K in about three months.",
         goalExperience: "Has run 5K several times but not recently.",
+        goalTimeline: "12 weeks",
         goalPriority: "durability and consistency",
+        trainingOptions: [
+          { activity: "running", title: "Running", priority: 1 },
+          { activity: "strength", title: "Strength", priority: 2 },
+        ],
+        injuryNotes: "My left knee can feel sore after too much running, then settles within two days.",
+        blockers: ["Low energy"],
+        blockerNote: "Late work nights are the most common disruption.",
       },
     },
   },

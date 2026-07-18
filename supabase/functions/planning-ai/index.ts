@@ -22,6 +22,10 @@ import {
   launchPlanReviewRules,
 } from "../_shared/launch-replan-guard.ts";
 import {
+  buildDeterministicInitialPlan,
+  repairInitialPlanPrescriptions,
+} from "../_shared/initial-plan-reliability.ts";
+import {
   deriveTodayFatigueEstimate,
   explanatoryStrategyTitle,
   isTodayBriefingCacheHit,
@@ -1319,14 +1323,6 @@ async function finishInitialStrategyPreparation(
   let orchestration: InitialStrategyOrchestrationOutput;
   try {
     orchestration = await runInitialStrategyOrchestration(planningPacket);
-    await completeAIGraphRun(admin, graphRun.id, {
-      status: "succeeded",
-      output: {
-        trainingArchitecture: orchestration.trainingArchitecture,
-        fitnessStrategy: orchestration.fitnessStrategy,
-      },
-      model: orchestration.model,
-    });
   } catch (error) {
     await completeAIGraphRun(admin, graphRun.id, {
       status: "failed",
@@ -1335,133 +1331,151 @@ async function finishInitialStrategyPreparation(
     throw error;
   }
 
-  await insertAIGraphNodeOutputs(admin, graphRun.id, userID, orchestration.nodes);
-  await insertAIToolCalls(admin, graphRun.id, userID, orchestration.toolCalls);
+  try {
+    await insertAIGraphNodeOutputs(admin, graphRun.id, userID, orchestration.nodes);
+    await insertAIToolCalls(admin, graphRun.id, userID, orchestration.toolCalls);
 
-  const trainingArchitecture = await single(
-    admin
-      .from("training_architectures")
-      .insert({
-        user_id: userID,
-        user_goal_id: goal.id,
-        source_blueprint_revision_id: blueprintRevision.id,
-        ai_graph_run_id: graphRun.id,
-        version: 1,
-        status: "prepared",
-        input_packet_json: planningPacket,
-        architecture_json: orchestration.trainingArchitecture,
-        conflict_assessment_json: objectAt(orchestration.trainingArchitecture, "conflict_assessment") ?? {},
-        validation_json: orchestration.validation,
-      })
-      .select()
-      .single(),
-    "Could not persist Training Architecture",
-  );
+    const trainingArchitecture = await single(
+      admin
+        .from("training_architectures")
+        .insert({
+          user_id: userID,
+          user_goal_id: goal.id,
+          source_blueprint_revision_id: blueprintRevision.id,
+          ai_graph_run_id: graphRun.id,
+          version: 1,
+          status: "prepared",
+          input_packet_json: planningPacket,
+          architecture_json: orchestration.trainingArchitecture,
+          conflict_assessment_json: objectAt(orchestration.trainingArchitecture, "conflict_assessment") ?? {},
+          validation_json: orchestration.validation,
+        })
+        .select()
+        .single(),
+      "Could not persist Training Architecture",
+    );
 
-  await throwOnError(
-    admin
-      .from("ai_graph_runs")
-      .update({ source_training_architecture_id: trainingArchitecture.id })
-      .eq("id", graphRun.id),
-  );
+    await throwOnError(
+      admin
+        .from("ai_graph_runs")
+        .update({ source_training_architecture_id: trainingArchitecture.id })
+        .eq("id", graphRun.id),
+    );
 
-  const acceptedStrategy = orchestration.fitnessStrategy;
-  const strategy = await single(
-    admin
-      .from("fitness_strategies")
-      .insert({
-        user_id: userID,
-        user_goal_id: goal.id,
-        source_blueprint_revision_id: blueprintRevision.id,
-        training_architecture_id: trainingArchitecture.id,
-        version: 1,
-        change_reason: "initial",
-        status: "prepared",
-        title: acceptedStrategyTitle(acceptedStrategy, goalKind),
-        summary: stringAt(acceptedStrategy, "read") || "",
-        rationale: stringAt(acceptedStrategy, "read") || "",
-        review_cadence_days: goalKind === "consistency" ? 28 : Math.max(28, (timeframeWeeks ?? 8) * 7),
-        start_date: programStartDate,
-        target_date: targetDate,
-        requires_phases: requiresPhases,
-        context_json: {
-          timezone,
-          acceptedAt: acceptedAt.toISOString(),
-          planOwnerStartDate: ownerStartDate,
-          programStartDate,
-          onboardingContext: requestBody.onboardingContext ?? requestBody.onboarding_context ?? null,
-          acceptedStrategy,
-          trainingArchitectureID: trainingArchitecture.id,
-          graphRunID: graphRun.id,
-        },
-      })
-      .select()
-      .single(),
-    "Could not prepare fitness strategy",
-  );
+    const acceptedStrategy = orchestration.fitnessStrategy;
+    const strategy = await single(
+      admin
+        .from("fitness_strategies")
+        .insert({
+          user_id: userID,
+          user_goal_id: goal.id,
+          source_blueprint_revision_id: blueprintRevision.id,
+          training_architecture_id: trainingArchitecture.id,
+          version: 1,
+          change_reason: "initial",
+          status: "prepared",
+          title: acceptedStrategyTitle(acceptedStrategy, goalKind),
+          summary: stringAt(acceptedStrategy, "read") || "",
+          rationale: stringAt(acceptedStrategy, "read") || "",
+          review_cadence_days: goalKind === "consistency" ? 28 : Math.max(28, (timeframeWeeks ?? 8) * 7),
+          start_date: programStartDate,
+          target_date: targetDate,
+          requires_phases: requiresPhases,
+          context_json: {
+            timezone,
+            acceptedAt: acceptedAt.toISOString(),
+            planOwnerStartDate: ownerStartDate,
+            programStartDate,
+            onboardingContext: requestBody.onboardingContext ?? requestBody.onboarding_context ?? null,
+            acceptedStrategy,
+            trainingArchitectureID: trainingArchitecture.id,
+            graphRunID: graphRun.id,
+          },
+        })
+        .select()
+        .single(),
+      "Could not prepare fitness strategy",
+    );
 
-  await throwOnError(
-    admin
-      .from("ai_graph_runs")
-      .update({ source_fitness_strategy_id: strategy.id })
-      .eq("id", graphRun.id),
-  );
+    await throwOnError(
+      admin
+        .from("ai_graph_runs")
+        .update({ source_fitness_strategy_id: strategy.id })
+        .eq("id", graphRun.id),
+    );
 
-  const phaseRows = await insertAcceptedStrategyPhases(admin, userID, strategy.id, acceptedStrategy, programStartDate);
-  await insertAcceptedPlanningTargets(
-    admin,
-    userID,
-    goal,
-    strategy,
-    phaseRows,
-    acceptedStrategy,
-    programStartDate,
-    targetDate,
-  );
+    const phaseRows = await insertAcceptedStrategyPhases(admin, userID, strategy.id, acceptedStrategy, programStartDate);
+    await insertAcceptedPlanningTargets(
+      admin,
+      userID,
+      goal,
+      strategy,
+      phaseRows,
+      acceptedStrategy,
+      programStartDate,
+      targetDate,
+    );
 
-  if (requestBody.healthSnapshot) {
-    await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot, {
+    if (requestBody.healthSnapshot) {
+      await persistFitnessEvidence(admin, userID, null, requestBody.healthSnapshot, {
+        userGoalID: goal.id,
+        fitnessStrategyID: strategy.id,
+      });
+    }
+
+    await createPlanEvent(admin, {
+      userID,
       userGoalID: goal.id,
       fitnessStrategyID: strategy.id,
+      eventType: "training_architecture_prepared",
+      payload: {
+        graphRunID: graphRun.id,
+        trainingArchitectureID: trainingArchitecture.id,
+        conflictAssessment: trainingArchitecture.conflict_assessment_json ?? null,
+      },
     });
-  }
-
-  await createPlanEvent(admin, {
-    userID,
-    userGoalID: goal.id,
-    fitnessStrategyID: strategy.id,
-    eventType: "training_architecture_prepared",
-    payload: {
-      graphRunID: graphRun.id,
-      trainingArchitectureID: trainingArchitecture.id,
-      conflictAssessment: trainingArchitecture.conflict_assessment_json ?? null,
-    },
-  });
-  const event = await createPlanEvent(admin, {
-    userID,
-    userGoalID: goal.id,
-    fitnessStrategyID: strategy.id,
-    eventType: "strategy_prepared",
-    payload: {
-      graphRunID: graphRun.id,
-      trainingArchitectureID: trainingArchitecture.id,
+    const event = await createPlanEvent(admin, {
+      userID,
+      userGoalID: goal.id,
       fitnessStrategyID: strategy.id,
-    },
-  });
+      eventType: "strategy_prepared",
+      payload: {
+        graphRunID: graphRun.id,
+        trainingArchitectureID: trainingArchitecture.id,
+        fitnessStrategyID: strategy.id,
+      },
+    });
 
-  return {
-    userID,
-    model: orchestration.model?.provider ?? "training-orchestrator",
-    status: "completed",
-    graphRunID: graphRun.id,
-    userGoalID: goal.id,
-    fitnessStrategyID: strategy.id,
-    blueprintRevisionID: blueprintRevision.id,
-    trainingArchitectureID: trainingArchitecture.id,
-    eventID: event.id,
-    strategy: acceptedStrategy,
-    trainingArchitecture: orchestration.trainingArchitecture,
-  };
+    await completeAIGraphRun(admin, graphRun.id, {
+      status: "succeeded",
+      output: {
+        trainingArchitecture: orchestration.trainingArchitecture,
+        fitnessStrategy: orchestration.fitnessStrategy,
+      },
+      model: orchestration.model,
+    });
+
+    return {
+      userID,
+      model: orchestration.model?.provider ?? "training-orchestrator",
+      status: "completed",
+      graphRunID: graphRun.id,
+      userGoalID: goal.id,
+      fitnessStrategyID: strategy.id,
+      blueprintRevisionID: blueprintRevision.id,
+      trainingArchitectureID: trainingArchitecture.id,
+      eventID: event.id,
+      strategy: acceptedStrategy,
+      trainingArchitecture: orchestration.trainingArchitecture,
+    };
+  } catch (error) {
+    await completeAIGraphRun(admin, graphRun.id, {
+      status: "failed",
+      errorSummary: errorMessage(error),
+      model: orchestration.model,
+    });
+    throw error;
+  }
 }
 
 function runInBackground(promise: Promise<unknown>) {
@@ -1685,10 +1699,18 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
 
   let activationCommitted = false;
   try {
-    const planOrchestration = await runTwoWeekPlanOrchestration(context, model);
-    await insertAIGraphNodeOutputs(admin, planGraphRun.id, userID, planOrchestration.nodes);
-    await insertAIToolCalls(admin, planGraphRun.id, userID, planOrchestration.toolCalls);
-    const aiGenerated = planOrchestration.plan;
+    let planOrchestration = edgeDeterministicInitialPlanOrchestration({
+      reason: "Initial onboarding plans compile locally so acceptance never waits for a remote model.",
+      recordFailure: false,
+      goal,
+      strategy,
+      onboarding,
+      trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
+      committedWeekStart,
+      ownerStartDate,
+      programStartDate,
+      acceptedTargetDate,
+    });
     const initialActuals = actualWorkoutsForInitialWeek(
       requestBody.actualWorkouts ?? [],
       isoDate(committedWeekStart),
@@ -1696,28 +1718,67 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
       acceptedLocalDate,
       timezone,
     );
-    const generated = sanitizeGeneratedPlan(
-      applyInitialWeekActualWorkoutContext(
-        aiGenerated,
+    let ownerAlignedGenerated: GeneratedPlan;
+    try {
+      const prepared = prepareInitialPlanForPersistence({
+        generated: planOrchestration.plan,
         initialActuals,
+        onboarding,
+        committedWeekStart,
         ownerStartDate,
-      ),
-      onboarding,
-      committedWeekStart,
-      timezone,
-    );
-    const ownerAlignedGenerated = alignInitialCommittedWeekToOwnerStart(
-      generated,
-      isoDate(committedWeekStart),
-      ownerStartDate,
-    );
-    assertInitialPlanCoherence(
-      ownerAlignedGenerated,
-      onboarding,
-      committedWeekStart,
-      ownerStartDate,
-      trainingArchitecture?.architecture_json ?? null,
-    );
+        timezone,
+        trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
+      });
+      ownerAlignedGenerated = prepared.plan;
+      if (prepared.repairedWorkoutCount > 0) {
+        planOrchestration = {
+          ...planOrchestration,
+          validation: {
+            ...planOrchestration.validation,
+            valid: true,
+            usedFallback: true,
+            edgePrescriptionRepairCount: prepared.repairedWorkoutCount,
+          },
+          nodes: [...planOrchestration.nodes, {
+            nodeName: "edge_prescription_contract_repair",
+            inputSummary: { repairedWorkoutCount: prepared.repairedWorkoutCount },
+            output: { repairedWorkoutCount: prepared.repairedWorkoutCount },
+            validation: { valid: true, usedFallback: true },
+            status: "succeeded",
+          }],
+        };
+      }
+    } catch (error) {
+      const reason = errorMessage(error);
+      const recovery = edgeDeterministicInitialPlanOrchestration({
+        reason,
+        goal,
+        strategy,
+        onboarding,
+        trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
+        committedWeekStart,
+        ownerStartDate,
+        programStartDate,
+        acceptedTargetDate,
+      });
+      planOrchestration = {
+        ...recovery,
+        nodes: [...planOrchestration.nodes, ...recovery.nodes],
+        toolCalls: [...planOrchestration.toolCalls, ...recovery.toolCalls],
+      };
+      ownerAlignedGenerated = prepareInitialPlanForPersistence({
+        generated: planOrchestration.plan,
+        initialActuals,
+        onboarding,
+        committedWeekStart,
+        ownerStartDate,
+        timezone,
+        trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
+      }).plan;
+    }
+
+    await insertAIGraphNodeOutputs(admin, planGraphRun.id, userID, planOrchestration.nodes);
+    await insertAIToolCalls(admin, planGraphRun.id, userID, planOrchestration.toolCalls);
 
     const weeklyPlans = await insertWeeklyPlansAndWorkouts(admin, {
       userID,
@@ -6258,20 +6319,10 @@ async function insertAIToolCalls(
 async function runInitialStrategyOrchestration(
   planningPacket: Record<string, any>,
 ): Promise<InitialStrategyOrchestrationOutput> {
-  const serviceURL = Deno.env.get("TRAINING_ORCHESTRATOR_URL")?.trim();
-  if (!serviceURL && trainingOrchestratorRequired()) {
-    throw new Error("TRAINING_ORCHESTRATOR_REQUIRED is true but TRAINING_ORCHESTRATOR_URL is not configured.");
-  }
-  if (serviceURL) {
-    const url = `${serviceURL.replace(/\/$/, "")}/planning/prepare-initial-strategy`;
-    const response = await fetchTrainingOrchestrator(url, { planningPacket });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.error ?? "Training orchestrator request failed");
-    }
-    return payload as InitialStrategyOrchestrationOutput;
-  }
-
+  // Onboarding must be able to prepare and accept a strategy without any
+  // network model or sidecar service. The local compiler uses the accepted
+  // blueprint, selected modalities, constraints, evidence summary, and bundled
+  // knowledge references to produce the same persisted contract immediately.
   const trainingArchitecture = localTrainingArchitecture(planningPacket);
   const fitnessStrategy = localFitnessStrategy(planningPacket, trainingArchitecture);
   return {
@@ -10535,10 +10586,19 @@ function applyInitialWeekActualWorkoutContext(
         return true;
       });
 
-      const resequenced = adjustedWorkouts.map((workout, index) => ({ ...workout, sequenceOrder: index + 1 }));
+      // A committed opening plan must never be empty. If completed work already
+      // covers the launch budget, keep one low-cost session so activation can
+      // finish; the post-activation HealthKit reconciliation can then mark or
+      // adjust it without stranding onboarding.
+      const nonEmptyWorkouts = adjustedWorkouts.length > 0
+        ? adjustedWorkouts
+        : rhythm.workouts.filter((workout) => workout.scheduledDate >= ownerStartDate).slice(0, 1);
+      const resequenced = nonEmptyWorkouts.map((workout, index) => ({ ...workout, sequenceOrder: index + 1 }));
+      const modalityTargets = [...countByModality(resequenced)].map(([modality, sessions]) => ({ modality, sessions }));
       return {
         ...rhythm,
         priorityOrder: resequenced.map((workout) => workout.title),
+        modalityTargets,
         workouts: resequenced,
       };
     }),
@@ -10574,6 +10634,129 @@ function countActualsByDateAndModality(actuals: InitialWeekActualWorkout[]) {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
+}
+
+function prepareInitialPlanForPersistence(args: {
+  generated: GeneratedPlan;
+  initialActuals: InitialWeekActualWorkout[];
+  onboarding: Record<string, any> | null;
+  committedWeekStart: Date;
+  ownerStartDate: string;
+  timezone: string;
+  trainingArchitecture: Record<string, any> | null;
+}) {
+  const generated = sanitizeGeneratedPlan(
+    applyInitialWeekActualWorkoutContext(
+      args.generated,
+      args.initialActuals,
+      args.ownerStartDate,
+    ),
+    args.onboarding,
+    args.committedWeekStart,
+    args.timezone,
+  );
+  const repaired = repairInitialPlanPrescriptions(generated);
+  const ownerAligned = alignInitialCommittedWeekToOwnerStart(
+    repaired.plan,
+    isoDate(args.committedWeekStart),
+    args.ownerStartDate,
+  );
+  assertInitialPlanCoherence(
+    ownerAligned,
+    args.onboarding,
+    args.committedWeekStart,
+    args.ownerStartDate,
+    args.trainingArchitecture,
+  );
+  return { plan: ownerAligned, repairedWorkoutCount: repaired.repairedWorkoutCount };
+}
+
+function edgeDeterministicInitialPlanOrchestration(args: {
+  reason: string;
+  recordFailure?: boolean;
+  goal: Record<string, any>;
+  strategy: Record<string, any>;
+  onboarding: Record<string, any> | null;
+  trainingArchitecture: Record<string, any> | null;
+  committedWeekStart: Date;
+  ownerStartDate: string;
+  programStartDate: string;
+  acceptedTargetDate: string | null;
+}): TwoWeekPlanOrchestrationOutput {
+  const usedFallback = args.recordFailure !== false;
+  const constraints = args.onboarding
+    ? planningConstraintsFromOnboarding(args.onboarding)
+    : { availableDays: [], badDayFloor: null };
+  const policy = openingWeekGenerationPolicy(
+    args.committedWeekStart,
+    args.ownerStartDate,
+    constraints.availableDays,
+    args.programStartDate,
+  );
+  const architecturePriority = compactStringArray(args.trainingArchitecture?.priority_order ?? []);
+  const onboardingPriority = args.onboarding ? selectedModalitiesFromOnboarding(args.onboarding) : [];
+  const weeklyBudget = objectAt(args.trainingArchitecture, "weekly_budget");
+  const sessionsPerProgramWeek = numberAt(weeklyBudget, "committed_week_sessions") ??
+    numberAt(weeklyBudget, "minimum_viable_sessions") ??
+    Math.min(3, Math.max(1, constraints.availableDays.length || 3));
+  const goalKind = ["specific_goal", "goal_discovery_chosen", "consistency", "re_entry", "maintenance"].includes(String(args.goal.goal_kind))
+    ? args.goal.goal_kind as GeneratedPlan["block"]["kind"]
+    : "specific_goal";
+  const plan = buildDeterministicInitialPlan({
+    kind: goalKind,
+    blockTitle: String(args.strategy.title ?? "Training Strategy"),
+    goalText: String(args.goal.title ?? args.strategy.title ?? "Build a repeatable training rhythm"),
+    targetDate: args.acceptedTargetDate,
+    reviewCadenceDays: Math.max(7, Number(args.strategy.review_cadence_days ?? 28)),
+    programStartDate: args.programStartDate,
+    ownerStartDate: args.ownerStartDate,
+    rhythmSpecs: policy.rhythms.map((rhythm) => ({
+      ...rhythm,
+      programStage: rhythm.programStage as "launch" | "program",
+    })),
+    availableDays: constraints.availableDays,
+    priorityModalities: onboardingPriority.length > 0 ? onboardingPriority : architecturePriority,
+    sessionsPerProgramWeek,
+    badDayFloor: constraints.badDayFloor,
+    architecture: args.trainingArchitecture,
+  }) as GeneratedPlan;
+  return {
+    plan,
+    validation: {
+      valid: true,
+      usedFallback,
+      source: "edge_deterministic_initial_plan",
+      recoveryReason: args.reason,
+    },
+    nodes: [{
+      nodeName: usedFallback ? "edge_deterministic_recovery_plan" : "edge_deterministic_initial_plan",
+      inputSummary: {
+        startDate: isoDate(args.committedWeekStart),
+        programStartDate: args.programStartDate,
+      },
+      output: {
+        weekCount: plan.rhythms.length,
+        workoutCount: plan.rhythms.reduce((count, rhythm) => count + rhythm.workouts.length, 0),
+      },
+      validation: { valid: true, usedFallback, recoveryReason: args.reason },
+      status: "succeeded",
+    }],
+    toolCalls: usedFallback
+      ? [{
+        toolName: "two_week_plan_orchestration",
+        toolVersion: "edge-deterministic-recovery-v1",
+        input: { startDate: isoDate(args.committedWeekStart) },
+        output: null,
+        status: "failed",
+        errorMessage: args.reason,
+        latencyMS: null,
+      }]
+      : [],
+    model: {
+      provider: usedFallback ? "edge-deterministic-recovery" : "edge-deterministic-initial-plan",
+      graphVersion: "v1",
+    },
+  };
 }
 
 function sanitizeGeneratedPlan(

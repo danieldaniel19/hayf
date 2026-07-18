@@ -167,6 +167,8 @@ struct OnboardingFlowView: View {
             challengeStyleScreen
         case .findAvoids:
             goalAvoidsScreen
+        case .findIntensity:
+            goalIntensityScreen
         case .generatingCandidates:
             loadingScreen(title: "Finding goal directions.", copy: "HAYF is turning your preferences into a few concrete options.")
         case .goalCandidates:
@@ -254,6 +256,9 @@ struct OnboardingFlowView: View {
                         isLocked: !option.isOnboardingEnabled
                     ) {
                         guard option.isOnboardingEnabled else { return }
+                        if selectedIntent == .findGoal {
+                            invalidateGoalCandidates()
+                        }
                         draft.toggleTrainingOption(option)
                     }
                 }
@@ -398,6 +403,8 @@ struct OnboardingFlowView: View {
                         systemImage: direction.systemImage,
                         isSelected: draft.goalDirection == direction
                     ) {
+                        guard draft.goalDirection != direction else { return }
+                        invalidateGoalCandidates()
                         draft.goalDirection = direction
                     }
                 }
@@ -420,6 +427,8 @@ struct OnboardingFlowView: View {
                         systemImage: style.systemImage,
                         isSelected: draft.challengeStyle == style
                     ) {
+                        guard draft.challengeStyle != style else { return }
+                        invalidateGoalCandidates()
                         draft.challengeStyle = style
                     }
                 }
@@ -435,7 +444,7 @@ struct OnboardingFlowView: View {
             )
 
             VStack(spacing: 10) {
-                ForEach(GoalAvoidance.allCases) { avoidance in
+                ForEach(GoalAvoidance.onboardingCases) { avoidance in
                     SelectableRow(
                         title: avoidance.title,
                         systemImage: avoidance.systemImage,
@@ -446,6 +455,27 @@ struct OnboardingFlowView: View {
                 }
             }
 
+        }
+    }
+
+    private var goalIntensityScreen: some View {
+        let selectedIntensity = draft.goalIntensity ?? .steady
+
+        return VStack(alignment: .leading, spacing: 28) {
+            OnboardingIntro(
+                title: "How ambitious should\nyour goal feel?",
+                copy: "Choose how much challenge HAYF should build into your goal options."
+            )
+
+            GoalIntensitySelector(
+                selection: selectedIntensity,
+                onSelectionChanged: setGoalIntensity
+            )
+
+            GoalIntensityExplanation(intensity: selectedIntensity)
+        }
+        .onAppear {
+            draft.initializeGoalIntensityForDiscovery()
         }
     }
 
@@ -465,6 +495,9 @@ struct OnboardingFlowView: View {
                         systemImage: option.systemImage,
                         isSelected: draft.infrastructureAccess.contains(option)
                     ) {
+                        if selectedIntent == .findGoal {
+                            invalidateGoalCandidates()
+                        }
                         draft.infrastructureAccess.toggle(option)
                     }
                 }
@@ -937,7 +970,12 @@ struct OnboardingFlowView: View {
             SummarySection(title: "Your answers") {
                 VStack(spacing: 10) {
                     ForEach(currentInputSummaryRows) { row in
-                        SummaryRow(systemImage: row.systemImage, label: row.label, value: row.value)
+                        SummaryRow(
+                            systemImage: row.systemImage,
+                            label: row.label,
+                            value: row.value,
+                            presentsAsSingleBullet: row.presentsAsSingleBullet
+                        )
                     }
                 }
             }
@@ -956,18 +994,18 @@ struct OnboardingFlowView: View {
                 SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
                 SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
                 SummaryItem(systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerInputSummary),
-                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
+                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
                 SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
                 SummaryItem(systemImage: "figure.cooldown", label: "Support", value: draft.supportSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
         case .concreteGoal:
             return [
-                SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary, presentsAsSingleBullet: true),
                 SummaryItem(systemImage: "calendar", label: "Timeline", value: draft.timelineSummary),
                 SummaryItem(systemImage: "figure.run", label: "Experience", value: draft.experienceSummary),
                 SummaryItem(systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
-                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
+                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
                 SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
                 SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
@@ -977,12 +1015,13 @@ struct OnboardingFlowView: View {
             ]
         case .findGoal:
             return [
-                SummaryItem(systemImage: "target", label: "Chosen goal", value: draft.goalSummary),
+                SummaryItem(systemImage: "target", label: "Chosen goal", value: draft.goalSummary, presentsAsSingleBullet: true),
                 SummaryItem(systemImage: "calendar", label: "Timeframe", value: draft.timelineSummary),
                 SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
                 SummaryItem(systemImage: "flag", label: "Challenge", value: draft.challengeSummary),
                 SummaryItem(systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
-                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary),
+                SummaryItem(systemImage: "gauge.with.dots.needle.33percent", label: "Intensity", value: draft.intensitySummary),
+                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
                 SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
                 SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
                 SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
@@ -1384,6 +1423,8 @@ struct OnboardingFlowView: View {
             return draft.challengeStyle != nil
         case .findAvoids:
             return !draft.goalAvoidances.isEmpty
+        case .findIntensity:
+            return draft.goalIntensity != nil
         case .goalCandidates:
             return selectedGoalCandidateID != nil
         case .editCandidate:
@@ -1434,9 +1475,9 @@ struct OnboardingFlowView: View {
         case .goalTimeline:
             step = .options
         case .goalPriority:
-            step = .infrastructure
+            step = .friction
         case .options:
-            step = selectedIntent == .concreteGoal ? .goalPriority : .infrastructure
+            step = .infrastructure
         case .infrastructure:
             if selectedIntent == .findGoal {
                 step = .findDirection
@@ -1452,7 +1493,9 @@ struct OnboardingFlowView: View {
         case .findChallenge:
             step = .findAvoids
         case .findAvoids:
-            step = .generatingCandidates
+            step = .findIntensity
+        case .findIntensity:
+            step = goalCandidates.isEmpty ? .generatingCandidates : .goalCandidates
         case .goalCandidates:
             if let selectedCandidate {
                 draft.chosenGoal = selectedCandidate
@@ -1479,7 +1522,7 @@ struct OnboardingFlowView: View {
         case .weeklyCapacity:
             step = .weeklyAvailability
         case .weeklyAvailability:
-            step = .friction
+            step = selectedIntent == .concreteGoal ? .goalPriority : .friction
         case .friction:
             step = .injuries
         case .injuries:
@@ -1533,11 +1576,11 @@ struct OnboardingFlowView: View {
         case .goalTimeline:
             step = .goalExperience
         case .goalPriority:
-            step = .options
+            step = .weeklyAvailability
         case .options:
             step = selectedIntent == .concreteGoal ? .goalTimeline : .intent
         case .infrastructure:
-            step = selectedIntent == .concreteGoal ? .goalPriority : .options
+            step = .options
         case .anchor:
             step = .options
         case .findDirection:
@@ -1546,10 +1589,12 @@ struct OnboardingFlowView: View {
             step = .findDirection
         case .findAvoids:
             step = .findChallenge
+        case .findIntensity:
+            step = .findAvoids
         case .generatingCandidates:
-            step = .findAvoids
+            step = .findIntensity
         case .goalCandidates:
-            step = .findAvoids
+            step = .findIntensity
         case .editCandidate:
             step = .goalCandidates
         case .blendCandidates:
@@ -1569,7 +1614,7 @@ struct OnboardingFlowView: View {
         case .weeklyAvailability:
             step = .weeklyCapacity
         case .friction:
-            step = .weeklyAvailability
+            step = selectedIntent == .concreteGoal ? .goalPriority : .weeklyAvailability
         case .injuries:
             step = .friction
         case .bodyBasics:
@@ -1677,6 +1722,7 @@ struct OnboardingFlowView: View {
     }
 
     private func toggleAvoidance(_ avoidance: GoalAvoidance) {
+        invalidateGoalCandidates()
         if avoidance == .nothingSpecific {
             draft.goalAvoidances = [.nothingSpecific]
             return
@@ -1684,6 +1730,23 @@ struct OnboardingFlowView: View {
 
         draft.goalAvoidances.remove(.nothingSpecific)
         draft.goalAvoidances.toggle(avoidance)
+    }
+
+    private func setGoalIntensity(_ intensity: GoalIntensity) {
+        guard draft.goalIntensity != intensity else { return }
+        invalidateGoalCandidates()
+        draft.goalIntensity = intensity
+    }
+
+    private func invalidateGoalCandidates() {
+        goalCandidates = []
+        selectedGoalCandidateID = nil
+        editingGoalText = ""
+        editingGoalTimeline = .eightWeeks
+        blendCandidateIDs = []
+        blendedCandidate = nil
+        draft.chosenGoal = nil
+        draft.goalTimeline = nil
     }
 
     private func toggleBlendCandidate(_ candidate: GoalCandidate) {
@@ -2132,6 +2195,7 @@ enum OnboardingStep: Equatable {
     case findDirection
     case findChallenge
     case findAvoids
+    case findIntensity
     case generatingCandidates
     case goalCandidates
     case editCandidate
@@ -2171,7 +2235,7 @@ enum OnboardingStep: Equatable {
         case .concreteGoal:
             return 20
         case .findGoal:
-            return 20
+            return 21
         }
     }
 
@@ -2204,10 +2268,10 @@ enum OnboardingStep: Equatable {
             case .goalExperience: return 3
             case .goalTimeline: return 4
             case .options: return 5
-            case .goalPriority: return 6
-            case .infrastructure: return 7
-            case .weeklyCapacity: return 8
-            case .weeklyAvailability: return 9
+            case .infrastructure: return 6
+            case .weeklyCapacity: return 7
+            case .weeklyAvailability: return 8
+            case .goalPriority: return 9
             case .friction: return 10
             case .injuries: return 11
             case .bodyBasics: return 12
@@ -2228,21 +2292,22 @@ enum OnboardingStep: Equatable {
             case .infrastructure: return 3
             case .findDirection: return 4
             case .findChallenge: return 5
-            case .findAvoids, .generatingCandidates: return 6
-            case .goalCandidates, .editCandidate, .blendCandidates, .generatingBlend, .blendPreview: return 7
-            case .weeklyCapacity: return 8
-            case .weeklyAvailability: return 9
-            case .friction: return 10
-            case .injuries: return 11
-            case .bodyBasics: return 12
-            case .bodyFatEstimate: return 13
-            case .support: return 14
-            case .floor, .generatingSummary: return 15
-            case .summary: return 16
-            case .health, .generatingBlueprint: return 17
-            case .athleteBlueprint, .generatingStrategy: return 18
-            case .fitnessStrategy: return 19
-            case .fitnessStrategyPhases: return 20
+            case .findAvoids: return 6
+            case .findIntensity, .generatingCandidates: return 7
+            case .goalCandidates, .editCandidate, .blendCandidates, .generatingBlend, .blendPreview: return 8
+            case .weeklyCapacity: return 9
+            case .weeklyAvailability: return 10
+            case .friction: return 11
+            case .injuries: return 12
+            case .bodyBasics: return 13
+            case .bodyFatEstimate: return 14
+            case .support: return 15
+            case .floor, .generatingSummary: return 16
+            case .summary: return 17
+            case .health, .generatingBlueprint: return 18
+            case .athleteBlueprint, .generatingStrategy: return 19
+            case .fitnessStrategy: return 20
+            case .fitnessStrategyPhases: return 21
             default: return 1
             }
         }
@@ -2357,6 +2422,7 @@ struct ConsistencyOnboardingDraft {
     var goalDirection: GoalDirection?
     var challengeStyle: ChallengeStyle?
     var goalAvoidances: Set<GoalAvoidance> = []
+    var goalIntensity: GoalIntensity?
     var chosenGoal: GoalCandidate?
     var frequency: TrainingFrequency?
     var sessionLength: SessionLength?
@@ -2500,6 +2566,10 @@ struct ConsistencyOnboardingDraft {
         summary(for: goalAvoidances.map(\.title), fallback: "No avoids set")
     }
 
+    var intensitySummary: String {
+        goalIntensity?.title ?? "Not set"
+    }
+
     private func summary(for values: [String], fallback: String) -> String {
         let sortedValues = values.sorted()
         guard !sortedValues.isEmpty else { return fallback }
@@ -2524,6 +2594,12 @@ struct ConsistencyOnboardingDraft {
             trainingOptions.remove(at: index)
         } else {
             trainingOptions.append(option)
+        }
+    }
+
+    mutating func initializeGoalIntensityForDiscovery() {
+        if goalIntensity == nil {
+            goalIntensity = .steady
         }
     }
 
@@ -2659,6 +2735,7 @@ private struct OnboardingAICompactContext: Codable {
     let goalDirection: String
     let challengeStyle: String
     let goalAvoidances: [String]
+    let goalIntensity: GoalIntensityPayload?
     let chosenGoal: GoalCandidatePayload?
     let frequency: String
     let sessionLength: String
@@ -2692,6 +2769,7 @@ private struct OnboardingAICompactContext: Codable {
         goalDirection = draft.directionSummary
         challengeStyle = draft.challengeSummary
         goalAvoidances = draft.goalAvoidances.map(\.title).sorted()
+        goalIntensity = draft.goalIntensity.map(GoalIntensityPayload.init(intensity:))
         chosenGoal = draft.chosenGoal.map(GoalCandidatePayload.init(candidate:))
         frequency = draft.frequency?.summary ?? ""
         sessionLength = draft.sessionLength?.title ?? ""
@@ -2706,6 +2784,20 @@ private struct OnboardingAICompactContext: Codable {
         badDayFloor = draft.badDayFloor?.planningValue ?? ""
         bodyBaseline = BodyBaselinePayload(draft: draft)
         self.healthSnapshot = healthSnapshot
+    }
+}
+
+struct GoalIntensityPayload: Codable, Equatable {
+    let level: Int
+    let identifier: String
+    let title: String
+    let generationGuidance: String
+
+    init(intensity: GoalIntensity) {
+        level = intensity.level
+        identifier = intensity.identifier
+        title = intensity.title
+        generationGuidance = intensity.generationGuidance
     }
 }
 
@@ -4106,6 +4198,17 @@ private struct OnboardingAIGoalCandidatesPayload: Codable {
 struct OnboardingSummaryOutput {
     let readback: String
 
+    init(readback: String) {
+        let punctuationNormalized = readback
+            .replacingOccurrences(of: #"\s*—\s*"#, with: ", ", options: .regularExpression)
+            .replacingOccurrences(of: "!", with: ".")
+            .replacingOccurrences(of: "?", with: ".")
+            .trimmed
+        self.readback = punctuationNormalized.hasSuffix(".")
+            ? punctuationNormalized
+            : "\(punctuationNormalized)."
+    }
+
     var isValid: Bool {
         Self.isValidReadback(readback)
     }
@@ -4118,9 +4221,13 @@ struct OnboardingSummaryOutput {
         let addressesUserDirectly = lowercased.hasPrefix("you ")
         let forbiddenOpening = lowercased.hasPrefix("you chose")
             || lowercased.hasPrefix("you selected")
-        return (12...18).contains(words.count)
-            && trimmed.count <= 120
-            && sentenceEndings <= 1
+        return (20...50).contains(words.count)
+            && trimmed.count <= 280
+            && sentenceEndings <= 2
+            && trimmed.hasSuffix(".")
+            && !trimmed.contains("—")
+            && !trimmed.contains("!")
+            && !trimmed.contains("?")
             && addressesUserDirectly
             && !forbiddenOpening
     }
@@ -4131,6 +4238,7 @@ private struct SummaryItem: Identifiable {
     let systemImage: String
     let label: String
     let value: String
+    var presentsAsSingleBullet = false
 }
 
 struct GoalCandidate: Identifiable, Equatable {
@@ -4376,71 +4484,149 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
     }
 
     static func fallbackSummary(intent: OnboardingIntent, draft: ConsistencyOnboardingDraft) -> OnboardingSummaryOutput {
+        let training = naturalList(
+            draft.trainingOptions.map { $0.title.lowercased() },
+            fallback: "your selected training"
+        )
+        let injury = compactSummaryPhrase(draft.injuryNotes.trimmed, maxCharacters: 52)
+        let blocker = compactSummaryPhrase(draft.blockerInputSummary, maxCharacters: 56)
+        let readback: String
+
         switch intent {
         case .stayConsistent:
-            return OnboardingSummaryOutput(
-                readback: "You need an adaptable routine that stays reliable when ordinary weeks become imperfect."
-            )
+            let motivation = compactSummaryPhrase(draft.motivationInputSummary, maxCharacters: 64)
+            let constraint = injury.isEmpty
+                ? "The main friction HAYF should account for is \(blocker.lowercased())."
+                : "HAYF should also account for \(injury.lowercased())."
+            readback = "You want \(training) to become a dependable routine that protects \(motivation.lowercased()). \(constraint)"
         case .concreteGoal:
-            return OnboardingSummaryOutput(
-                readback: "You need focused progress that protects your goal without letting real-world constraints destabilize the wider week."
-            )
+            let goal = compactSummaryPhrase(draft.goalSummary, maxCharacters: 74)
+            let constraint = injury.isEmpty
+                ? "The main friction to respect is \(blocker.lowercased())."
+                : "HAYF should also account for \(injury.lowercased())."
+            readback = "You are working toward \(goal) through \(training), with \(draft.prioritySummary.lowercased()) guiding tradeoffs. \(constraint)"
         case .findGoal:
-            return OnboardingSummaryOutput(
-                readback: "You need a motivating direction specific enough to guide training without creating unnecessary rigidity."
-            )
+            let goal = compactSummaryPhrase(draft.goalSummary, maxCharacters: 90)
+            let intensity = (draft.goalIntensity ?? .steady).title.lowercased()
+            let secondSentence: String
+            if !injury.isEmpty {
+                secondSentence = "The \(draft.directionSummary.lowercased()) direction should still account for \(injury.lowercased())."
+            } else if !draft.goalAvoidances.isEmpty && !draft.goalAvoidances.contains(.nothingSpecific) {
+                secondSentence = "The direction emphasizes \(draft.directionSummary.lowercased()) while steering clear of \(draft.avoidsSummary.lowercased())."
+            } else {
+                secondSentence = "The direction emphasizes \(draft.directionSummary.lowercased()) and \(draft.challengeSummary.lowercased())."
+            }
+            readback = "You are aiming for \(goal), using \(training) at a \(intensity) ambition level. \(secondSentence)"
+        }
+
+        return OnboardingSummaryOutput(readback: readback)
+    }
+
+    private static func naturalList(_ values: [String], fallback: String) -> String {
+        let nonEmptyValues = values.map(\.trimmed).filter { !$0.isEmpty }
+        switch nonEmptyValues.count {
+        case 0:
+            return fallback
+        case 1:
+            return nonEmptyValues[0]
+        case 2:
+            return nonEmptyValues.joined(separator: " and ")
+        default:
+            return "\(nonEmptyValues.dropLast().joined(separator: ", ")), and \(nonEmptyValues.last ?? fallback)"
         }
     }
 
+    private static func compactSummaryPhrase(_ value: String, maxCharacters: Int) -> String {
+        let collapsed = value
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmed
+        guard collapsed.count > maxCharacters else { return collapsed }
+
+        let prefix = String(collapsed.prefix(maxCharacters))
+        guard let lastSpace = prefix.lastIndex(of: " ") else { return prefix }
+        return String(prefix[..<lastSpace]).trimmed
+    }
+
     static func fallbackGoalCandidates(for draft: ConsistencyOnboardingDraft) -> [GoalCandidate] {
+        let intensity = draft.goalIntensity ?? .steady
         let avoidsRunning = draft.goalAvoidances.contains(.running)
         let avoidsGym = draft.goalAvoidances.contains(.gymDependence)
+        let canRun = draft.trainingOptions.contains(.running) && !avoidsRunning
+        let canCycle = draft.trainingOptions.contains(.cycling)
+        let hasSelectedCardio = canRun || canCycle
         let wantsEndurance = draft.goalDirection == .betterEndurance || draft.challengeStyle == .eventsDeadlines
         let wantsStrength = draft.goalDirection == .stronger || draft.trainingOptions.contains(.strength)
         let sportReady = draft.goalDirection == .sportReady || draft.trainingOptions.contains(.tennis) || draft.trainingOptions.contains(.football) || draft.trainingOptions.contains(.basketball)
 
-        let first = avoidsRunning
-            ? GoalCandidate(
-                id: "balanced-athlete",
-                title: "Balanced athlete rhythm",
-                rationale: "Because you want progress without leaning on running, this gives us a steady mix of strength, low-impact cardio, and mobility to build from together.",
-                tracking: "Sessions completed, strength exposure, cardio exposure, recovery trend.",
-                timeline: .eightWeeks,
-                systemImage: "circle.lefthalf.filled"
-            )
-            : GoalCandidate(
+        let first: GoalCandidate
+        if canRun {
+            first = GoalCandidate(
                 id: "endurance-base",
                 title: wantsEndurance ? "Improve 10K readiness" : "Build an aerobic base",
-                rationale: "Your endurance focus gives us a clear first project, and we can make it feel ambitious while still light enough to repeat.",
+                rationale: "Your endurance focus gives us a clear first project with a concrete outcome we can build toward.",
                 tracking: "Easy minutes, long-session confidence, consistency, recovery.",
                 timeline: wantsEndurance ? .twelveWeeks : .eightWeeks,
                 systemImage: "figure.run"
             )
+        } else if canCycle {
+            first = GoalCandidate(
+                id: "cycling-base",
+                title: wantsEndurance ? "Build climbing endurance" : "Build cycling fitness",
+                rationale: "Cycling gives us a clear performance direction using a modality you already selected and can access.",
+                tracking: "Cycling duration, comparable efforts, consistency, recovery.",
+                timeline: wantsEndurance ? .twelveWeeks : .eightWeeks,
+                systemImage: "figure.outdoor.cycle"
+            )
+        } else {
+            first = GoalCandidate(
+                id: "strength-capacity",
+                title: "Build strength work capacity",
+                rationale: "Your selected strength path can build broader capability without introducing training you did not choose.",
+                tracking: "Strength exposure, repeatable work, movement quality, recovery.",
+                timeline: .eightWeeks,
+                systemImage: "figure.strengthtraining.traditional"
+            )
+        }
 
         let second = wantsStrength
             ? GoalCandidate(
                 id: "strength-base",
-                title: "Build strength with one cardio anchor",
-                rationale: avoidsGym ? "Your strength priority still has plenty of room to grow without depending on a gym, so we will keep the work simple and focused." : "Your strength priority gives us the main target, while one cardio anchor keeps the build feeling athletic and useful.",
-                tracking: "Strength sessions, movement quality, conditioning touchpoint, soreness.",
+                title: hasSelectedCardio ? "Build strength with one cardio anchor" : "Build full-body strength",
+                rationale: avoidsGym
+                    ? "Your strength priority still has plenty of room to grow without depending on a gym, so we will keep the work simple and focused."
+                    : hasSelectedCardio
+                        ? "Your strength priority gives us the main target, while your selected cardio modality keeps the build athletic and useful."
+                        : "Your strength priority gives us a focused capability target using only the training path you selected.",
+                tracking: hasSelectedCardio
+                    ? "Strength sessions, movement quality, selected cardio, soreness."
+                    : "Strength sessions, movement quality, repeatable work, soreness.",
                 timeline: .twelveWeeks,
                 systemImage: "figure.strengthtraining.traditional"
             )
-            : GoalCandidate(
-                id: "consistency-reset",
-                title: "Consistency reset",
-                rationale: "This turns the first win into something repeatable, with a clear floor for messy weeks and less friction around getting started.",
-                tracking: "Weekly sessions, bad-day floor used, skipped-week recovery.",
-                timeline: .fourWeeks,
-                systemImage: "arrow.triangle.2.circlepath"
-            )
+            : canCycle
+                ? GoalCandidate(
+                    id: "cycling-performance",
+                    title: "Improve comparable cycling efforts",
+                    rationale: "This gives your cycling a measurable performance outcome without inventing a power or speed baseline.",
+                    tracking: "Comparable efforts, duration, perceived cost, recovery.",
+                    timeline: .twelveWeeks,
+                    systemImage: "speedometer"
+                )
+                : GoalCandidate(
+                    id: "running-control",
+                    title: "Run farther with control",
+                    rationale: "This turns your selected running path into a clear capacity outcome without assuming a current pace.",
+                    tracking: "Comfortable distance, perceived cost, consistency, recovery.",
+                    timeline: .eightWeeks,
+                    systemImage: "figure.run"
+                )
 
         let third = sportReady
             ? GoalCandidate(
                 id: "sport-ready",
                 title: "Build sport-ready conditioning",
-                rationale: "Because feeling better in your sport is the payoff, we will build the engine, mobility, and strength base that makes sessions more fun.",
-                tracking: "Conditioning, mobility, strength support, sport-session readiness.",
+                rationale: "Because feeling better in your sport is the payoff, we will build readiness through the training modalities you selected.",
+                tracking: "Selected training exposure, conditioning, recovery, sport readiness.",
                 timeline: .eightWeeks,
                 systemImage: "sportscourt"
             )
@@ -4448,12 +4634,14 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
                 id: "balanced-energy",
                 title: "Feel-fit build",
                 rationale: "This gives your training a positive direction without forcing a hard event, so we can build energy and capability week by week.",
-                tracking: "Energy, consistency, cardio exposure, strength exposure.",
+                tracking: "Energy, consistency, selected training exposure, recovery.",
                 timeline: .eightWeeks,
                 systemImage: "bolt.heart"
             )
 
-        return [first, second, third]
+        return [first, second, third].map { candidate in
+            intensityAdjusted(candidate: candidate, intensity: intensity)
+        }
     }
 
     static func blend(candidates: [GoalCandidate], draft: ConsistencyOnboardingDraft) -> GoalCandidate {
@@ -4470,12 +4658,91 @@ private struct MockOnboardingAIProvider: OnboardingAIProvider {
 
         return GoalCandidate(
             id: "blended-\(candidates.map(\.id).joined(separator: "-"))",
-            title: "Blended goal",
-            rationale: "We will keep the clearest target from \(candidates[0].title.removingGoalTimeline(candidates[0].timeline).lowercased()) and borrow the support structure from \(candidates[1].title.removingGoalTimeline(candidates[1].timeline).lowercased()), so the goal feels focused without becoming too narrow.",
+            title: candidates[0].title,
+            rationale: "We will keep the clearest target from \(candidates[0].title.removingGoalTimeline(candidates[0].timeline).lowercased()) and borrow the support structure from \(candidates[1].title.removingGoalTimeline(candidates[1].timeline).lowercased()). \(intensityRationaleSuffix(draft.goalIntensity ?? .steady))",
             tracking: "\(candidates[0].tracking) Also watch: \(candidates[1].tracking.lowercased())",
             timeline: candidates.map(\.timeline).max(by: { $0.weeks < $1.weeks }) ?? .eightWeeks,
             systemImage: "point.topleft.down.curvedto.point.bottomright.up"
         )
+    }
+
+    private static func intensityAdjusted(candidate: GoalCandidate, intensity: GoalIntensity) -> GoalCandidate {
+        let title: String
+        switch (candidate.id, intensity) {
+        case ("endurance-base", .gentle): title = "Build comfortable 5K readiness"
+        case ("endurance-base", .steady): title = candidate.title
+        case ("endurance-base", .ambitious): title = "Prepare for a strong 10K"
+        case ("endurance-base", .extreme): title = "Complete a demanding endurance challenge"
+        case ("cycling-base", .gentle): title = "Build comfortable cycling endurance"
+        case ("cycling-base", .steady): title = candidate.title
+        case ("cycling-base", .ambitious): title = "Build strong climbing endurance"
+        case ("cycling-base", .extreme): title = "Complete a demanding cycling challenge"
+        case ("strength-capacity", .gentle): title = "Build basic strength capacity"
+        case ("strength-capacity", .steady): title = candidate.title
+        case ("strength-capacity", .ambitious): title = "Build high strength work capacity"
+        case ("strength-capacity", .extreme): title = "Complete a demanding strength capacity build"
+        case ("balanced-athlete", .gentle): title = "Build a basic mixed fitness rhythm"
+        case ("balanced-athlete", .steady): title = candidate.title
+        case ("balanced-athlete", .ambitious): title = "Build a robust hybrid fitness base"
+        case ("balanced-athlete", .extreme): title = "Complete a demanding hybrid build"
+        case ("strength-base", .gentle): title = "Build foundational strength"
+        case ("strength-base", .steady): title = candidate.title
+        case ("strength-base", .ambitious): title = "Build measurable full-body strength"
+        case ("strength-base", .extreme): title = "Complete a demanding strength build"
+        case ("cycling-performance", .gentle): title = "Improve comfortable cycling efforts"
+        case ("cycling-performance", .steady): title = candidate.title
+        case ("cycling-performance", .ambitious): title = "Raise comparable cycling performance"
+        case ("cycling-performance", .extreme): title = "Complete a peak cycling performance build"
+        case ("running-control", .gentle): title = "Run comfortably for longer"
+        case ("running-control", .steady): title = candidate.title
+        case ("running-control", .ambitious): title = "Extend controlled running distance"
+        case ("running-control", .extreme): title = "Complete a demanding running challenge"
+        case ("consistency-reset", .gentle): title = "Create an easy training foothold"
+        case ("consistency-reset", .steady): title = candidate.title
+        case ("consistency-reset", .ambitious): title = "Build an unbroken training block"
+        case ("consistency-reset", .extreme): title = "Complete a demanding training block"
+        case ("sport-ready", .gentle): title = "Feel more capable in your sport"
+        case ("sport-ready", .steady): title = candidate.title
+        case ("sport-ready", .ambitious): title = "Raise your sport conditioning"
+        case ("sport-ready", .extreme): title = "Complete a peak sport build"
+        case ("balanced-energy", .gentle): title = "Feel fitter in everyday movement"
+        case ("balanced-energy", .steady): title = candidate.title
+        case ("balanced-energy", .ambitious): title = "Build standout all-round fitness"
+        case ("balanced-energy", .extreme): title = "Complete a demanding all-round build"
+        default: title = candidate.title
+        }
+
+        let timeline: GoalTimeline
+        switch intensity {
+        case .gentle:
+            timeline = candidate.timeline.weeks > 8 ? .eightWeeks : candidate.timeline
+        case .steady:
+            timeline = candidate.timeline
+        case .ambitious, .extreme:
+            timeline = .twelveWeeks
+        }
+
+        return GoalCandidate(
+            id: candidate.id,
+            title: title,
+            rationale: "\(candidate.rationale) \(intensityRationaleSuffix(intensity))",
+            tracking: candidate.tracking,
+            timeline: timeline,
+            systemImage: candidate.systemImage
+        )
+    }
+
+    private static func intensityRationaleSuffix(_ intensity: GoalIntensity) -> String {
+        switch intensity {
+        case .gentle:
+            return "The outcome stays deliberately approachable, with room to build confidence."
+        case .steady:
+            return "The outcome asks for meaningful, sustained progress without forcing an aggressive leap."
+        case .ambitious:
+            return "The outcome is a real stretch and will require stronger commitment."
+        case .extreme:
+            return "This is the boldest direction your current setup supports, and we will size the plan after learning your weekly capacity."
+        }
     }
 
     private static func concreteGoalTitle(from draft: ConsistencyOnboardingDraft) -> String {
@@ -5019,10 +5286,10 @@ enum GoalPriority: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .goalProgress: return "Focus on my targets and cut extras"
+        case .goalProgress: return "Prioritize targets."
         case .stayingBalanced: return "Don't focus on a single target"
         case .avoidInjury: return "Take a protective approach"
-        case .preserveStrength: return "Focus on a strength/cardio balance"
+        case .preserveStrength: return "Keep a healthy ratio."
         }
     }
 
@@ -5036,13 +5303,70 @@ enum GoalPriority: String, CaseIterable, Identifiable {
     }
 }
 
+enum GoalIntensity: Int, CaseIterable, Codable, Identifiable {
+    case gentle = 0
+    case steady = 1
+    case ambitious = 2
+    case extreme = 3
+
+    var id: Int { rawValue }
+    var level: Int { rawValue }
+
+    var identifier: String {
+        switch self {
+        case .gentle: return "gentle"
+        case .steady: return "steady"
+        case .ambitious: return "ambitious"
+        case .extreme: return "extreme"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .gentle: return "Gentle"
+        case .steady: return "Steady"
+        case .ambitious: return "Ambitious"
+        case .extreme: return "Extreme"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .gentle:
+            return "HAYF will suggest approachable goals with modest demands and room to build confidence."
+        case .steady:
+            return "HAYF will suggest meaningful goals that require consistent effort without making the outcome overly aggressive."
+        case .ambitious:
+            return "HAYF will suggest demanding goals with a clear stretch outcome and stronger commitment."
+        case .extreme:
+            return "HAYF will suggest the boldest defensible goals while respecting your selected training setup and avoidances."
+        }
+    }
+
+    var generationGuidance: String {
+        switch self {
+        case .gentle:
+            return "Generate approachable outcomes with modest demands and room to build confidence."
+        case .steady:
+            return "Generate meaningful outcomes that require consistent effort without becoming overly aggressive."
+        case .ambitious:
+            return "Generate demanding stretch outcomes that require stronger commitment."
+        case .extreme:
+            return "Generate the boldest defensible outcomes, while strictly respecting selected modalities, access, avoidances, safety, and the absence of capacity or Health baselines."
+        }
+    }
+
+    static func nearest(to value: Double) -> GoalIntensity {
+        let snappedValue = min(3, max(0, Int(value.rounded())))
+        return GoalIntensity(rawValue: snappedValue) ?? .steady
+    }
+}
+
 enum GoalDirection: String, CaseIterable, Identifiable {
     case moreAthletic
     case stronger
     case betterEndurance
     case sportReady
-    case moreConsistent
-    case lessTired
 
     var id: String { rawValue }
 
@@ -5052,19 +5376,15 @@ enum GoalDirection: String, CaseIterable, Identifiable {
         case .stronger: return "Stronger"
         case .betterEndurance: return "Better endurance"
         case .sportReady: return "Ready for a sport"
-        case .moreConsistent: return "More consistent"
-        case .lessTired: return "Less tired or stressed"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .moreAthletic: return "Feel capable across strength, cardio, and movement."
+        case .moreAthletic: return "Feel capable in movement."
         case .stronger: return "Build a clearer strength base."
         case .betterEndurance: return "Make cardio feel less costly."
-        case .sportReady: return "Move better when the game starts."
-        case .moreConsistent: return "Make training repeatable before it gets ambitious."
-        case .lessTired: return "Use training to support energy, not drain it."
+        case .sportReady: return "Improve in one modality."
         }
     }
 
@@ -5074,8 +5394,6 @@ enum GoalDirection: String, CaseIterable, Identifiable {
         case .stronger: return "figure.strengthtraining.traditional"
         case .betterEndurance: return "figure.run"
         case .sportReady: return "sportscourt"
-        case .moreConsistent: return "calendar.badge.checkmark"
-        case .lessTired: return "bolt.heart"
         }
     }
 }
@@ -5084,7 +5402,6 @@ enum ChallengeStyle: String, CaseIterable, Identifiable {
     case numbersTargets
     case eventsDeadlines
     case skillProgression
-    case feelingBetter
     case competeWithSelf
 
     var id: String { rawValue }
@@ -5094,7 +5411,6 @@ enum ChallengeStyle: String, CaseIterable, Identifiable {
         case .numbersTargets: return "Numbers and targets"
         case .eventsDeadlines: return "Events and deadlines"
         case .skillProgression: return "Skill progression"
-        case .feelingBetter: return "Feeling better"
         case .competeWithSelf: return "Competing with myself"
         }
     }
@@ -5103,9 +5419,8 @@ enum ChallengeStyle: String, CaseIterable, Identifiable {
         switch self {
         case .numbersTargets: return "Give me a clear metric to move."
         case .eventsDeadlines: return "A date helps me care."
-        case .skillProgression: return "I like getting visibly better at something."
-        case .feelingBetter: return "The goal should improve daily life."
-        case .competeWithSelf: return "I want a challenge without external pressure."
+        case .skillProgression: return "I like getting visibly better."
+        case .competeWithSelf: return "I want to be my best version."
         }
     }
 
@@ -5114,7 +5429,6 @@ enum ChallengeStyle: String, CaseIterable, Identifiable {
         case .numbersTargets: return "number"
         case .eventsDeadlines: return "flag"
         case .skillProgression: return "arrow.up.forward"
-        case .feelingBetter: return "heart"
         case .competeWithSelf: return "person"
         }
     }
@@ -5130,6 +5444,14 @@ enum GoalAvoidance: String, CaseIterable, Identifiable {
     case nothingSpecific
 
     var id: String { rawValue }
+
+    static let onboardingCases: [GoalAvoidance] = [
+        .longWorkouts,
+        .strictPlans,
+        .highIntensity,
+        .gymDependence,
+        .nothingSpecific
+    ]
 
     var title: String {
         switch self {
@@ -5978,20 +6300,31 @@ private struct OnboardingTextArea: View {
     }
 }
 
-private struct SummaryRow: View {
-    let systemImage: String
-    let label: String
-    let value: String
+enum SummaryValueParser {
+    static func items(from value: String, presentsAsSingleBullet: Bool) -> [String] {
+        if presentsAsSingleBullet {
+            return [value]
+        }
 
-    private var valueItems: [String] {
-        value
+        return value
             .split(separator: ",")
             .map { fragment in
                 String(fragment)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .replacingOccurrences(of: #"^\d+\.\s*"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
             }
             .filter { !$0.isEmpty }
+    }
+}
+
+private struct SummaryRow: View {
+    let systemImage: String
+    let label: String
+    let value: String
+    let presentsAsSingleBullet: Bool
+
+    private var valueItems: [String] {
+        SummaryValueParser.items(from: value, presentsAsSingleBullet: presentsAsSingleBullet)
     }
 
     var body: some View {
@@ -6003,7 +6336,7 @@ private struct SummaryRow: View {
                 .foregroundStyle(HAYFColor.primary)
                 .frame(width: 116, alignment: .leading)
 
-            if valueItems.count > 1 {
+            if presentsAsSingleBullet || valueItems.count > 1 {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(valueItems.enumerated()), id: \.offset) { _, item in
                         HStack(alignment: .top, spacing: 6) {
@@ -9371,6 +9704,130 @@ private struct CheckmarkBox: View {
                         .foregroundStyle(.white)
                 }
             }
+    }
+}
+
+private struct GoalIntensitySelector: View {
+    let selection: GoalIntensity
+    let onSelectionChanged: (GoalIntensity) -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 0) {
+                ForEach(GoalIntensity.allCases) { intensity in
+                    VStack(spacing: 4) {
+                        Text("\(intensity.level)")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(intensity.title)
+                            .font(.system(size: 13, weight: selection == intensity ? .semibold : .regular))
+                    }
+                    .foregroundStyle(selection == intensity ? HAYFColor.orange : HAYFColor.muted)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        onSelectionChanged(intensity)
+                    }
+                }
+            }
+            .accessibilityHidden(true)
+
+            GeometryReader { geometry in
+                let thumbDiameter: CGFloat = 28
+                let leading = thumbDiameter / 2
+                let usableWidth = max(0, geometry.size.width - thumbDiameter)
+                let fraction = CGFloat(selection.rawValue) / CGFloat(GoalIntensity.allCases.count - 1)
+                let thumbX = leading + (usableWidth * fraction)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(HAYFColor.borderStrong)
+                        .frame(height: 5)
+                        .padding(.horizontal, leading)
+
+                    Capsule()
+                        .fill(HAYFColor.orange)
+                        .frame(width: max(0, thumbX - leading), height: 5)
+                        .offset(x: leading)
+
+                    ForEach(GoalIntensity.allCases) { intensity in
+                        let markerFraction = CGFloat(intensity.rawValue) / CGFloat(GoalIntensity.allCases.count - 1)
+                        let markerX = leading + (usableWidth * markerFraction)
+
+                        Circle()
+                            .fill(intensity.rawValue <= selection.rawValue ? HAYFColor.orange : HAYFColor.borderStrong)
+                            .frame(width: 8, height: 8)
+                            .position(x: markerX, y: geometry.size.height / 2)
+                    }
+
+                    Circle()
+                        .fill(HAYFColor.orange)
+                        .frame(width: thumbDiameter, height: thumbDiameter)
+                        .overlay {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 8, height: 8)
+                        }
+                        .shadow(color: Color.black.opacity(0.12), radius: 5, y: 2)
+                        .position(x: thumbX, y: geometry.size.height / 2)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let normalized = Double((value.location.x - leading) / max(1, usableWidth))
+                            onSelectionChanged(GoalIntensity.nearest(to: normalized * 3))
+                        }
+                )
+            }
+            .frame(height: 44)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Goal intensity")
+            .accessibilityValue(selection.title)
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment:
+                    onSelectionChanged(GoalIntensity(rawValue: min(3, selection.rawValue + 1)) ?? selection)
+                case .decrement:
+                    onSelectionChanged(GoalIntensity(rawValue: max(0, selection.rawValue - 1)) ?? selection)
+                @unknown default:
+                    break
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.16), value: selection)
+    }
+}
+
+private struct GoalIntensityExplanation: View {
+    let intensity: GoalIntensity
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(HAYFColor.orange)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(intensity.title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(HAYFColor.primary)
+
+                Text(intensity.explanation)
+                    .font(.system(size: 15, weight: .regular))
+                    .lineSpacing(3)
+                    .foregroundStyle(HAYFColor.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(HAYFColor.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(HAYFColor.orange.opacity(0.2), lineWidth: 1)
+        }
     }
 }
 
