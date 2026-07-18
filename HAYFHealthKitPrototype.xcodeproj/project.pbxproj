@@ -36,6 +36,8 @@
 		D00000020000000000000001 /* daniel-health-snapshot.json in Resources */ = {isa = PBXBuildFile; fileRef = D00000120000000000000001 /* daniel-health-snapshot.json */; };
 		E00000010000000000000001 /* TodayScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000110000000000000001 /* TodayScreenView.swift */; };
 		F00000010000000000000001 /* TodayModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000110000000000000001 /* TodayModelsTests.swift */; };
+		G00000010000000000000001 /* ForteDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000110000000000000001 /* ForteDesign.swift */; };
+		G00000020000000000000001 /* ForteIntentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000120000000000000001 /* ForteIntentScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +83,8 @@
 		E00000110000000000000001 /* TodayScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayScreenView.swift; sourceTree = "<group>"; };
 		F00000110000000000000001 /* TodayModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayModelsTests.swift; sourceTree = "<group>"; };
 		F00000120000000000000001 /* HAYFHealthKitPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HAYFHealthKitPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		G00000110000000000000001 /* ForteDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteDesign.swift; sourceTree = "<group>"; };
+		G00000120000000000000001 /* ForteIntentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteIntentScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,6 +189,7 @@
 			children = (
 				A000001C000000000000001 /* HAYFColor.swift */,
 				A000001D000000000000001 /* HAYFLogo.swift */,
+				G00000110000000000000001 /* ForteDesign.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -249,6 +254,7 @@
 			isa = PBXGroup;
 			children = (
 				A0000027000000000000001 /* OnboardingFlowView.swift */,
+				G00000120000000000000001 /* ForteIntentScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -379,7 +385,9 @@
 				A000000C000000000000001 /* SupabaseClientProvider.swift in Sources */,
 				A00000090000000000000001 /* HAYFColor.swift in Sources */,
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
+				G00000010000000000000001 /* ForteDesign.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
+				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,
@@ -469,11 +477,38 @@
 			};
 			name = Release;
 		};
+		G00000610000000000000001 /* Forte Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG FORTE_DEV";
+				SWIFT_VERSION = 5.0;
+			};
+			name = "Forte Dev";
+		};
 		A00000630000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = HAYF;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTH_CALLBACK_SCHEME = hayf;
 				CODE_SIGN_ENTITLEMENTS = HAYFHealthKitPrototype/HAYFHealthKitPrototype.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
@@ -502,8 +537,10 @@
 		A00000640000000000000001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = HAYF;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTH_CALLBACK_SCHEME = hayf;
 				CODE_SIGN_ENTITLEMENTS = HAYFHealthKitPrototype/HAYFHealthKitPrototype.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
@@ -524,6 +561,38 @@
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
+		};
+		G00000620000000000000001 /* Forte Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APP_DISPLAY_NAME = "Forte Dev";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTH_CALLBACK_SCHEME = fortedev;
+				CODE_SIGN_ENTITLEMENTS = HAYFHealthKitPrototype/HAYFHealthKitPrototype.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
+				DEVELOPMENT_TEAM = C46LARA4B9;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HAYFHealthKitPrototype/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit.fortedev;
+				PRODUCT_NAME = HAYF;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG FORTE_DEV";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = "Forte Dev";
 		};
 		F00000610000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -570,6 +639,29 @@
 			};
 			name = Release;
 		};
+		G00000630000000000000001 /* Forte Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = C46LARA4B9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit.fortedev.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG FORTE_DEV";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HAYF.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HAYF";
+			};
+			name = "Forte Dev";
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -577,6 +669,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000630000000000000001 /* Debug */,
+				G00000620000000000000001 /* Forte Dev */,
 				A00000640000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -586,6 +679,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000610000000000000001 /* Debug */,
+				G00000610000000000000001 /* Forte Dev */,
 				A00000620000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -595,6 +689,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F00000610000000000000001 /* Debug */,
+				G00000630000000000000001 /* Forte Dev */,
 				F00000620000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;

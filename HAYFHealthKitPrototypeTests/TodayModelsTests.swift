@@ -203,6 +203,12 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .findGoal), 10)
     }
 
+    func testEveryIntentPreservesItsExistingStepTwoBranch() {
+        XCTAssertEqual(OnboardingStep.firstStep(after: .stayConsistent), .options)
+        XCTAssertEqual(OnboardingStep.firstStep(after: .concreteGoal), .goalBrief)
+        XCTAssertEqual(OnboardingStep.firstStep(after: .findGoal), .options)
+    }
+
     func testGoalIntensityContractAndCopy() throws {
         XCTAssertEqual(GoalIntensity.allCases.map(\.rawValue), [0, 1, 2, 3])
         XCTAssertEqual(GoalIntensity.allCases.map(\.identifier), ["gentle", "steady", "ambitious", "extreme"])

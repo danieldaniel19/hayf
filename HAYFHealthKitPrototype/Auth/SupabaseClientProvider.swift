@@ -2,7 +2,7 @@ import Foundation
 import Supabase
 
 enum SupabaseClientProvider {
-    static let redirectURL = URL(string: "hayf://auth-callback")!
+    static let redirectURL = URL(string: "\(authCallbackScheme)://auth-callback")!
     static let isLocalLangGraphEnabled = environmentValue("HAYF_LOCAL_LANGGRAPH") == "true"
 
     static let shared = SupabaseClient(
@@ -19,6 +19,15 @@ enum SupabaseClientProvider {
     static func environmentValue(_ name: String) -> String? {
         let value = ProcessInfo.processInfo.environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines)
         return value?.isEmpty == false ? value : nil
+    }
+
+    private static var authCallbackScheme: String {
+        guard let configuredScheme = Bundle.main.object(forInfoDictionaryKey: "HAYFAuthCallbackScheme") as? String else {
+            return "hayf"
+        }
+
+        let trimmedScheme = configuredScheme.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedScheme.isEmpty ? "hayf" : trimmedScheme
     }
 
     private static var supabaseURL: URL {

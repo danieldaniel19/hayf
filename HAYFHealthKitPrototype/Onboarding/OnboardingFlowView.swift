@@ -42,39 +42,29 @@ struct OnboardingFlowView: View {
         physiologyReference: PhysiologyReference,
         birthdate: Date,
         onboardingProfileStore: OnboardingProfileStore,
+        initialIntent: OnboardingIntent? = nil,
         onExit: @escaping () -> Void = {},
         onComplete: @escaping () -> Void
     ) {
         self.physiologyReference = physiologyReference
         self.birthdate = birthdate
         self.onboardingProfileStore = onboardingProfileStore
+        _selectedIntent = State(initialValue: initialIntent)
         self.onExit = onExit
         self.onComplete = onComplete
     }
 
     var body: some View {
-        ZStack {
-            HAYFColor.neutral
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                onboardingHeader
-                    .padding(.horizontal, 24)
-                    .padding(.top, 24)
-
-                ScrollView(showsIndicators: false) {
-                    screenContent
-                        .padding(.horizontal, 24)
-                        .padding(.top, 30)
-                        .padding(.bottom, 24)
-                }
-                .id(step)
-
-                bottomAction
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 18)
+        Group {
+            if step == .intent {
+                ForteIntentScreen(
+                    selectedIntent: $selectedIntent,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else {
+                legacyOnboardingFlow
             }
-            .frame(maxWidth: 480)
         }
         .animation(.easeInOut(duration: 0.2), value: step)
         .sheet(item: $selectedBlueprintDetail) { detail in
@@ -99,6 +89,32 @@ struct OnboardingFlowView: View {
             default:
                 break
             }
+        }
+    }
+
+    private var legacyOnboardingFlow: some View {
+        ZStack {
+            HAYFColor.neutral
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                onboardingHeader
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+
+                ScrollView(showsIndicators: false) {
+                    screenContent
+                        .padding(.horizontal, 24)
+                        .padding(.top, 30)
+                        .padding(.bottom, 24)
+                }
+                .id(step)
+
+                bottomAction
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 18)
+            }
+            .frame(maxWidth: 480)
         }
     }
 
@@ -1461,13 +1477,7 @@ struct OnboardingFlowView: View {
         case .intent:
             guard let selectedIntent else { return }
             resetGeneratedOutputs()
-            if selectedIntent == .stayConsistent {
-                step = .options
-            } else if selectedIntent == .concreteGoal {
-                step = .goalBrief
-            } else {
-                step = .options
-            }
+            step = OnboardingStep.firstStep(after: selectedIntent)
         case .goalBrief:
             step = .goalExperience
         case .goalExperience:
@@ -2239,6 +2249,15 @@ enum OnboardingStep: Equatable {
         }
     }
 
+    static func firstStep(after intent: OnboardingIntent) -> OnboardingStep {
+        switch intent {
+        case .stayConsistent, .findGoal:
+            return .options
+        case .concreteGoal:
+            return .goalBrief
+        }
+    }
+
     func activeSegments(for intent: OnboardingIntent) -> Int {
         switch intent {
         case .stayConsistent:
@@ -2374,9 +2393,9 @@ enum OnboardingIntent: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .stayConsistent: return "No fixed goal. Keep me reliable and strong."
-        case .concreteGoal: return "Build around a target, event, or timeline."
-        case .findGoal: return "Suggest a direction that fits me."
+        case .stayConsistent: return "I don't have a goal but would like to build a habit."
+        case .concreteGoal: return "I want to chase a target or prepare for an event."
+        case .findGoal: return "Suggest a direction based on my profile."
         }
     }
 
