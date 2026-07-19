@@ -199,6 +199,20 @@ final class OnboardingPolicyTests: XCTestCase {
     }
 
     func testUnsureMotivationIsMutuallyExclusive() {
+        XCTAssertEqual(
+            MotivationAnchor.allCases.map(\.forteAssetName),
+            [
+                "ForteModalityStrength",
+                "ForteAnchorEnergy",
+                "ForteAnchorStress",
+                "ForteAnchorBodyConfidence",
+                "ForteAnchorLongTermHealth",
+                "ForteModalityRunning",
+                "ForteIntentConsistency",
+                "ForteAnchorUnsure"
+            ]
+        )
+
         var draft = ConsistencyOnboardingDraft()
         draft.toggleMotivationAnchor(.dailyEnergy)
         draft.toggleMotivationAnchor(.unsure)

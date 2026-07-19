@@ -203,6 +203,16 @@ components:
     iconSize: 48px
     dividerColor: "{colors.borderSubtle}"
 
+  text-area:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    placeholderColor: "{colors.inkMuted}"
+    borderColor: "{colors.borderSubtle}"
+    focusBorderColor: "{colors.indigo}"
+    rounded: "{rounded.lg}"
+    minHeight: 148px
+    padding: "{spacing.lg}"
+
   sheet:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.xl}"
@@ -618,6 +628,21 @@ Use a stacked choice list when an onboarding question presents four or more clos
 - Use the shared `ForteStackedChoiceList` component so later screens inherit the same geometry and state treatment.
 
 Do not use the stacked pattern for choices that need multi-line explanations, ranking, comparison, or large expressive icons; use separate choice cards or a grid for those cases.
+
+### Text Areas
+
+Use a text area for optional context that helps Forte understand a choice without turning the onboarding step into a form-heavy experience.
+
+- Place a concise 15px semibold label outside and directly above the input.
+- Use a white surface, 20px radius, 16px internal padding, and a minimum height of 148px.
+- Keep the resting border subtle. On focus, strengthen it with Indigo rather than adding a glow or saturated fill.
+- Use Ink for entered text and a softened Ink Muted for placeholder copy.
+- Put the live character count inside the lower-right corner in 12px rounded, tabular numerals.
+- Enforce the character limit in the component instead of relying on validation after submission.
+- Keep text areas inside scrolling content so the keyboard can reveal and dismiss them naturally; the primary Continue action remains fixed below the scroll view.
+- Reuse `ForteTextArea` for multiline free-form onboarding inputs so labels, focus state, counter placement, and limits remain consistent.
+
+Do not use an oversized text area for a short factual answer. Use a compact single-line field, picker, or structured choice when the response has a predictable format.
 
 ### Content Cards
 

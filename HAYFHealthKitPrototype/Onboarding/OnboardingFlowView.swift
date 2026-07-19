@@ -83,6 +83,17 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .anchor {
+                ForteMotivationAnchorScreen(
+                    selectedAnchors: draft.motivationAnchors,
+                    motivationNote: $draft.motivationNote,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggle: toggleMotivationAnchor,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -1609,6 +1620,10 @@ struct OnboardingFlowView: View {
             invalidateGoalCandidates()
         }
         draft.infrastructureAccess.toggle(option)
+    }
+
+    private func toggleMotivationAnchor(_ anchor: MotivationAnchor) {
+        draft.toggleMotivationAnchor(anchor)
     }
 
     private func goBack() {
@@ -5193,6 +5208,19 @@ enum MotivationAnchor: String, CaseIterable, Identifiable {
         case .sportAndAdventure: return "mountain.2"
         case .dependableRoutine: return "calendar.badge.checkmark"
         case .unsure: return "questionmark.circle"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .strengthAndCapability: return "ForteModalityStrength"
+        case .dailyEnergy: return "ForteAnchorEnergy"
+        case .stressAndHeadspace: return "ForteAnchorStress"
+        case .bodyConfidence: return "ForteAnchorBodyConfidence"
+        case .longTermHealth: return "ForteAnchorLongTermHealth"
+        case .sportAndAdventure: return "ForteModalityRunning"
+        case .dependableRoutine: return "ForteIntentConsistency"
+        case .unsure: return "ForteAnchorUnsure"
         }
     }
 }
