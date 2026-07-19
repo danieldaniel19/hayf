@@ -114,7 +114,7 @@ struct ForteModalityScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
 
-            Text("Tap the training options in the order you want\nForte to prioritize them.")
+            Text("Tap the training options in the order\nyou want Forte to prioritize them.")
                 .font(.system(size: 15, weight: .regular))
                 .lineSpacing(5)
                 .foregroundStyle(ForteColor.inkSoft)
