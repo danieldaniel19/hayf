@@ -371,6 +371,15 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertTrue(titles.contains("Not having a plan"))
         XCTAssertFalse(titles.contains("Gym access"))
         XCTAssertFalse(titles.contains("All-or-nothing weeks"))
+        XCTAssertEqual(ConsistencyBlocker.allCases.map(\.forteAssetName), [
+            "ForteBlockerWorkSchedule",
+            "ForteBlockerLowEnergy",
+            "ForteBlockerSoreness",
+            "ForteBlockerNoPlan",
+            "ForteBlockerTravel",
+            "ForteBlockerMotivation",
+            "ForteBlockerWeather"
+        ])
     }
 
     func testSummaryReadbackAllowsSpecificOneOrTwoSentenceInterpretation() {

@@ -119,6 +119,17 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .friction {
+                ForteConsistencyBlockerScreen(
+                    selectedBlockers: draft.blockers,
+                    blockerNote: $draft.blockerNote,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggle: toggleConsistencyBlocker,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -1665,6 +1676,10 @@ struct OnboardingFlowView: View {
 
     private func toggleUltraFlexibleAvailability() {
         draft.toggleUltraFlexibleAvailability()
+    }
+
+    private func toggleConsistencyBlocker(_ blocker: ConsistencyBlocker) {
+        draft.blockers.toggle(blocker)
     }
 
     private func goBack() {
@@ -5674,6 +5689,18 @@ enum ConsistencyBlocker: String, CaseIterable, Identifiable {
         case .travel: return "airplane"
         case .motivation: return "bolt"
         case .weather: return "cloud.rain"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .workSchedule: return "ForteBlockerWorkSchedule"
+        case .lowEnergy: return "ForteBlockerLowEnergy"
+        case .soreness: return "ForteBlockerSoreness"
+        case .noPlan: return "ForteBlockerNoPlan"
+        case .travel: return "ForteBlockerTravel"
+        case .motivation: return "ForteBlockerMotivation"
+        case .weather: return "ForteBlockerWeather"
         }
     }
 }

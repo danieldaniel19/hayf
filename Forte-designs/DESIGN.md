@@ -546,6 +546,8 @@ Compact choice rows may use this tier at **40px to 48px** when the object has a 
 
 Time-of-day choices form a matched sub-family: a coffee cup for morning, a simple sun for afternoon, and a nightstand lamp for evening. Render all three on the same low warm-ivory pedestal, at the same camera angle and object scale. Represent schedule flexibility with a standalone loose elastic band; do not use sparkles or other AI-associated symbols for this concept.
 
+Consistency barriers use direct object metaphors at compact row scale: calendar and clock for work schedule, low battery for low energy, wrapped arm for soreness, blank clipboard for no plan, carry-on suitcase for travel, split lightning bolt for motivation, and rain cloud for weather. Keep these as isolated objects without pedestals so they align with the existing stacked-choice icon family.
+
 ### Tier 3: Small Utility Icons
 
 Use for:
