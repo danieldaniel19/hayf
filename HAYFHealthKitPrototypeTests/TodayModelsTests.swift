@@ -166,6 +166,38 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertTrue(draft.trainingOptions.isEmpty)
     }
 
+    func testInfrastructureChoicesReuseExistingAssetsWherePossible() {
+        XCTAssertEqual(
+            InfrastructureAccess.allCases.map(\.forteAssetName),
+            [
+                "ForteModalityStrength",
+                "ForteAccessHomeWeights",
+                "ForteModalityRunning",
+                "ForteAccessTreadmill",
+                "ForteModalityCycling",
+                "ForteAccessIndoorBike",
+                "ForteModalitySwimming",
+                "ForteModalityTennis",
+                "ForteModalityFootball",
+                "ForteModalityBasketball",
+                "ForteModalityYoga"
+            ]
+        )
+
+        var draft = ConsistencyOnboardingDraft()
+        draft.toggleTrainingOption(.cycling)
+        draft.toggleTrainingOption(.strength)
+        draft.toggleTrainingOption(.running)
+        XCTAssertEqual(
+            draft.requiredInfrastructureOptions,
+            [.gym, .indoorBike, .outdoorBike, .outdoorRoutes, .treadmill, .homeWeights]
+        )
+
+        draft.infrastructureAccess = [.gym, .indoorBike, .outdoorBike]
+        draft.toggleTrainingOption(.cycling)
+        XCTAssertEqual(draft.infrastructureAccess, [.gym])
+    }
+
     func testUnsureMotivationIsMutuallyExclusive() {
         var draft = ConsistencyOnboardingDraft()
         draft.toggleMotivationAnchor(.dailyEnergy)
@@ -225,6 +257,9 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(OnboardingStep.options.activeSegments(for: .stayConsistent), 2)
         XCTAssertEqual(OnboardingStep.options.activeSegments(for: .concreteGoal), 5)
         XCTAssertEqual(OnboardingStep.options.activeSegments(for: .findGoal), 2)
+        XCTAssertEqual(OnboardingStep.infrastructure.activeSegments(for: .stayConsistent), 3)
+        XCTAssertEqual(OnboardingStep.infrastructure.activeSegments(for: .concreteGoal), 6)
+        XCTAssertEqual(OnboardingStep.infrastructure.activeSegments(for: .findGoal), 3)
     }
 
     func testGoalIntensityContractAndCopy() throws {

@@ -72,6 +72,17 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .infrastructure {
+                ForteInfrastructureScreen(
+                    options: draft.requiredInfrastructureOptions,
+                    selectedOptions: draft.infrastructureAccess,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggle: toggleInfrastructureAccess,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -1593,6 +1604,13 @@ struct OnboardingFlowView: View {
         draft.toggleTrainingOption(option)
     }
 
+    private func toggleInfrastructureAccess(_ option: InfrastructureAccess) {
+        if selectedIntent == .findGoal {
+            invalidateGoalCandidates()
+        }
+        draft.infrastructureAccess.toggle(option)
+    }
+
     private func goBack() {
         switch step {
         case .intent:
@@ -1610,9 +1628,9 @@ struct OnboardingFlowView: View {
         case .infrastructure:
             step = .options
         case .anchor:
-            step = .options
+            step = .infrastructure
         case .findDirection:
-            step = .options
+            step = .infrastructure
         case .findChallenge:
             step = .findDirection
         case .findAvoids:
@@ -2632,6 +2650,7 @@ struct ConsistencyOnboardingDraft {
         } else {
             trainingOptions.append(option)
         }
+        infrastructureAccess.formIntersection(Set(requiredInfrastructureOptions))
     }
 
     mutating func initializeGoalIntensityForDiscovery() {
@@ -4916,6 +4935,22 @@ enum InfrastructureAccess: String, CaseIterable, Identifiable {
         case .field: return "soccerball"
         case .court: return "basketball"
         case .homeSpace: return "house"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .gym: return "ForteModalityStrength"
+        case .homeWeights: return "ForteAccessHomeWeights"
+        case .outdoorRoutes: return "ForteModalityRunning"
+        case .treadmill: return "ForteAccessTreadmill"
+        case .outdoorBike: return "ForteModalityCycling"
+        case .indoorBike: return "ForteAccessIndoorBike"
+        case .pool: return "ForteModalitySwimming"
+        case .tennisCourt: return "ForteModalityTennis"
+        case .field: return "ForteModalityFootball"
+        case .court: return "ForteModalityBasketball"
+        case .homeSpace: return "ForteModalityYoga"
         }
     }
 }

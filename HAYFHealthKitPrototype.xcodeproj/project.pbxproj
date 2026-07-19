@@ -39,6 +39,8 @@
 		G00000010000000000000001 /* ForteDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000110000000000000001 /* ForteDesign.swift */; };
 		G00000020000000000000001 /* ForteIntentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000120000000000000001 /* ForteIntentScreen.swift */; };
 		G00000030000000000000001 /* ForteModalityScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000130000000000000001 /* ForteModalityScreen.swift */; };
+		G00000040000000000000001 /* ForteStackedChoiceList.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000140000000000000001 /* ForteStackedChoiceList.swift */; };
+		G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000150000000000000001 /* ForteInfrastructureScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -87,6 +89,8 @@
 		G00000110000000000000001 /* ForteDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteDesign.swift; sourceTree = "<group>"; };
 		G00000120000000000000001 /* ForteIntentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteIntentScreen.swift; sourceTree = "<group>"; };
 		G00000130000000000000001 /* ForteModalityScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteModalityScreen.swift; sourceTree = "<group>"; };
+		G00000140000000000000001 /* ForteStackedChoiceList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteStackedChoiceList.swift; sourceTree = "<group>"; };
+		G00000150000000000000001 /* ForteInfrastructureScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteInfrastructureScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -192,6 +196,7 @@
 				A000001C000000000000001 /* HAYFColor.swift */,
 				A000001D000000000000001 /* HAYFLogo.swift */,
 				G00000110000000000000001 /* ForteDesign.swift */,
+				G00000140000000000000001 /* ForteStackedChoiceList.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -258,6 +263,7 @@
 				A0000027000000000000001 /* OnboardingFlowView.swift */,
 				G00000120000000000000001 /* ForteIntentScreen.swift */,
 				G00000130000000000000001 /* ForteModalityScreen.swift */,
+				G00000150000000000000001 /* ForteInfrastructureScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -389,9 +395,11 @@
 				A00000090000000000000001 /* HAYFColor.swift in Sources */,
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
 				G00000010000000000000001 /* ForteDesign.swift in Sources */,
+				G00000040000000000000001 /* ForteStackedChoiceList.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
 				G00000030000000000000001 /* ForteModalityScreen.swift in Sources */,
+				G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

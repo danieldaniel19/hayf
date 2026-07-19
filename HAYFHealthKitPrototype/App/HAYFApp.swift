@@ -5,7 +5,9 @@ struct HAYFApp: App {
     var body: some Scene {
         WindowGroup {
             #if FORTE_DEV
-            if let previewIntent = ForteModalityPreviewLaunch.intent {
+            if let previewIntent = ForteInfrastructurePreviewLaunch.intent {
+                ForteInfrastructurePreviewHost(intent: previewIntent)
+            } else if let previewIntent = ForteModalityPreviewLaunch.intent {
                 ForteModalityPreviewHost(intent: previewIntent)
             } else if let previewIntent = ForteIntentPreviewLaunch.intent {
                 ForteIntentPreviewHost(initialIntent: previewIntent)
@@ -22,6 +24,18 @@ struct HAYFApp: App {
 }
 
 #if FORTE_DEV
+private enum ForteInfrastructurePreviewLaunch {
+    private static let selectedArgumentPrefix = "--forte-infrastructure-preview="
+
+    static var intent: OnboardingIntent? {
+        guard let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(selectedArgumentPrefix) }) else {
+            return nil
+        }
+
+        return OnboardingIntent(rawValue: String(argument.dropFirst(selectedArgumentPrefix.count)))
+    }
+}
+
 private enum ForteModalityPreviewLaunch {
     private static let selectedArgumentPrefix = "--forte-modality-preview="
 
@@ -48,6 +62,46 @@ private enum ForteIntentPreviewLaunch {
         }
 
         return OnboardingIntent(rawValue: String(argument.dropFirst(selectedArgumentPrefix.count)))
+    }
+}
+
+private struct ForteInfrastructurePreviewHost: View {
+    let intent: OnboardingIntent
+    private let options: [InfrastructureAccess] = [
+        .gym,
+        .indoorBike,
+        .outdoorBike,
+        .outdoorRoutes,
+        .treadmill,
+        .homeWeights
+    ]
+    @State private var selectedOptions: Set<InfrastructureAccess> = [.gym, .outdoorRoutes]
+    @State private var didExit = false
+
+    var body: some View {
+        if didExit {
+            Text("Onboarding closed")
+                .accessibilityIdentifier("forte.infrastructure.closed")
+        } else {
+            ForteInfrastructureScreen(
+                options: options,
+                selectedOptions: selectedOptions,
+                progressStep: OnboardingStep.infrastructure.activeSegments(for: intent),
+                totalSteps: OnboardingStep.totalSegments(for: intent),
+                onToggle: toggle,
+                onBack: {},
+                onExit: { didExit = true },
+                onContinue: {}
+            )
+        }
+    }
+
+    private func toggle(_ option: InfrastructureAccess) {
+        if selectedOptions.contains(option) {
+            selectedOptions.remove(option)
+        } else {
+            selectedOptions.insert(option)
+        }
     }
 }
 

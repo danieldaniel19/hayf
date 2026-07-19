@@ -194,6 +194,15 @@ components:
     rounded: "{rounded.lg}"
     padding: "{spacing.lg}"
 
+  stacked-choice-list:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    selectedBackgroundColor: "{colors.indigoMist}"
+    rounded: "{rounded.xl}"
+    rowHeight: 68px
+    iconSize: 48px
+    dividerColor: "{colors.borderSubtle}"
+
   sheet:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.xl}"
@@ -497,6 +506,8 @@ Examples include a bicycle, dumbbell, rainy cloud, fatigue cloud, running shoe, 
 
 These icons are not claymorphism. Avoid rubbery inflated forms, excessive softness, monochrome clay surfaces, toy-like proportions, and blob-shaped objects unless the subject itself requires them.
 
+Compact choice rows may use this tier at **40px to 48px** when the object has a strong silhouette and remains recognisable at that rendered size. Reuse an existing medium icon when the concept already matches; do not create near-duplicate gym, modality, or equipment artwork. Small functional controls inside the same row—checks, radios, chevrons, locks, and disclosure marks—remain Tier 3 outline icons.
+
 ### Tier 3: Small Utility Icons
 
 Use for:
@@ -591,6 +602,22 @@ Choice cards should feel tactile but not heavy.
 - Outline radio or check control.
 - Selected state uses Indigo Mist or Indigo Soft with a stronger indigo control state.
 - Avoid colored outlines as the primary selected treatment.
+
+### Stacked Choice Lists
+
+Use a stacked choice list when an onboarding question presents four or more closely related, compact options and each option needs only an icon, a short label, and a selection control.
+
+- Place all rows inside one white or softly neutral surface with a 24px outer radius.
+- Use 64px to 72px rows; 68px is the default.
+- Use one 40px to 48px medium skeuomorphic icon per row, with consistent object scale, camera angle, and upper-left light.
+- Reuse existing medium-icon assets whenever the same object already communicates the option.
+- Separate unselected rows with subtle inset dividers rather than individual card borders or shadows.
+- Use Indigo Mist across the full selected row, plus a filled indigo check or radio control. Selection must not rely on color alone.
+- Keep row labels in compact sans serif and preserve at least a 44px touch target.
+- Keep the list inside the screen's scrolling content while the primary Continue action remains fixed at the bottom.
+- Use the shared `ForteStackedChoiceList` component so later screens inherit the same geometry and state treatment.
+
+Do not use the stacked pattern for choices that need multi-line explanations, ranking, comparison, or large expressive icons; use separate choice cards or a grid for those cases.
 
 ### Content Cards
 
