@@ -213,6 +213,15 @@ components:
     minHeight: 148px
     padding: "{spacing.lg}"
 
+  wheel-selector:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.inkMuted}"
+    selectedTextColor: "{colors.indigoDeep}"
+    selectedBackgroundColor: "{colors.indigoMist}"
+    rounded: "{rounded.xl}"
+    rowHeight: 48px
+    viewportHeight: 176px
+
   sheet:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.xl}"
@@ -643,6 +652,22 @@ Use a text area for optional context that helps Forte understand a choice withou
 - Reuse `ForteTextArea` for multiline free-form onboarding inputs so labels, focus state, counter placement, and limits remain consistent.
 
 Do not use an oversized text area for a short factual answer. Use a compact single-line field, picker, or structured choice when the response has a predictable format.
+
+### Wheel Selectors
+
+Use a wheel selector for a short ordered range where users benefit from quickly flicking between adjacent values, such as weekly frequency, duration, weight, or height.
+
+- Use a custom snapping scroll interaction rather than the visually fixed system wheel when the screen needs Forte styling.
+- Keep each option row 48px high inside a 176px viewport, with the selected value centered.
+- Use Ink Muted for surrounding values and fade them toward the top and bottom edges.
+- Place the selected value on an Indigo Mist band with Indigo Deep semibold text. Selection must remain readable without relying on the fade alone.
+- Group paired values inside one white 24px-radius surface with a single subtle divider; avoid separate bordered picker boxes.
+- Keep field labels above their wheels in 13px semibold sans serif.
+- Preserve flicking, snapping, direct row taps, selection haptics, and VoiceOver adjustable actions.
+- Default values may be preselected when they represent a safe, reversible starting point; never imply that a preselection is a recommendation.
+- Reuse `ForteWheelSelector` so later numeric and ordered pickers inherit the same motion, selection band, fading, and accessibility behavior.
+
+Do not use a wheel for unordered categories, long labels, destructive settings, or lists with only two values. Use stacked choices, chips, or a segmented control instead.
 
 ### Content Cards
 

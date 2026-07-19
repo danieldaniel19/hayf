@@ -43,6 +43,8 @@
 		G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000150000000000000001 /* ForteInfrastructureScreen.swift */; };
 		G00000060000000000000001 /* ForteTextArea.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000160000000000000001 /* ForteTextArea.swift */; };
 		G00000070000000000000001 /* ForteMotivationAnchorScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000170000000000000001 /* ForteMotivationAnchorScreen.swift */; };
+		G00000080000000000000001 /* ForteWheelSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000180000000000000001 /* ForteWheelSelector.swift */; };
+		G00000090000000000000001 /* ForteWeeklyCapacityScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000190000000000000001 /* ForteWeeklyCapacityScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -95,6 +97,8 @@
 		G00000150000000000000001 /* ForteInfrastructureScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteInfrastructureScreen.swift; sourceTree = "<group>"; };
 		G00000160000000000000001 /* ForteTextArea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteTextArea.swift; sourceTree = "<group>"; };
 		G00000170000000000000001 /* ForteMotivationAnchorScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteMotivationAnchorScreen.swift; sourceTree = "<group>"; };
+		G00000180000000000000001 /* ForteWheelSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteWheelSelector.swift; sourceTree = "<group>"; };
+		G00000190000000000000001 /* ForteWeeklyCapacityScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteWeeklyCapacityScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -202,6 +206,7 @@
 				G00000110000000000000001 /* ForteDesign.swift */,
 				G00000140000000000000001 /* ForteStackedChoiceList.swift */,
 				G00000160000000000000001 /* ForteTextArea.swift */,
+				G00000180000000000000001 /* ForteWheelSelector.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -270,6 +275,7 @@
 				G00000130000000000000001 /* ForteModalityScreen.swift */,
 				G00000150000000000000001 /* ForteInfrastructureScreen.swift */,
 				G00000170000000000000001 /* ForteMotivationAnchorScreen.swift */,
+				G00000190000000000000001 /* ForteWeeklyCapacityScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -403,11 +409,13 @@
 				G00000010000000000000001 /* ForteDesign.swift in Sources */,
 				G00000040000000000000001 /* ForteStackedChoiceList.swift in Sources */,
 				G00000060000000000000001 /* ForteTextArea.swift in Sources */,
+				G00000080000000000000001 /* ForteWheelSelector.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
 				G00000030000000000000001 /* ForteModalityScreen.swift in Sources */,
 				G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */,
 				G00000070000000000000001 /* ForteMotivationAnchorScreen.swift in Sources */,
+				G00000090000000000000001 /* ForteWeeklyCapacityScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

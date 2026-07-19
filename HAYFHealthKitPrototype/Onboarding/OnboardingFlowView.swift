@@ -94,6 +94,17 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .weeklyCapacity {
+                ForteWeeklyCapacityScreen(
+                    intent: currentIntent,
+                    frequency: $draft.frequency,
+                    sessionLength: $draft.sessionLength,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
