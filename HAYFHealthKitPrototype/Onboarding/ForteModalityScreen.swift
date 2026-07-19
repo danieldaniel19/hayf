@@ -27,9 +27,18 @@ struct ForteModalityScreen: View {
 
                         LazyVGrid(columns: gridColumns, spacing: 10) {
                             ForEach(TrainingOption.allCases) { option in
-                                ForteModalityTile(
-                                    option: option,
-                                    selectionRank: selectedOptions.firstIndex(of: option).map { $0 + 1 }
+                                let selectionRank = selectedOptions.firstIndex(of: option).map { $0 + 1 }
+
+                                ForteImageChoiceTile(
+                                    title: option.title,
+                                    assetName: option.forteAssetName,
+                                    isSelected: selectionRank != nil,
+                                    selectionBadge: selectionRank.map(String.init),
+                                    isLocked: !option.isOnboardingEnabled,
+                                    accessibilityValue: selectionRank.map { "Priority \($0)" } ?? "Not selected",
+                                    accessibilityHint: option.isOnboardingEnabled
+                                        ? "Selects this modality and assigns its priority order."
+                                        : "This modality is locked for testing."
                                 ) {
                                     onToggle(option)
                                 }
@@ -148,70 +157,6 @@ struct ForteModalityScreen: View {
     }
 }
 
-private struct ForteModalityTile: View {
-    let option: TrainingOption
-    let selectionRank: Int?
-    let action: () -> Void
-
-    private var isSelected: Bool { selectionRank != nil }
-    private var isLocked: Bool { !option.isOnboardingEnabled }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Image(option.forteAssetName)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 62, height: 62)
-                    .opacity(isLocked ? 0.52 : 1)
-                    .accessibilityHidden(true)
-
-                Text(option.title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isLocked ? ForteColor.inkMuted : ForteColor.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .frame(height: 100)
-            .background(isSelected ? ForteColor.indigoMist : ForteColor.surface.opacity(0.96))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(alignment: .topTrailing) {
-                if isLocked {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(ForteColor.inkMuted)
-                        .padding(10)
-                } else if let selectionRank {
-                    Text("\(selectionRank)")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.white)
-                        .frame(width: 22, height: 22)
-                        .background(ForteColor.indigoDeep)
-                        .clipShape(Circle())
-                        .padding(8)
-                }
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(
-                        isSelected ? ForteColor.indigo.opacity(0.62) : ForteColor.borderSubtle.opacity(0.78),
-                        lineWidth: isSelected ? 1.3 : 1
-                    )
-            }
-            .shadow(color: Color.black.opacity(isSelected ? 0.08 : 0.05), radius: 8, y: 4)
-        }
-        .buttonStyle(ForteModalityTileButtonStyle())
-        .disabled(isLocked)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isLocked ? "\(option.title), not available yet" : option.title)
-        .accessibilityValue(selectionRank.map { "Priority \($0)" } ?? "Not selected")
-        .accessibilityHint(isLocked ? "This modality is locked for testing." : "Selects this modality and assigns its priority order.")
-    }
-}
-
 private struct ForteModalityHeaderButton: View {
     let systemName: String
     let action: () -> Void
@@ -231,15 +176,6 @@ private struct ForteModalityHeaderButton: View {
                 .shadow(color: Color.black.opacity(0.07), radius: 9, y: 4)
         }
         .buttonStyle(.plain)
-    }
-}
-
-private struct ForteModalityTileButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.975 : 1)
-            .opacity(configuration.isPressed ? 0.92 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

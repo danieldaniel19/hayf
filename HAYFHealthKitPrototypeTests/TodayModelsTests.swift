@@ -222,6 +222,12 @@ final class OnboardingPolicyTests: XCTestCase {
     }
 
     func testUltraFlexibleAvailabilityAndManualOverride() {
+        XCTAssertEqual(DayPart.allCases.map(\.forteAssetName), [
+            "ForteDayPartMorning",
+            "ForteDayPartAfternoon",
+            "ForteDayPartEvening"
+        ])
+
         var draft = ConsistencyOnboardingDraft()
         draft.toggleUltraFlexibleAvailability()
         XCTAssertTrue(draft.ultraFlexibleAvailability)

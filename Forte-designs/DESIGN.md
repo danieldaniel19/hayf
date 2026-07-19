@@ -194,6 +194,23 @@ components:
     rounded: "{rounded.lg}"
     padding: "{spacing.lg}"
 
+  image-choice-tile:
+    backgroundColor: "{colors.surface}"
+    selectedBackgroundColor: "{colors.indigoMist}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.md}"
+    height: 100px
+    iconSize: 62px
+
+  weekday-chip:
+    backgroundColor: "{colors.surface}"
+    selectedBackgroundColor: "{colors.indigoMist}"
+    textColor: "{colors.inkSoft}"
+    selectedTextColor: "{colors.indigoDeep}"
+    rounded: 14px
+    width: 42px
+    height: 48px
+
   stacked-choice-list:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
@@ -527,6 +544,8 @@ These icons are not claymorphism. Avoid rubbery inflated forms, excessive softne
 
 Compact choice rows may use this tier at **40px to 48px** when the object has a strong silhouette and remains recognisable at that rendered size. Reuse an existing medium icon when the concept already matches; do not create near-duplicate gym, modality, or equipment artwork. Small functional controls inside the same row—checks, radios, chevrons, locks, and disclosure marks—remain Tier 3 outline icons.
 
+Time-of-day choices form a matched sub-family: a coffee cup for morning, a simple sun for afternoon, and a nightstand lamp for evening. Render all three on the same low warm-ivory pedestal, at the same camera angle and object scale. Represent schedule flexibility with a standalone loose elastic band; do not use sparkles or other AI-associated symbols for this concept.
+
 ### Tier 3: Small Utility Icons
 
 Use for:
@@ -621,6 +640,31 @@ Choice cards should feel tactile but not heavy.
 - Outline radio or check control.
 - Selected state uses Indigo Mist or Indigo Soft with a stronger indigo control state.
 - Avoid colored outlines as the primary selected treatment.
+
+### Image Choice Tiles
+
+Use image choice tiles for small sets of visually distinct categories that benefit from a medium skeuomorphic icon, such as modalities or parts of the day.
+
+- Use a three-column grid at standard Dynamic Type and two columns at accessibility sizes.
+- Keep tiles 100px high with a 62px medium icon, a one-line 13px label, and a 16px radius.
+- Use the white Surface resting state and Indigo Mist selected state, supported by an indigo border and semibold label.
+- Optional compact badges may communicate rank or sequence; omit the badge for ordinary multi-select choices.
+- Keep icon scale, lighting, and camera angle consistent across the row.
+- Reuse `ForteImageChoiceTile` so modality, availability, and later category grids share geometry and state behavior.
+
+Do not use these tiles for options that need explanatory copy, dense data, or text-only distinctions.
+
+### Weekday Initial Selectors
+
+Use initials for compact Monday-through-Sunday selection when the surrounding label already establishes that the controls represent days.
+
+- Keep the canonical order Monday through Sunday and expose full day names to accessibility.
+- Use 42×48px chips with a 14px radius, semibold rounded initials, and at least a 44px touch target.
+- Keep weekday and weekend chips on the same neutral surface. Use a subtle vertical divider between Friday and Saturday to improve scanning without assigning semantic colors to the calendar.
+- Use Indigo Mist, Indigo Deep text, stronger weight, and a subtle indigo border for selected days.
+- Do not add pictograms to the weekday chips; their initials are the information.
+
+Avoid separate weekday and weekend colors unless a future workflow gives those groups distinct meaning beyond their calendar position.
 
 ### Stacked Choice Lists
 

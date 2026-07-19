@@ -105,6 +105,20 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .weeklyAvailability {
+                ForteWeeklyAvailabilityScreen(
+                    selectedDays: draft.availableDays,
+                    selectedDayParts: draft.availableDayParts,
+                    isFlexible: draft.ultraFlexibleAvailability,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggleDay: toggleAvailableDay,
+                    onToggleDayPart: toggleAvailableDayPart,
+                    onToggleFlexible: toggleUltraFlexibleAvailability,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -1635,6 +1649,22 @@ struct OnboardingFlowView: View {
 
     private func toggleMotivationAnchor(_ anchor: MotivationAnchor) {
         draft.toggleMotivationAnchor(anchor)
+    }
+
+    private func toggleAvailableDay(_ day: Weekday) {
+        var days = draft.availableDays
+        days.toggle(day)
+        draft.setAvailableDays(days)
+    }
+
+    private func toggleAvailableDayPart(_ dayPart: DayPart) {
+        var dayParts = draft.availableDayParts
+        dayParts.toggle(dayPart)
+        draft.setAvailableDayParts(dayParts)
+    }
+
+    private func toggleUltraFlexibleAvailability() {
+        draft.toggleUltraFlexibleAvailability()
     }
 
     private func goBack() {
@@ -5030,6 +5060,14 @@ enum DayPart: String, CaseIterable, Identifiable {
         case .midday: return "sun.max"
         case .afternoon: return "sun.max"
         case .evening: return "moon"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .morning: return "ForteDayPartMorning"
+        case .midday, .afternoon: return "ForteDayPartAfternoon"
+        case .evening: return "ForteDayPartEvening"
         }
     }
 }
