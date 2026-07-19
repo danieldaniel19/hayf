@@ -130,6 +130,25 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .injuries {
+                ForteInjuryScreen(
+                    injuryNotes: $draft.injuryNotes,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .bodyBasics {
+                ForteBodyBasicsScreen(
+                    bodyMassKilogramsInput: $draft.bodyMassKilogramsInput,
+                    heightCentimetersInput: $draft.heightCentimetersInput,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
