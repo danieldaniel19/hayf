@@ -8,8 +8,8 @@ struct ForteWheelSelector<Option: Identifiable & Hashable>: View where Option.ID
 
     @State private var positionedID: Option.ID?
 
-    private let rowHeight: CGFloat = 48
-    private let wheelHeight: CGFloat = 176
+    private let rowHeight: CGFloat = 44
+    private let wheelHeight: CGFloat = 152
 
     var body: some View {
         ZStack {
@@ -20,6 +20,7 @@ struct ForteWheelSelector<Option: Identifiable & Hashable>: View where Option.ID
                         .stroke(ForteColor.indigo.opacity(0.14), lineWidth: 1)
                 }
                 .frame(height: rowHeight)
+                .padding(.horizontal, 5)
 
             ScrollView(.vertical) {
                 LazyVStack(spacing: 0) {
@@ -28,7 +29,7 @@ struct ForteWheelSelector<Option: Identifiable & Hashable>: View where Option.ID
                             select(option)
                         } label: {
                             Text(title(option))
-                                .font(.system(size: 19, weight: isPositioned(option) ? .semibold : .medium, design: .rounded))
+                                .font(.system(size: 18, weight: isPositioned(option) ? .semibold : .medium, design: .rounded))
                                 .foregroundStyle(isPositioned(option) ? ForteColor.indigoDeep : ForteColor.inkMuted)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.74)

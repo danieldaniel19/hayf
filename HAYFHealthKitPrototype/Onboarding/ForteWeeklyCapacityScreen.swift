@@ -122,7 +122,7 @@ struct ForteWeeklyCapacityScreen: View {
                 .foregroundStyle(ForteColor.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
-                .padding(.bottom, 20)
+                .padding(.bottom, 28)
         }
     }
 
@@ -141,8 +141,9 @@ struct ForteWeeklyCapacityScreen: View {
 
             Rectangle()
                 .fill(ForteColor.borderSubtle.opacity(0.74))
-                .frame(width: 1, height: 190)
-                .padding(.top, 14)
+                .frame(width: 1, height: 150)
+                .padding(.horizontal, 8)
+                .padding(.top, 12)
 
             ForteWeeklyCapacityColumn(title: "Session length") {
                 ForteWheelSelector(
@@ -153,8 +154,8 @@ struct ForteWeeklyCapacityScreen: View {
                 )
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
         .background(ForteColor.surface.opacity(0.97))
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
@@ -162,6 +163,8 @@ struct ForteWeeklyCapacityScreen: View {
                 .stroke(ForteColor.borderSubtle.opacity(0.62), lineWidth: 1)
         }
         .shadow(color: Color.black.opacity(0.05), radius: 12, y: 5)
+        .frame(maxWidth: 320)
+        .frame(maxWidth: .infinity)
     }
 
     private var continueAction: some View {
