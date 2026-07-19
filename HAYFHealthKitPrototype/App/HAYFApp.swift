@@ -5,7 +5,9 @@ struct HAYFApp: App {
     var body: some Scene {
         WindowGroup {
             #if FORTE_DEV
-            if let previewIntent = ForteIntentPreviewLaunch.intent {
+            if let previewIntent = ForteModalityPreviewLaunch.intent {
+                ForteModalityPreviewHost(intent: previewIntent)
+            } else if let previewIntent = ForteIntentPreviewLaunch.intent {
                 ForteIntentPreviewHost(initialIntent: previewIntent)
             } else if ForteIntentPreviewLaunch.showsUnselectedIntent {
                 ForteIntentPreviewHost(initialIntent: nil)
@@ -20,6 +22,18 @@ struct HAYFApp: App {
 }
 
 #if FORTE_DEV
+private enum ForteModalityPreviewLaunch {
+    private static let selectedArgumentPrefix = "--forte-modality-preview="
+
+    static var intent: OnboardingIntent? {
+        guard let argument = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(selectedArgumentPrefix) }) else {
+            return nil
+        }
+
+        return OnboardingIntent(rawValue: String(argument.dropFirst(selectedArgumentPrefix.count)))
+    }
+}
+
 private enum ForteIntentPreviewLaunch {
     private static let unselectedArgument = "--forte-intent-preview"
     private static let selectedArgumentPrefix = "--forte-intent-preview="
@@ -34,6 +48,38 @@ private enum ForteIntentPreviewLaunch {
         }
 
         return OnboardingIntent(rawValue: String(argument.dropFirst(selectedArgumentPrefix.count)))
+    }
+}
+
+private struct ForteModalityPreviewHost: View {
+    let intent: OnboardingIntent
+    @State private var selectedOptions: [TrainingOption] = [.cycling, .strength, .running]
+    @State private var didExit = false
+
+    var body: some View {
+        if didExit {
+            Text("Onboarding closed")
+                .accessibilityIdentifier("forte.modality.closed")
+        } else {
+            ForteModalityScreen(
+                selectedOptions: selectedOptions,
+                progressStep: OnboardingStep.options.activeSegments(for: intent),
+                totalSteps: OnboardingStep.totalSegments(for: intent),
+                onToggle: toggle,
+                onBack: {},
+                onExit: { didExit = true },
+                onContinue: {}
+            )
+        }
+    }
+
+    private func toggle(_ option: TrainingOption) {
+        guard option.isOnboardingEnabled else { return }
+        if let index = selectedOptions.firstIndex(of: option) {
+            selectedOptions.remove(at: index)
+        } else {
+            selectedOptions.append(option)
+        }
     }
 }
 

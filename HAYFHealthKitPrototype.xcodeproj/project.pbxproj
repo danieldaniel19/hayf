@@ -38,6 +38,7 @@
 		F00000010000000000000001 /* TodayModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000110000000000000001 /* TodayModelsTests.swift */; };
 		G00000010000000000000001 /* ForteDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000110000000000000001 /* ForteDesign.swift */; };
 		G00000020000000000000001 /* ForteIntentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000120000000000000001 /* ForteIntentScreen.swift */; };
+		G00000030000000000000001 /* ForteModalityScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000130000000000000001 /* ForteModalityScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -85,6 +86,7 @@
 		F00000120000000000000001 /* HAYFHealthKitPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HAYFHealthKitPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		G00000110000000000000001 /* ForteDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteDesign.swift; sourceTree = "<group>"; };
 		G00000120000000000000001 /* ForteIntentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteIntentScreen.swift; sourceTree = "<group>"; };
+		G00000130000000000000001 /* ForteModalityScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteModalityScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -255,6 +257,7 @@
 			children = (
 				A0000027000000000000001 /* OnboardingFlowView.swift */,
 				G00000120000000000000001 /* ForteIntentScreen.swift */,
+				G00000130000000000000001 /* ForteModalityScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -388,6 +391,7 @@
 				G00000010000000000000001 /* ForteDesign.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
+				G00000030000000000000001 /* ForteModalityScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

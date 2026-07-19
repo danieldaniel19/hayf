@@ -146,6 +146,21 @@ final class OnboardingPolicyTests: XCTestCase {
             Set(TrainingOption.allCases.filter(\.isOnboardingEnabled)),
             Set([.cycling, .strength, .running])
         )
+        XCTAssertEqual(
+            TrainingOption.allCases.map(\.forteAssetName),
+            [
+                "ForteModalityStrength",
+                "ForteModalityRunning",
+                "ForteModalityCycling",
+                "ForteModalitySwimming",
+                "ForteModalityTennis",
+                "ForteModalityFootball",
+                "ForteModalityBasketball",
+                "ForteModalityMobility",
+                "ForteModalityWalking",
+                "ForteModalityYoga"
+            ]
+        )
         var draft = ConsistencyOnboardingDraft()
         draft.toggleTrainingOption(.swimming)
         XCTAssertTrue(draft.trainingOptions.isEmpty)
@@ -207,6 +222,9 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(OnboardingStep.firstStep(after: .stayConsistent), .options)
         XCTAssertEqual(OnboardingStep.firstStep(after: .concreteGoal), .goalBrief)
         XCTAssertEqual(OnboardingStep.firstStep(after: .findGoal), .options)
+        XCTAssertEqual(OnboardingStep.options.activeSegments(for: .stayConsistent), 2)
+        XCTAssertEqual(OnboardingStep.options.activeSegments(for: .concreteGoal), 5)
+        XCTAssertEqual(OnboardingStep.options.activeSegments(for: .findGoal), 2)
     }
 
     func testGoalIntensityContractAndCopy() throws {

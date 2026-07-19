@@ -62,6 +62,16 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .options {
+                ForteModalityScreen(
+                    selectedOptions: draft.trainingOptions,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggle: toggleTrainingOption,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -1573,6 +1583,14 @@ struct OnboardingFlowView: View {
         case .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
             break
         }
+    }
+
+    private func toggleTrainingOption(_ option: TrainingOption) {
+        guard option.isOnboardingEnabled else { return }
+        if selectedIntent == .findGoal {
+            invalidateGoalCandidates()
+        }
+        draft.toggleTrainingOption(option)
     }
 
     private func goBack() {
@@ -4814,6 +4832,21 @@ enum TrainingOption: String, CaseIterable, Identifiable {
         case .mobility: return "figure.cooldown"
         case .walking: return "figure.walk"
         case .yoga: return "figure.mind.and.body"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .strength: return "ForteModalityStrength"
+        case .running: return "ForteModalityRunning"
+        case .cycling: return "ForteModalityCycling"
+        case .swimming: return "ForteModalitySwimming"
+        case .tennis: return "ForteModalityTennis"
+        case .football: return "ForteModalityFootball"
+        case .basketball: return "ForteModalityBasketball"
+        case .mobility: return "ForteModalityMobility"
+        case .walking: return "ForteModalityWalking"
+        case .yoga: return "ForteModalityYoga"
         }
     }
 
