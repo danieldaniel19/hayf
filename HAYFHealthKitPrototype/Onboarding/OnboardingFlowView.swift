@@ -166,6 +166,18 @@ struct OnboardingFlowView: View {
                     onContinue: primaryAction
                 )
                 .onAppear(perform: refreshEstimatedBodyFatSelection)
+            } else if step == .support {
+                ForteSupportStyleScreen(
+                    selectedStyle: draft.supportStyle,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { supportStyle in
+                        draft.supportStyle = supportStyle
+                    },
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -5821,6 +5833,16 @@ enum CoachingSupportStyle: String, CaseIterable, Identifiable {
         case .easiestUseful: return "arrow.down.circle"
         case .explainTradeoff: return "arrow.left.arrow.right"
         case .remindWhy: return "target"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .calmReset: return "ForteSupportCalmReset"
+        case .directPush: return "ForteSupportDirectPush"
+        case .easiestUseful: return "ForteSupportEasiestUseful"
+        case .explainTradeoff: return "ForteSupportExplainTradeoff"
+        case .remindWhy: return "ForteSupportRemindWhy"
         }
     }
 }

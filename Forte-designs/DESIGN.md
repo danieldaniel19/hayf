@@ -550,6 +550,8 @@ Consistency barriers use direct object metaphors at compact row scale: calendar 
 
 Body-composition range choices use one matched tree family on the same warm-ivory pedestal. Keep the trunk, branch structure, camera, scale, lighting, and base consistent while foliage density progresses from bare to lush across the six ranges. The progression is descriptive rather than evaluative: do not use warning colors, success colors, faces, or body silhouettes. The profile-based estimate uses one tree with a smooth sparse-to-lush canopy transition and a few muted mixed-color leaves to communicate locating a position within the range.
 
+Coaching-support choices use reassuring object metaphors on the shared warm-ivory pedestal: a soft circular return around a pebble for calm reset, a compact megaphone for direct push, a feather for the easiest useful option, a level balance scale for tradeoff explanation, and a compass for reconnecting to purpose. Keep this family supportive rather than punitive; avoid alarms, warning colors, shouting marks, guilt imagery, or aggressive sports poses.
+
 ### Tier 3: Small Utility Icons
 
 Use for:

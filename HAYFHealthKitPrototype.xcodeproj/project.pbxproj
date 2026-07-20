@@ -52,6 +52,7 @@
 		G000000E0000000000000001 /* ForteBodyBasicsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */; };
 		G000000F0000000000000001 /* ForteEditorialChoiceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */; };
 		G00000100000000000000001 /* ForteBodyFatEstimateScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */; };
+		H00000010000000000000001 /* ForteSupportStyleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000110000000000000001 /* ForteSupportStyleScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -113,6 +114,7 @@
 		G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBodyBasicsScreen.swift; sourceTree = "<group>"; };
 		G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteEditorialChoiceCard.swift; sourceTree = "<group>"; };
 		G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBodyFatEstimateScreen.swift; sourceTree = "<group>"; };
+		H00000110000000000000001 /* ForteSupportStyleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteSupportStyleScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -297,6 +299,7 @@
 				G000001D0000000000000001 /* ForteInjuryScreen.swift */,
 				G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */,
 				G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */,
+				H00000110000000000000001 /* ForteSupportStyleScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -444,6 +447,7 @@
 				G000000D0000000000000001 /* ForteInjuryScreen.swift in Sources */,
 				G000000E0000000000000001 /* ForteBodyBasicsScreen.swift in Sources */,
 				G00000100000000000000001 /* ForteBodyFatEstimateScreen.swift in Sources */,
+				H00000010000000000000001 /* ForteSupportStyleScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

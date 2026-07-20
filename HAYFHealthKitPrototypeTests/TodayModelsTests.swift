@@ -379,6 +379,16 @@ final class OnboardingPolicyTests: XCTestCase {
         ])
     }
 
+    func testCoachingSupportStylesUseTheMatchedObjectFamily() {
+        XCTAssertEqual(CoachingSupportStyle.allCases.map(\.forteAssetName), [
+            "ForteSupportCalmReset",
+            "ForteSupportDirectPush",
+            "ForteSupportEasiestUseful",
+            "ForteSupportExplainTradeoff",
+            "ForteSupportRemindWhy"
+        ])
+    }
+
     func testVariableBadDayFloorSerializesAsModelDiscretion() {
         XCTAssertTrue(BadDayFloor.varies.planningValue.hasPrefix("Model discretion:"))
         XCTAssertNotEqual(BadDayFloor.varies.planningValue, BadDayFloor.varies.title)
