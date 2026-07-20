@@ -214,12 +214,12 @@ private struct ForteBodyBasicsColumn<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .center, spacing: 4) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(ForteColor.inkSoft)
                 .lineLimit(1)
-                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .center)
 
             content()
         }

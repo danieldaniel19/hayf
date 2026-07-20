@@ -706,12 +706,12 @@ Use a wheel selector for a short ordered range where users benefit from quickly 
 - Use the native iOS wheel picker interaction. Never emulate a wheel with tappable rows or custom scroll snapping.
 - Keep each option row 44px high inside a 152px viewport, with the selected value centered.
 - Use Ink Muted for surrounding values and preserve the native wheel's top and bottom fading.
-- Place an Indigo Mist band behind the native selection region with Indigo Deep semibold text, without adding an overlay that intercepts gestures. Selection must remain readable without relying on the fade alone.
+- Use the native selection highlight only. Do not layer a custom highlight band behind or over it.
 - Group paired values inside one centered white 24px-radius surface, capped near 320px wide, with a subtle divider and at least 16px of visual gutter between the two selection bands; avoid separate bordered picker boxes.
-- Keep field labels above their wheels in 13px semibold sans serif.
+- Center field labels above their wheel columns in 13px semibold sans serif.
 - Preserve native press-and-drag, flicking, deceleration, snapping, direct row taps, selection haptics, and VoiceOver adjustable actions.
 - Default values may be preselected when they represent a safe, reversible starting point; never imply that a preselection is a recommendation.
-- Reuse `ForteWheelSelector` so later numeric and ordered pickers inherit native wheel motion, the same selection band, fading, and accessibility behavior.
+- Reuse `ForteWheelSelector` so later numeric and ordered pickers inherit native wheel motion, selection highlight, fading, and accessibility behavior.
 
 Do not use a wheel for unordered categories, long labels, destructive settings, or lists with only two values. Use stacked choices, chips, or a segmented control instead.
 
