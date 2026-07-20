@@ -149,6 +149,23 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .bodyFatEstimate {
+                ForteBodyFatEstimateScreen(
+                    options: BodyFatBand.options(for: physiologyReference),
+                    selectedBand: draft.bodyFatBand,
+                    estimatedPercentage: estimatedBodyFatPercentage,
+                    isEstimatedSelection: draft.bodyFatEstimateSource == .bmiAgePhysiology,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelectBand: { band in
+                        draft.selectBodyFatBand(band)
+                    },
+                    onSelectEstimate: selectEstimatedBodyFat,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+                .onAppear(perform: refreshEstimatedBodyFatSelection)
             } else {
                 legacyOnboardingFlow
             }
@@ -1057,6 +1074,23 @@ struct OnboardingFlowView: View {
             return "Enter valid weight and height to unlock our rough estimate."
         }
         return "About \(Int(estimate.rounded()))%. Rough BMI, age and physiology approximation—not the most accurate."
+    }
+
+    private func selectEstimatedBodyFat() {
+        guard let estimate = estimatedBodyFatPercentage else { return }
+        draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
+    }
+
+    private func refreshEstimatedBodyFatSelection() {
+        guard draft.bodyFatEstimateSource == .bmiAgePhysiology else { return }
+        guard let estimate = estimatedBodyFatPercentage else {
+            draft.bodyFatBand = nil
+            draft.bodyFatEstimatedPercentage = nil
+            draft.bodyFatEstimateSource = nil
+            return
+        }
+
+        draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
     }
 
     private var summaryScreen: some View {
@@ -5200,6 +5234,23 @@ enum BodyFatBand: String, CaseIterable, Identifiable {
         case .male15To17, .female25To28: return "Sporty"
         case .male17To20, .female28To32: return "Softer Definition"
         case .maleAbove20, .femaleAbove32: return "Low Definition"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .maleUnder10, .femaleUnder18:
+            return "ForteBodyFatTreeBare"
+        case .male10To12, .female18To21:
+            return "ForteBodyFatTreeSparse"
+        case .male12To15, .female21To25:
+            return "ForteBodyFatTreeLight"
+        case .male15To17, .female25To28:
+            return "ForteBodyFatTreeMedium"
+        case .male17To20, .female28To32:
+            return "ForteBodyFatTreeFull"
+        case .maleAbove20, .femaleAbove32:
+            return "ForteBodyFatTreeLush"
         }
     }
 

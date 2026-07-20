@@ -360,6 +360,25 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(payload.bodyFatEstimateMidpoint, 20.3, accuracy: 0.001)
     }
 
+    func testBodyFatBandsShareTheSixStageTreeProgression() {
+        XCTAssertEqual(BodyFatBand.options(for: .male).map(\.forteAssetName), [
+            "ForteBodyFatTreeBare",
+            "ForteBodyFatTreeSparse",
+            "ForteBodyFatTreeLight",
+            "ForteBodyFatTreeMedium",
+            "ForteBodyFatTreeFull",
+            "ForteBodyFatTreeLush"
+        ])
+        XCTAssertEqual(BodyFatBand.options(for: .female).map(\.forteAssetName), [
+            "ForteBodyFatTreeBare",
+            "ForteBodyFatTreeSparse",
+            "ForteBodyFatTreeLight",
+            "ForteBodyFatTreeMedium",
+            "ForteBodyFatTreeFull",
+            "ForteBodyFatTreeLush"
+        ])
+    }
+
     func testVariableBadDayFloorSerializesAsModelDiscretion() {
         XCTAssertTrue(BadDayFloor.varies.planningValue.hasPrefix("Model discretion:"))
         XCTAssertNotEqual(BadDayFloor.varies.planningValue, BadDayFloor.varies.title)

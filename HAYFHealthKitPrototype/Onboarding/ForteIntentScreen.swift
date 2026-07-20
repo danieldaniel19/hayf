@@ -21,9 +21,12 @@ struct ForteIntentScreen: View {
 
                         VStack(spacing: 12) {
                             ForEach(OnboardingIntent.allCases) { intent in
-                                ForteIntentChoiceCard(
-                                    intent: intent,
-                                    isSelected: selectedIntent == intent
+                                ForteEditorialChoiceCard(
+                                    title: intent.title,
+                                    subtitle: intent.subtitle,
+                                    assetName: intent.forteAssetName,
+                                    isSelected: selectedIntent == intent,
+                                    accessibilityHint: "Selects this training setup."
                                 ) {
                                     selectedIntent = intent
                                 }
@@ -124,127 +127,6 @@ struct ForteIntentScreen: View {
         .padding(.top, 8)
         .padding(.bottom, 18)
         .background(ForteColor.background.opacity(0.97).ignoresSafeArea(edges: .bottom))
-    }
-}
-
-private struct ForteIntentChoiceCard: View {
-    let intent: OnboardingIntent
-    let isSelected: Bool
-    let action: () -> Void
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        Button(action: action) {
-            Group {
-                if dynamicTypeSize.isAccessibilitySize {
-                    accessibilityLayout
-                } else {
-                    standardLayout
-                }
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
-            .background(isSelected ? ForteColor.indigoMist : ForteColor.surface.opacity(0.96))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(ForteColor.borderSubtle.opacity(isSelected ? 0 : 0.62), lineWidth: 1)
-            }
-            .shadow(color: Color.black.opacity(isSelected ? 0.10 : 0.08), radius: 13, y: 7)
-        }
-        .buttonStyle(ForteChoiceButtonStyle())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(intent.title). \(intent.subtitle)")
-        .accessibilityValue(isSelected ? "Selected" : "Not selected")
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityHint("Selects this training setup.")
-    }
-
-    private var standardLayout: some View {
-        HStack(spacing: 12) {
-            intentImage
-
-            Rectangle()
-                .fill(ForteColor.borderSubtle.opacity(0.72))
-                .frame(width: 1, height: 68)
-                .accessibilityHidden(true)
-
-            copy
-
-            Spacer(minLength: 8)
-
-            ForteRadioControl(isSelected: isSelected)
-        }
-    }
-
-    private var accessibilityLayout: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                intentImage
-                Spacer()
-                ForteRadioControl(isSelected: isSelected)
-            }
-
-            copy
-        }
-    }
-
-    private var intentImage: some View {
-        Image(intent.forteAssetName)
-            .resizable()
-            .scaledToFit()
-            .frame(width: 68, height: 68)
-            .accessibilityHidden(true)
-    }
-
-    private var copy: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(intent.title)
-                .font(ForteTypography.editorial(size: 18, relativeTo: .headline))
-                .foregroundStyle(ForteColor.ink)
-                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1 : 0.82)
-                .allowsTightening(true)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(intent.subtitle)
-                .font(.system(size: 14, weight: .regular))
-                .lineSpacing(3)
-                .foregroundStyle(ForteColor.inkSoft)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct ForteRadioControl: View {
-    let isSelected: Bool
-
-    var body: some View {
-        Circle()
-            .fill(isSelected ? ForteColor.indigo : Color.clear)
-            .frame(width: 24, height: 24)
-            .overlay {
-                Circle()
-                    .stroke(isSelected ? ForteColor.indigo : ForteColor.indigoDeep, lineWidth: 1.8)
-            }
-            .overlay {
-                if isSelected {
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 8, height: 8)
-                }
-            }
-            .accessibilityHidden(true)
-    }
-}
-
-private struct ForteChoiceButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.992 : 1)
-            .opacity(configuration.isPressed ? 0.92 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

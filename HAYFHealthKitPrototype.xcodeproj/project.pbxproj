@@ -50,6 +50,8 @@
 		G000000C0000000000000001 /* ForteConsistencyBlockerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001C0000000000000001 /* ForteConsistencyBlockerScreen.swift */; };
 		G000000D0000000000000001 /* ForteInjuryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001D0000000000000001 /* ForteInjuryScreen.swift */; };
 		G000000E0000000000000001 /* ForteBodyBasicsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */; };
+		G000000F0000000000000001 /* ForteEditorialChoiceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */; };
+		G00000100000000000000001 /* ForteBodyFatEstimateScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -109,6 +111,8 @@
 		G000001C0000000000000001 /* ForteConsistencyBlockerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteConsistencyBlockerScreen.swift; sourceTree = "<group>"; };
 		G000001D0000000000000001 /* ForteInjuryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteInjuryScreen.swift; sourceTree = "<group>"; };
 		G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBodyBasicsScreen.swift; sourceTree = "<group>"; };
+		G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteEditorialChoiceCard.swift; sourceTree = "<group>"; };
+		G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBodyFatEstimateScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -218,6 +222,7 @@
 				G00000160000000000000001 /* ForteTextArea.swift */,
 				G00000180000000000000001 /* ForteWheelSelector.swift */,
 				G000001A0000000000000001 /* ForteImageChoiceTile.swift */,
+				G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -291,6 +296,7 @@
 				G000001C0000000000000001 /* ForteConsistencyBlockerScreen.swift */,
 				G000001D0000000000000001 /* ForteInjuryScreen.swift */,
 				G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */,
+				G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -426,6 +432,7 @@
 				G00000060000000000000001 /* ForteTextArea.swift in Sources */,
 				G00000080000000000000001 /* ForteWheelSelector.swift in Sources */,
 				G000000A0000000000000001 /* ForteImageChoiceTile.swift in Sources */,
+				G000000F0000000000000001 /* ForteEditorialChoiceCard.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
 				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
 				G00000030000000000000001 /* ForteModalityScreen.swift in Sources */,
@@ -436,6 +443,7 @@
 				G000000C0000000000000001 /* ForteConsistencyBlockerScreen.swift in Sources */,
 				G000000D0000000000000001 /* ForteInjuryScreen.swift in Sources */,
 				G000000E0000000000000001 /* ForteBodyBasicsScreen.swift in Sources */,
+				G00000100000000000000001 /* ForteBodyFatEstimateScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

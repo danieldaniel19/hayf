@@ -548,6 +548,8 @@ Time-of-day choices form a matched sub-family: a coffee cup for morning, a simpl
 
 Consistency barriers use direct object metaphors at compact row scale: calendar and clock for work schedule, low battery for low energy, wrapped arm for soreness, blank clipboard for no plan, carry-on suitcase for travel, split lightning bolt for motivation, and rain cloud for weather. Keep these as isolated objects without pedestals so they align with the existing stacked-choice icon family.
 
+Body-composition range choices use one matched tree family on the same warm-ivory pedestal. Keep the trunk, branch structure, camera, scale, lighting, and base consistent while foliage density progresses from bare to lush across the six ranges. The progression is descriptive rather than evaluative: do not use warning colors, success colors, faces, or body silhouettes. The profile-based estimate uses one tree with a smooth sparse-to-lush canopy transition and a few muted mixed-color leaves to communicate locating a position within the range.
+
 ### Tier 3: Small Utility Icons
 
 Use for:
@@ -642,6 +644,9 @@ Choice cards should feel tactile but not heavy.
 - Outline radio or check control.
 - Selected state uses Indigo Mist or Indigo Soft with a stronger indigo control state.
 - Avoid colored outlines as the primary selected treatment.
+- Reuse `ForteEditorialChoiceCard` for choices that combine a medium expressive icon, a serif title, explanatory copy, an optional compact badge, and a single-select radio state.
+- Keep the image well 68px square with a subtle vertical divider between the object and copy.
+- Use this component for intent-scale decisions and body-composition ranges; do not compress either into stacked rows merely to fit more choices above the fold.
 
 ### Image Choice Tiles
 
