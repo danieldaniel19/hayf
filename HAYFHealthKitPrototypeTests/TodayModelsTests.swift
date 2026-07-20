@@ -394,6 +394,17 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertNotEqual(BadDayFloor.varies.planningValue, BadDayFloor.varies.title)
     }
 
+    func testBadDayFloorsReuseTheMatchedObjectFamily() {
+        XCTAssertEqual(BadDayFloor.allCases.map(\.forteAssetName), [
+            "ForteModalityWalking",
+            "ForteFloorEasySession",
+            "ForteModalityStrength",
+            "ForteFloorIntentionalRest",
+            "ForteAvailabilityFlexible"
+        ])
+        XCTAssertEqual(BadDayFloor.varies.subtitle, "Let Forte choose.")
+    }
+
     func testRemovedBlockersStayUnavailableAndWeatherRemains() {
         let titles = Set(ConsistencyBlocker.allCases.map(\.title))
         XCTAssertTrue(titles.contains("Weather"))

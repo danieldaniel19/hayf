@@ -178,6 +178,19 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .floor {
+                ForteBadDayFloorScreen(
+                    intent: currentIntent,
+                    selectedFloor: draft.badDayFloor,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { floor in
+                        draft.badDayFloor = floor
+                    },
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -5891,7 +5904,7 @@ enum BadDayFloor: String, CaseIterable, Identifiable {
         case .twentyEasy: return "Move without draining yourself."
         case .strengthCircuit: return "Simple, contained, effective."
         case .intentionalRest: return "Make recovery intentional."
-        case .varies: return "Let HAYF choose."
+        case .varies: return "Let Forte choose."
         }
     }
 
@@ -5902,6 +5915,16 @@ enum BadDayFloor: String, CaseIterable, Identifiable {
         case .strengthCircuit: return "figure.strengthtraining.traditional"
         case .intentionalRest: return "moon"
         case .varies: return "wand.and.stars"
+        }
+    }
+
+    var forteAssetName: String {
+        switch self {
+        case .walkMobility: return "ForteModalityWalking"
+        case .twentyEasy: return "ForteFloorEasySession"
+        case .strengthCircuit: return "ForteModalityStrength"
+        case .intentionalRest: return "ForteFloorIntentionalRest"
+        case .varies: return "ForteAvailabilityFlexible"
         }
     }
 }

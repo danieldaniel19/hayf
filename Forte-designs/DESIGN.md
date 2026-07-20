@@ -552,6 +552,8 @@ Body-composition range choices use one matched tree family on the same warm-ivor
 
 Coaching-support choices use reassuring object metaphors on the shared warm-ivory pedestal: a soft circular return around a pebble for calm reset, a compact megaphone for direct push, a feather for the easiest useful option, a level balance scale for tradeoff explanation, and a compass for reconnecting to purpose. Keep this family supportive rather than punitive; avoid alarms, warning colors, shouting marks, guilt imagery, or aggressive sports poses.
 
+Bad-day floor choices reuse established objects whenever the meaning is unchanged: the walking shoe for walk or mobility, the dumbbell for a short strength circuit, and the elastic band for a variable response. Add a compact stopwatch for an easy timed session and a structured pillow with sleep mask for intentional rest. Keep the objects isolated and at the same compact editorial-card scale; avoid magic wands, sparkles, or near-duplicate modality artwork.
+
 ### Tier 3: Small Utility Icons
 
 Use for:
