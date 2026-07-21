@@ -402,6 +402,9 @@ final class OnboardingPolicyTests: XCTestCase {
             "ForteSupportExplainTradeoff",
             "ForteSupportRemindWhy"
         ])
+        XCTAssertTrue(CoachingSupportStyle.allCases.allSatisfy {
+            $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
     }
 
     func testVariableBadDayFloorSerializesAsModelDiscretion() {
@@ -417,7 +420,10 @@ final class OnboardingPolicyTests: XCTestCase {
             "ForteFloorIntentionalRest",
             "ForteAvailabilityFlexible"
         ])
-        XCTAssertEqual(BadDayFloor.varies.subtitle, "Let Forte choose.")
+        XCTAssertEqual(BadDayFloor.varies.subtitle, "Let Forte choose\nwhat fits.")
+        XCTAssertTrue(BadDayFloor.allCases.allSatisfy {
+            $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
     }
 
     func testRemovedBlockersStayUnavailableAndWeatherRemains() {

@@ -5831,11 +5831,11 @@ enum CoachingSupportStyle: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .calmReset: return "Help me restart without guilt."
-        case .directPush: return "Be clear when I'm avoiding it."
-        case .easiestUseful: return "Keep load manageable."
-        case .explainTradeoff: return "Show what changes if I skip."
-        case .remindWhy: return "Connect it back to my reason."
+        case .calmReset: return "Help me restart\nwithout guilt."
+        case .directPush: return "Be clear when I'm\navoiding it."
+        case .easiestUseful: return "Keep the load light\nand manageable."
+        case .explainTradeoff: return "Show what changes\nif I skip."
+        case .remindWhy: return "Connect it back\nto my reason."
         }
     }
 
@@ -5900,11 +5900,11 @@ enum BadDayFloor: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .walkMobility: return "Keep the streak alive gently."
-        case .twentyEasy: return "Move without draining yourself."
-        case .strengthCircuit: return "Simple, contained, effective."
-        case .intentionalRest: return "Make recovery intentional."
-        case .varies: return "Let Forte choose."
+        case .walkMobility: return "Keep the streak\nalive gently."
+        case .twentyEasy: return "Move without\ndraining yourself."
+        case .strengthCircuit: return "Simple, contained,\nand effective."
+        case .intentionalRest: return "Make recovery\nintentional."
+        case .varies: return "Let Forte choose\nwhat fits."
         }
     }
 
