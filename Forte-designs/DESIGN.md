@@ -799,6 +799,15 @@ Different cards may use different supportive colors. Maintain consistent layout 
 - Keep confirmation and correction equally clear: use a fixed primary **Looks right** action followed by a quieter **Edit answers** action.
 - Readbacks advance automatically only after explicit confirmation. Generated interpretation must never silently replace the user's original answers.
 
+### Apple Health Connection
+
+- Use a recognizable Apple Health app tile as the visual anchor: a white rounded square with the native pink-red heart treatment. Keep this brand callback visually distinct from Forte's indigo interaction language.
+- Present the connection state beside the Apple Health identity in a compact status capsule. Do not imply a successful connection before HealthKit confirms it.
+- Explain requested data in the same compact read-only metadata style as onboarding summaries: one stacked white surface, Indigo Mist icon wells and short plain-language descriptions.
+- Put privacy reassurance near the data list. State that Forte computes features locally first and sends compact summaries rather than raw HealthKit samples.
+- Keep simulator fixture controls visually secondary and label them as sample data, not as an Apple Health connection.
+- The primary action remains fixed at the bottom and changes from connection to blueprint generation only when the underlying state permits it.
+
 ### Sheets and Modals
 
 - White or near-white elevated surface.

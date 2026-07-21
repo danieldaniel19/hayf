@@ -204,6 +204,20 @@ struct OnboardingFlowView: View {
                     onBack: goBack,
                     onExit: onExit
                 )
+            } else if step == .health {
+                ForteAppleHealthScreen(
+                    usesSampleData: $useMockHealthData,
+                    connectionState: forteHealthConnectionState,
+                    stateMessage: mockHealthDataMessage ?? healthRequestState.message,
+                    completionErrorMessage: completionErrorMessage,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    primaryButtonTitle: primaryButtonTitle,
+                    onSampleDataChanged: handleSampleHealthDataChange,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else if step.isGenerating {
                 ForteOnboardingLoadingScreen(
                     content: forteLoadingContent,
@@ -376,7 +390,7 @@ struct OnboardingFlowView: View {
         case .summary:
             EmptyView()
         case .health:
-            healthScreen
+            EmptyView()
         case .generatingBlueprint:
             EmptyView()
         case .athleteBlueprint:
@@ -1122,105 +1136,6 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var healthScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Connect\nApple Health.",
-                copy: "HAYF reads your workouts, daily movement, sleep, recovery, body metrics, and available nutrition logs before building the first plan."
-            )
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text("WHAT HAYF USES")
-                    .font(.system(size: 10, weight: .medium))
-                    .kerning(1.2)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .padding(.bottom, 14)
-
-                HealthUseRow(systemImage: "figure.strengthtraining.traditional", title: "Workout ledger", subtitle: "Workout history, type mix, duration, distance, and recency.")
-                HealthUseRow(systemImage: "figure.walk", title: "Activity baseline", subtitle: "Steps, active energy, exercise minutes, and distance trends.")
-                HealthUseRow(systemImage: "moon", title: "Recovery signals", subtitle: "Sleep, resting heart rate, HRV, respiratory rate, and cardio fitness.")
-                HealthUseRow(systemImage: "fork.knife", title: "Body and nutrition context", subtitle: "Body metrics and any available nutrition logs, treated cautiously if stale.", showsDivider: false)
-            }
-            .padding(18)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
-
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "lock")
-                    .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(HAYFColor.secondary)
-                    .frame(width: 26)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Used locally first to compute deterministic features.")
-                    Text("AI receives compact summaries, not raw HealthKit samples.")
-                }
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
-            }
-
-            Toggle(isOn: $useMockHealthData) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Add mock Health data")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-
-                    Text("Use Daniel's fixture snapshot instead of asking the Simulator for Apple Health data.")
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
-                }
-            }
-            .toggleStyle(SwitchToggleStyle(tint: HAYFColor.orange))
-            .padding(16)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
-            .onChange(of: useMockHealthData) { _, isEnabled in
-                if isEnabled {
-                    loadMockHealthSnapshot()
-                } else {
-                    pendingHealthSnapshot = nil
-                    mockHealthDataMessage = nil
-                    if healthRequestState == .connected {
-                        healthRequestState = .idle
-                    }
-                }
-            }
-
-            if let mockHealthDataMessage {
-                Text(mockHealthDataMessage)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let message = healthRequestState.message {
-                Text(message)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(healthRequestState.isError ? HAYFColor.error : HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if let completionErrorMessage {
-                Text(completionErrorMessage)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.error)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
     private var athleteBlueprintScreen: some View {
         let blueprint = currentAthleteBlueprint
 
@@ -1775,6 +1690,20 @@ struct OnboardingFlowView: View {
         step.activeSegments(for: currentIntent)
     }
 
+    private var forteHealthConnectionState: ForteHealthConnectionState {
+        if useMockHealthData {
+            return .sampleData
+        }
+
+        switch healthRequestState {
+        case .idle: return .idle
+        case .requesting: return .requesting
+        case .connected: return .connected
+        case .unavailable: return .unavailable
+        case .failed: return .failed
+        }
+    }
+
     private var progressLabel: String {
         if step.isGenerating {
             return "Building"
@@ -1986,6 +1915,18 @@ struct OnboardingFlowView: View {
             healthRequestState = .unavailable
         case .shouldRequest, .unknown:
             if healthRequestState != .requesting {
+                healthRequestState = .idle
+            }
+        }
+    }
+
+    private func handleSampleHealthDataChange(_ isEnabled: Bool) {
+        if isEnabled {
+            loadMockHealthSnapshot()
+        } else {
+            pendingHealthSnapshot = nil
+            mockHealthDataMessage = nil
+            if healthRequestState == .connected {
                 healthRequestState = .idle
             }
         }
@@ -5916,7 +5857,7 @@ private enum HealthRequestState: Equatable {
         case .idle, .requesting:
             return nil
         case .connected:
-            return "Apple Health is connected. HAYF will build the first plan from local deterministic health features."
+            return "Apple Health is connected. Forte will build from locally computed health features."
         case .unavailable:
             return "Health data is not available on this device. You can continue the prototype here."
         case .failed(let message):
@@ -6696,40 +6637,6 @@ private struct PersonalizationNote: View {
                 .lineSpacing(3)
                 .foregroundStyle(HAYFColor.muted)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct HealthUseRow: View {
-    let systemImage: String
-    let title: String
-    let subtitle: String
-    var showsDivider = true
-
-    var body: some View {
-        HStack(spacing: 14) {
-            HAYFIcon(systemImage: systemImage, isSelected: true, size: 38, iconSize: 21)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text(subtitle)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(HAYFColor.secondary)
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 12)
-        .overlay(alignment: .bottom) {
-            if showsDivider {
-                Rectangle()
-                    .fill(HAYFColor.border)
-                    .frame(height: 1)
-                    .padding(.leading, 52)
-            }
         }
     }
 }
