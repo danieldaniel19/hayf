@@ -382,14 +382,16 @@ final class OnboardingPolicyTests: XCTestCase {
     func testBodyFatBandCopyFitsCompactChoiceCards() {
         let subtitles = BodyFatBand.options(for: .male).map(\.subtitle)
         XCTAssertEqual(subtitles, [
-            "Rare outside serious sport.",
-            "Visible abs and vascularity; very lean.",
-            "Some abs and vascularity.",
-            "Clear muscle, without extreme leanness.",
-            "More strength, with softer definition.",
-            "Definition is harder to see."
+            "Rare outside serious\nor professional sport.",
+            "Visible abs and vascularity;\nvery lean.",
+            "Some abs and vascularity\naround major muscles.",
+            "Clear muscle, without\nextreme leanness.",
+            "More strength, with softer\ndefinition.",
+            "Definition is harder\nto see."
         ])
-        XCTAssertTrue(BodyFatBand.options(for: .female).allSatisfy { $0.subtitle.count <= 44 })
+        XCTAssertTrue(BodyFatBand.allCases.allSatisfy {
+            $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
     }
 
     func testCoachingSupportStylesUseTheMatchedObjectFamily() {

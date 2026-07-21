@@ -5229,25 +5229,25 @@ enum BodyFatBand: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .maleUnder10, .femaleUnder18:
-            return "Rare outside serious sport."
+            return "Rare outside serious\nor professional sport."
         case .male10To12:
-            return "Visible abs and vascularity; very lean."
+            return "Visible abs and vascularity;\nvery lean."
         case .male12To15:
-            return "Some abs and vascularity."
+            return "Some abs and vascularity\naround major muscles."
         case .male15To17:
-            return "Clear muscle, without extreme leanness."
+            return "Clear muscle, without\nextreme leanness."
         case .male17To20:
-            return "More strength, with softer definition."
+            return "More strength, with softer\ndefinition."
         case .maleAbove20, .femaleAbove32:
-            return "Definition is harder to see."
+            return "Definition is harder\nto see."
         case .female18To21:
-            return "Clear muscle shape and definition."
+            return "Clear muscle shape\nand visible definition."
         case .female21To25:
-            return "Fit, with definition from regular training."
+            return "Fit, with definition from\nregular training."
         case .female25To28:
-            return "Clear muscle, without extreme leanness."
+            return "Clear muscle, without\nextreme leanness."
         case .female28To32:
-            return "Active build with less definition."
+            return "Active, capable build\nwith less definition."
         }
     }
 
