@@ -798,6 +798,9 @@ Different cards may use different supportive colors. Maintain consistent layout 
 - Place the source answers underneath in one white stacked surface with compact read-only rows, inset dividers and Indigo Mist icon wells.
 - Keep confirmation and correction equally clear: use a fixed primary **Looks right** action followed by a quieter **Edit answers** action.
 - Readbacks advance automatically only after explicit confirmation. Generated interpretation must never silently replace the user's original answers.
+- Treat the Athlete Blueprint as the second chapter of the same readback system. Use the shared Indigo Mist interpretation card, relabel it **Coach's Read** and follow it with the evidence that supports the interpretation.
+- Group blueprint evidence into stacked read-only sections for athlete type, current state, physical baseline and history signals. Keep goal fit visually distinct but within the same indigo editorial language.
+- Keep **Accept blueprint** and **Edit answers** fixed at the bottom. Accepting advances to strategy generation while editing invalidates the generated blueprint and returns to the source questions.
 
 ### Apple Health Connection
 

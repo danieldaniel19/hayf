@@ -32,7 +32,11 @@ struct ForteOnboardingSummaryScreen: View {
                     VStack(alignment: .leading, spacing: 0) {
                         hero
 
-                        ForteAIReadbackCard(text: readback)
+                        ForteAIReadbackCard(
+                            label: "FORTE READBACK",
+                            text: readback,
+                            footer: "Built from your onboarding answers"
+                        )
 
                         Text("YOUR ANSWERS")
                             .font(.system(size: 11, weight: .semibold))
@@ -171,15 +175,17 @@ struct ForteOnboardingSummaryScreen: View {
     }
 }
 
-private struct ForteAIReadbackCard: View {
+struct ForteAIReadbackCard: View {
+    let label: String
     let text: String
+    let footer: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 ForteReadbackMark()
 
-                Text("FORTE READBACK")
+                Text(label)
                     .font(.system(size: 11, weight: .semibold))
                     .tracking(2.1)
                     .foregroundStyle(ForteColor.indigoDeep)
@@ -200,7 +206,7 @@ private struct ForteAIReadbackCard: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(ForteColor.indigo)
 
-                Text("Built from your onboarding answers")
+                Text(footer)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(ForteColor.inkMuted)
             }
@@ -322,7 +328,7 @@ private struct ForteSummaryAnswerRow: View {
     }
 }
 
-private struct ForteSummaryHeaderButton: View {
+struct ForteSummaryHeaderButton: View {
     let systemName: String
     let action: () -> Void
 

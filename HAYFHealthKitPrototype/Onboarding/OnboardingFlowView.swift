@@ -218,6 +218,19 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .athleteBlueprint {
+                ForteAthleteBlueprintScreen(
+                    coachRead: currentAthleteBlueprint.coachRead.preview,
+                    snapshotItems: forteBlueprintSnapshotItems,
+                    historyItems: forteBlueprintHistoryItems,
+                    goalFit: forteBlueprintGoalFit,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onAccept: primaryAction,
+                    onEdit: editAthleteBlueprintAnswers,
+                    onBack: goBack,
+                    onExit: onExit
+                )
             } else if step.isGenerating {
                 ForteOnboardingLoadingScreen(
                     content: forteLoadingContent,
@@ -394,7 +407,7 @@ struct OnboardingFlowView: View {
         case .generatingBlueprint:
             EmptyView()
         case .athleteBlueprint:
-            athleteBlueprintScreen
+            EmptyView()
         case .generatingStrategy:
             EmptyView()
         case .fitnessStrategy:
@@ -1136,72 +1149,50 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var athleteBlueprintScreen: some View {
+    private var forteBlueprintSnapshotItems: [ForteBlueprintSnapshotItem] {
         let blueprint = currentAthleteBlueprint
 
-        return VStack(alignment: .leading, spacing: 26) {
-            OnboardingIntro(
-                eyebrow: "ATHLETE BLUEPRINT",
-                title: "Here's what HAYF\nsees so far.",
-                copy: "A quick read on your training history, current baseline, and how your goal fits."
+        return [
+            ForteBlueprintSnapshotItem(
+                label: "Athlete type",
+                systemImage: "person.text.rectangle",
+                title: blueprint.archetype.label,
+                summary: blueprint.archetype.explanation
+            ),
+            ForteBlueprintSnapshotItem(
+                label: "Current state",
+                systemImage: "waveform.path.ecg",
+                title: blueprint.currentTrainingState.label,
+                summary: blueprint.currentTrainingState.summary
+            ),
+            ForteBlueprintSnapshotItem(
+                label: "Physical baseline",
+                systemImage: "figure",
+                title: blueprint.physicalBaseline.label,
+                summary: blueprint.physicalBaseline.summary
             )
+        ]
+    }
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("COACH'S READ")
-                    .font(.system(size: 10, weight: .medium))
-                    .kerning(1.2)
-                    .foregroundStyle(HAYFColor.secondary)
-
-                Text(blueprint.coachRead.preview)
-                    .font(.system(size: 18, weight: .regular))
-                    .lineSpacing(5)
-                    .foregroundStyle(HAYFColor.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
-            }
-
-            VStack(spacing: 12) {
-                AthleteBlueprintSummaryRow(
-                    systemImage: "person.text.rectangle",
-                    eyebrow: "ATHLETE TYPE",
-                    title: blueprint.archetype.label,
-                    summary: blueprint.archetype.explanation
-                )
-
-                AthleteBlueprintSummaryRow(
-                    systemImage: "waveform.path.ecg",
-                    eyebrow: "CURRENT STATE",
-                    title: blueprint.currentTrainingState.label,
-                    summary: blueprint.currentTrainingState.summary
-                )
-
-                AthleteBlueprintSummaryRow(
-                    systemImage: "figure",
-                    eyebrow: "PHYSICAL BASELINE",
-                    title: blueprint.physicalBaseline.label,
-                    summary: blueprint.physicalBaseline.summary
-                )
-            }
-
-            SummarySection(title: "What your history shows") {
-                VStack(spacing: 10) {
-                    ForEach(blueprint.historyFindings) { finding in
-                        AthleteBlueprintFindingRow(finding: finding)
-                    }
-                }
-            }
-
-            SummarySection(title: "Goal fit") {
-                AthleteBlueprintGoalFitCard(goalFit: blueprint.goalFit)
-            }
+    private var forteBlueprintHistoryItems: [ForteBlueprintHistoryItem] {
+        currentAthleteBlueprint.historyFindings.map { finding in
+            ForteBlueprintHistoryItem(
+                id: finding.id,
+                title: finding.title,
+                summary: finding.summary
+            )
         }
+    }
+
+    private var forteBlueprintGoalFit: ForteBlueprintGoalFit {
+        let goalFit = currentAthleteBlueprint.goalFit
+
+        return ForteBlueprintGoalFit(
+            headline: goalFit.headline,
+            summary: goalFit.summary,
+            supports: goalFit.supports,
+            gaps: goalFit.gaps
+        )
     }
 
     private var fitnessStrategyScreen: some View {
@@ -1295,25 +1286,6 @@ struct OnboardingFlowView: View {
 
             if step == .summary {
                 Button("Edit answers") {
-                    step = summaryEditStep
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(HAYFColor.surface)
-                .clipShape(Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
-                }
-            } else if step == .athleteBlueprint {
-                Button("Edit answers") {
-                    athleteBlueprint = nil
-                    fitnessStrategy = nil
-                    preparedFitnessStrategyID = nil
-                    preparedPlanningGraphRunID = nil
-                    pendingHealthSnapshot = nil
                     step = summaryEditStep
                 }
                 .font(.system(size: 16, weight: .semibold))
@@ -1930,6 +1902,15 @@ struct OnboardingFlowView: View {
                 healthRequestState = .idle
             }
         }
+    }
+
+    private func editAthleteBlueprintAnswers() {
+        athleteBlueprint = nil
+        fitnessStrategy = nil
+        preparedFitnessStrategyID = nil
+        preparedPlanningGraphRunID = nil
+        pendingHealthSnapshot = nil
+        step = summaryEditStep
     }
 
     private func requestHealthAccess() {
@@ -9108,46 +9089,6 @@ private struct BodyCompositionGoalSupport {
     }
 }
 
-private struct AthleteBlueprintSummaryRow: View {
-    let systemImage: String
-    let eyebrow: String
-    let title: String
-    let summary: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            HAYFIcon(systemImage: systemImage, isSelected: true, size: 36, iconSize: 18)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(eyebrow)
-                    .font(.system(size: 10, weight: .medium))
-                    .kerning(1.2)
-                    .foregroundStyle(HAYFColor.secondary)
-
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text(summary)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 10)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
 private enum FitnessStrategyVisibleCopy {
     static func sanitize(_ value: String) -> String {
         value
@@ -9587,67 +9528,6 @@ private extension FitnessStrategyTarget {
             .split(separator: "_")
             .map { $0.capitalized }
             .joined(separator: " ")
-    }
-}
-
-private struct AthleteBlueprintFindingRow: View {
-    let finding: AthleteBlueprintFinding
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Circle()
-                .fill(HAYFColor.orange)
-                .frame(width: 8, height: 8)
-                .padding(.top, 8)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text(finding.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text(finding.summary)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 10)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct AthleteBlueprintGoalFitCard: View {
-    let goalFit: AthleteBlueprintGoalFit
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(goalFit.headline)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-
-            Text(goalFit.summary)
-                .font(.system(size: 14, weight: .regular))
-                .lineSpacing(4)
-                .foregroundStyle(HAYFColor.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.borderStrong, lineWidth: 1)
-        }
     }
 }
 
