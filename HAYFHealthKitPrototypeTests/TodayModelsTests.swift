@@ -383,7 +383,7 @@ final class OnboardingPolicyTests: XCTestCase {
         let subtitles = BodyFatBand.options(for: .male).map(\.subtitle)
         XCTAssertEqual(subtitles, [
             "Rare outside serious\nor professional sport.",
-            "Visible abs and vascularity;\nvery lean.",
+            "Visible abs and vascularity\nat very lean levels.",
             "Some abs and vascularity\naround major muscles.",
             "Clear muscle, without\nextreme leanness.",
             "More strength, with softer\ndefinition.",
@@ -391,6 +391,9 @@ final class OnboardingPolicyTests: XCTestCase {
         ])
         XCTAssertTrue(BodyFatBand.allCases.allSatisfy {
             $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
+        XCTAssertTrue(BodyFatBand.allCases.allSatisfy {
+            !$0.subtitle.contains(";") && !$0.subtitle.contains(",\nand")
         })
     }
 
@@ -404,6 +407,9 @@ final class OnboardingPolicyTests: XCTestCase {
         ])
         XCTAssertTrue(CoachingSupportStyle.allCases.allSatisfy {
             $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
+        XCTAssertTrue(CoachingSupportStyle.allCases.allSatisfy {
+            !$0.subtitle.contains(";") && !$0.subtitle.contains(",\nand")
         })
     }
 
@@ -423,6 +429,9 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(BadDayFloor.varies.subtitle, "Let Forte choose\nwhat fits.")
         XCTAssertTrue(BadDayFloor.allCases.allSatisfy {
             $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
+        XCTAssertTrue(BadDayFloor.allCases.allSatisfy {
+            !$0.subtitle.contains(";") && !$0.subtitle.contains(",\nand")
         })
     }
 

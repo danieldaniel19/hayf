@@ -5231,7 +5231,7 @@ enum BodyFatBand: String, CaseIterable, Identifiable {
         case .maleUnder10, .femaleUnder18:
             return "Rare outside serious\nor professional sport."
         case .male10To12:
-            return "Visible abs and vascularity;\nvery lean."
+            return "Visible abs and vascularity\nat very lean levels."
         case .male12To15:
             return "Some abs and vascularity\naround major muscles."
         case .male15To17:
@@ -5902,7 +5902,7 @@ enum BadDayFloor: String, CaseIterable, Identifiable {
         switch self {
         case .walkMobility: return "Keep the streak\nalive gently."
         case .twentyEasy: return "Move without\ndraining yourself."
-        case .strengthCircuit: return "Simple, contained,\nand effective."
+        case .strengthCircuit: return "Simple, contained\nand effective."
         case .intentionalRest: return "Make recovery\nintentional."
         case .varies: return "Let Forte choose\nwhat fits."
         }
