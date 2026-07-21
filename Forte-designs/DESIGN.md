@@ -790,6 +790,15 @@ Different cards may use different supportive colors. Maintain consistent layout 
 - Respect Reduce Motion by holding the composition and progress indicator in a stable state.
 - On failure, replace the animation with a calm retry card. Reassure the user that their answers are preserved, keep technical detail visually secondary and use one clear Try again action.
 
+### AI Readbacks and Confirmation
+
+- Visually separate Forte's interpretation from the source answers so users can compare inference with evidence.
+- Present the interpretation in one soft Indigo Mist card labeled **Forte Readback**, using editorial body type and a compact code-native balancing-object mark. Do not use magic sparkles, a chatbot avatar or a conversational speech bubble.
+- Keep the readback to one or two direct sentences. It should address the user and identify the most decision-relevant pattern rather than repeat every answer.
+- Place the source answers underneath in one white stacked surface with compact read-only rows, inset dividers and Indigo Mist icon wells.
+- Keep confirmation and correction equally clear: use a fixed primary **Looks right** action followed by a quieter **Edit answers** action.
+- Readbacks advance automatically only after explicit confirmation. Generated interpretation must never silently replace the user's original answers.
+
 ### Sheets and Modals
 
 - White or near-white elevated surface.

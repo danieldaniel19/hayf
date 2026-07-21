@@ -55,6 +55,7 @@
 		H00000010000000000000001 /* ForteSupportStyleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000110000000000000001 /* ForteSupportStyleScreen.swift */; };
 		H00000020000000000000001 /* ForteBadDayFloorScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000120000000000000001 /* ForteBadDayFloorScreen.swift */; };
 		H00000030000000000000001 /* ForteOnboardingLoadingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000130000000000000001 /* ForteOnboardingLoadingScreen.swift */; };
+		H00000040000000000000001 /* ForteOnboardingSummaryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -119,6 +120,7 @@
 		H00000110000000000000001 /* ForteSupportStyleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteSupportStyleScreen.swift; sourceTree = "<group>"; };
 		H00000120000000000000001 /* ForteBadDayFloorScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBadDayFloorScreen.swift; sourceTree = "<group>"; };
 		H00000130000000000000001 /* ForteOnboardingLoadingScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingLoadingScreen.swift; sourceTree = "<group>"; };
+		H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingSummaryScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -306,6 +308,7 @@
 				H00000110000000000000001 /* ForteSupportStyleScreen.swift */,
 				H00000120000000000000001 /* ForteBadDayFloorScreen.swift */,
 				H00000130000000000000001 /* ForteOnboardingLoadingScreen.swift */,
+				H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -456,6 +459,7 @@
 				H00000010000000000000001 /* ForteSupportStyleScreen.swift in Sources */,
 				H00000020000000000000001 /* ForteBadDayFloorScreen.swift in Sources */,
 				H00000030000000000000001 /* ForteOnboardingLoadingScreen.swift in Sources */,
+				H00000040000000000000001 /* ForteOnboardingSummaryScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

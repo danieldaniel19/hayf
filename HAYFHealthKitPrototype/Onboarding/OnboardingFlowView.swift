@@ -191,6 +191,19 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .summary {
+                ForteOnboardingSummaryScreen(
+                    readback: currentSummary.readback,
+                    answers: forteSummaryAnswers,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onConfirm: primaryAction,
+                    onEdit: {
+                        step = summaryEditStep
+                    },
+                    onBack: goBack,
+                    onExit: onExit
+                )
             } else if step.isGenerating {
                 ForteOnboardingLoadingScreen(
                     content: forteLoadingContent,
@@ -361,7 +374,7 @@ struct OnboardingFlowView: View {
         case .generatingSummary:
             EmptyView()
         case .summary:
-            summaryScreen
+            EmptyView()
         case .health:
             healthScreen
         case .generatingBlueprint:
@@ -1048,34 +1061,6 @@ struct OnboardingFlowView: View {
         draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
     }
 
-    private var summaryScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Here's what HAYF\nunderstood.",
-                copy: "Check HAYF's readback against the answers you gave."
-            )
-
-            SummarySection(title: "What HAYF understood") {
-                CoachNote(text: currentSummary.readback)
-            }
-
-            SummarySection(title: "Your answers") {
-                VStack(spacing: 10) {
-                    ForEach(currentInputSummaryRows) { row in
-                        SummaryRow(
-                            systemImage: row.systemImage,
-                            label: row.label,
-                            value: row.value,
-                            presentsAsSingleBullet: row.presentsAsSingleBullet
-                        )
-                    }
-                }
-            }
-
-            PersonalizationNote()
-        }
-    }
-
     private var currentInputSummaryRows: [SummaryItem] {
         switch currentIntent {
         case .stayConsistent:
@@ -1121,6 +1106,19 @@ struct OnboardingFlowView: View {
                 SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
                 SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
+        }
+    }
+
+    private var forteSummaryAnswers: [ForteSummaryAnswer] {
+        currentInputSummaryRows.map { row in
+            ForteSummaryAnswer(
+                label: row.label,
+                systemImage: row.systemImage,
+                values: SummaryValueParser.items(
+                    from: row.value,
+                    presentsAsSingleBullet: row.presentsAsSingleBullet
+                )
+            )
         }
     }
 
@@ -6600,57 +6598,6 @@ enum SummaryValueParser {
     }
 }
 
-private struct SummaryRow: View {
-    let systemImage: String
-    let label: String
-    let value: String
-    let presentsAsSingleBullet: Bool
-
-    private var valueItems: [String] {
-        SummaryValueParser.items(from: value, presentsAsSingleBullet: presentsAsSingleBullet)
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            HAYFIcon(systemImage: systemImage, isSelected: true, size: 34, iconSize: 18)
-
-            Text(label)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .frame(width: 116, alignment: .leading)
-
-            if presentsAsSingleBullet || valueItems.count > 1 {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(valueItems.enumerated()), id: \.offset) { _, item in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text("•")
-                            Text(item)
-                        }
-                    }
-                }
-                .font(.system(size: 14, weight: .regular))
-                .lineSpacing(3)
-                .foregroundStyle(HAYFColor.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(value)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
 private struct SummarySection<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
@@ -6783,30 +6730,6 @@ private struct HealthUseRow: View {
                     .frame(height: 1)
                     .padding(.leading, 52)
             }
-        }
-    }
-}
-
-private struct CoachNote: View {
-    var systemImage = "sparkle"
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            HAYFIcon(systemImage: systemImage, isSelected: true, size: 34, iconSize: 17)
-
-            Text(text)
-                .font(.system(size: 14, weight: .regular))
-                .lineSpacing(4)
-                .foregroundStyle(HAYFColor.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(16)
-        .background(HAYFColor.orange.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
         }
     }
 }
