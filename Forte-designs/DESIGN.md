@@ -801,7 +801,8 @@ Different cards may use different supportive colors. Maintain consistent layout 
 
 ### Apple Health Connection
 
-- Use a recognizable Apple Health app tile as the visual anchor: a white rounded square with the native pink-red heart treatment. Keep this brand callback visually distinct from Forte's indigo interaction language.
+- Use Apple's official layered Health developer artwork as the visual anchor. Preserve its transparent background and original pink, teal and blue treatment so the brand callback remains distinct from Forte's indigo interaction language.
+- Keep the identity card's status capsule below the Apple Health title and connection description. It must remain on one line and must not compete with the artwork for horizontal space.
 - Present the connection state beside the Apple Health identity in a compact status capsule. Do not imply a successful connection before HealthKit confirms it.
 - Explain requested data in the same compact read-only metadata style as onboarding summaries: one stacked white surface, Indigo Mist icon wells and short plain-language descriptions.
 - Put privacy reassurance near the data list. State that Forte computes features locally first and sends compact summaries rather than raw HealthKit samples.

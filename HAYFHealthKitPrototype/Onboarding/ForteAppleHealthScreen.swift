@@ -172,32 +172,31 @@ struct ForteAppleHealthScreen: View {
 
     private var appleHealthIdentityCard: some View {
         HStack(spacing: 16) {
-            ForteAppleHealthAppIcon()
+            Image("AppleHealthDeveloperIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 76, height: 76)
+                .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text("Apple Health")
                     .font(ForteTypography.editorial(size: 20, relativeTo: .headline))
                     .foregroundStyle(ForteColor.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.88)
 
                 Text("Read-only health connection")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(ForteColor.inkMuted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .padding(.top, 4)
+
+                statusCapsule
+                    .padding(.top, 11)
             }
 
-            Spacer(minLength: 8)
-
-            HStack(spacing: 5) {
-                Image(systemName: connectionState.systemImage)
-                    .font(.system(size: 10, weight: .bold))
-
-                Text(connectionState.label)
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .foregroundStyle(statusForeground)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .background(statusBackground)
-            .clipShape(Capsule())
+            Spacer(minLength: 0)
         }
         .padding(18)
         .background(ForteColor.surface.opacity(0.98))
@@ -208,6 +207,23 @@ struct ForteAppleHealthScreen: View {
         }
         .shadow(color: Color.black.opacity(0.07), radius: 18, y: 10)
         .accessibilityElement(children: .combine)
+    }
+
+    private var statusCapsule: some View {
+        HStack(spacing: 5) {
+            Image(systemName: connectionState.systemImage)
+                .font(.system(size: 10, weight: .bold))
+
+            Text(connectionState.label)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundStyle(statusForeground)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(statusBackground)
+        .clipShape(Capsule())
     }
 
     private var privacyCard: some View {
@@ -317,29 +333,6 @@ struct ForteAppleHealthScreen: View {
         case .failed: return Color(red: 0.99, green: 0.91, blue: 0.92)
         default: return ForteColor.surfaceSoft
         }
-    }
-}
-
-private struct ForteAppleHealthAppIcon: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white)
-                .frame(width: 68, height: 68)
-                .shadow(color: Color.black.opacity(0.12), radius: 10, y: 6)
-
-            Image(systemName: "heart.fill")
-                .font(.system(size: 34, weight: .regular))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [Color(red: 1.0, green: 0.22, blue: 0.36), Color(red: 1.0, green: 0.13, blue: 0.48)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .offset(y: -4)
-        }
-        .accessibilityHidden(true)
     }
 }
 
