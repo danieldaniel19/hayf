@@ -191,6 +191,22 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step.isGenerating {
+                ForteOnboardingLoadingScreen(
+                    content: forteLoadingContent,
+                    failure: aiGenerationFailure(for: step).map {
+                        ForteOnboardingLoadingFailure(
+                            title: $0.title,
+                            copy: $0.copy,
+                            detail: $0.detail
+                        )
+                    },
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onRetry: retryCurrentGeneration,
+                    onBack: goBack,
+                    onExit: onExit
+                )
             } else {
                 legacyOnboardingFlow
             }
@@ -315,7 +331,7 @@ struct OnboardingFlowView: View {
         case .findIntensity:
             goalIntensityScreen
         case .generatingCandidates:
-            loadingScreen(title: "Finding goal directions.", copy: "HAYF is turning your preferences into a few concrete options.")
+            EmptyView()
         case .goalCandidates:
             goalCandidatesScreen
         case .editCandidate:
@@ -323,7 +339,7 @@ struct OnboardingFlowView: View {
         case .blendCandidates:
             blendCandidatesScreen
         case .generatingBlend:
-            loadingScreen(title: "Blending those goals.", copy: "HAYF is combining the useful parts into one direction.")
+            EmptyView()
         case .blendPreview:
             blendPreviewScreen
         case .weeklyCapacity:
@@ -343,17 +359,17 @@ struct OnboardingFlowView: View {
         case .floor:
             badDayFloorScreen
         case .generatingSummary:
-            loadingScreen(title: "Reading this back.", copy: "HAYF is turning your answers into a coach-style setup.")
+            EmptyView()
         case .summary:
             summaryScreen
         case .health:
             healthScreen
         case .generatingBlueprint:
-            loadingScreen(title: "Reading your athlete profile.", copy: "HAYF is combining what you told us with your training history.")
+            EmptyView()
         case .athleteBlueprint:
             athleteBlueprintScreen
         case .generatingStrategy:
-            loadingScreen(title: "Building your strategy.", copy: "HAYF is turning your goal and Athlete Blueprint into the approach it will coach from.")
+            EmptyView()
         case .fitnessStrategy:
             fitnessStrategyScreen
         case .fitnessStrategyPhases:
@@ -740,92 +756,6 @@ struct OnboardingFlowView: View {
             }
 
             PersonalizationNote()
-        }
-    }
-
-    private func loadingScreen(title: String, copy: String) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                eyebrow: aiGenerationFailure(for: step) == nil ? "HAYF IS THINKING" : "AI FAILED",
-                title: aiGenerationFailure(for: step)?.title ?? title,
-                copy: aiGenerationFailure(for: step)?.copy ?? copy
-            )
-
-            if let failure = aiGenerationFailure(for: step) {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(alignment: .top, spacing: 14) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundStyle(HAYFColor.orange)
-                            .frame(width: 34, height: 34)
-
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("HAYF could not reach its AI coach.")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(HAYFColor.primary)
-
-                            Text(failure.detail)
-                                .font(.system(size: 14, weight: .regular))
-                                .lineSpacing(3)
-                                .foregroundStyle(HAYFColor.secondary)
-                        }
-                    }
-
-                    Button {
-                        retryCurrentGeneration()
-                    } label: {
-                        HStack {
-                            Text("Try again")
-                                .font(.system(size: 15, weight: .semibold))
-                            Spacer()
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 15, weight: .semibold))
-                        }
-                        .foregroundStyle(HAYFColor.primary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 46)
-                        .padding(.horizontal, 16)
-                        .background(HAYFColor.surface)
-                        .clipShape(Capsule())
-                        .overlay {
-                            Capsule()
-                                .stroke(HAYFColor.borderStrong, lineWidth: 1)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(16)
-                .background(HAYFColor.orange.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
-                }
-            } else {
-                HStack(spacing: 14) {
-                    ProgressView()
-                        .tint(HAYFColor.orange)
-                        .frame(width: 34, height: 34)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Personalizing your setup")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-
-                        Text("HAYF is turning your answers into a compact coach profile.")
-                            .font(.system(size: 14, weight: .regular))
-                            .lineSpacing(3)
-                            .foregroundStyle(HAYFColor.secondary)
-                    }
-                }
-                .padding(16)
-                .background(HAYFColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(HAYFColor.border, lineWidth: 1)
-                }
-            }
         }
     }
 
@@ -1855,6 +1785,53 @@ struct OnboardingFlowView: View {
         return "Step \(activeSegments) of \(totalSegments)"
     }
 
+    private var forteLoadingContent: ForteOnboardingLoadingContent {
+        switch step {
+        case .generatingCandidates:
+            return ForteOnboardingLoadingContent(
+                title: "Finding directions\nthat fit.",
+                copy: "Forte is matching your preferences with a few useful paths forward.",
+                activityTitle: "Exploring goal directions",
+                activityCopy: "Looking for options that feel specific and realistic."
+            )
+        case .generatingBlend:
+            return ForteOnboardingLoadingContent(
+                title: "Bringing the best\nparts together.",
+                copy: "Forte is shaping your selected ideas into one coherent direction.",
+                activityTitle: "Blending your choices",
+                activityCopy: "Keeping the useful parts while removing the overlap."
+            )
+        case .generatingBlueprint:
+            return ForteOnboardingLoadingContent(
+                title: "Reading your\nathlete profile.",
+                copy: "Forte is combining your answers with the training history you shared.",
+                activityTitle: "Building your profile",
+                activityCopy: "Finding the patterns that matter for your starting point."
+            )
+        case .generatingStrategy:
+            return ForteOnboardingLoadingContent(
+                title: "Building your\ntraining strategy.",
+                copy: "Forte is turning your goal and profile into an approach it can coach from.",
+                activityTitle: "Shaping your strategy",
+                activityCopy: "Balancing direction with the rhythm you can sustain."
+            )
+        case .generatingSummary:
+            return ForteOnboardingLoadingContent(
+                title: "Bringing your answers\ntogether.",
+                copy: "Forte is finding the patterns that will shape how it coaches you.",
+                activityTitle: "Shaping your starting point",
+                activityCopy: "Turning your choices into one clear profile."
+            )
+        default:
+            return ForteOnboardingLoadingContent(
+                title: "Bringing everything\ntogether.",
+                copy: "Forte is preparing the next part of your setup.",
+                activityTitle: "Building your setup",
+                activityCopy: "Keeping your answers aligned as the next step takes shape."
+            )
+        }
+    }
+
     private var displayGoalCandidates: [GoalCandidate] {
         goalCandidates.isEmpty ? MockOnboardingAIProvider.fallbackGoalCandidates(for: draft) : goalCandidates
     }
@@ -2549,7 +2526,7 @@ private struct OnboardingAIGenerationFailure: Equatable {
     }
 
     var copy: String {
-        "This part needs AI. HAYF will not show generic fallback copy here because it would be pretending to know more than it does."
+        "Your answers are safe. Check your connection and try this step again."
     }
 
     var detail: String {

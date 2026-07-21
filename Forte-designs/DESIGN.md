@@ -779,6 +779,17 @@ Different cards may use different supportive colors. Maintain consistent layout 
 - Segmented onboarding progress should remain restrained.
 - Do not use multiple bright colors in one progress component unless the segments have distinct semantic meaning.
 
+### Loading and Generative Transitions
+
+- Treat longer onboarding work as a calm transition screen, not a disabled form or an oversized system spinner.
+- Keep the standard onboarding progress header, back action and exit action so the user remains oriented and in control.
+- Use the balancing-object composition as the focal loading metaphor. A restrained breathing or floating motion is appropriate; avoid robotic imagery, magic sparkles, chat bubbles or an AI avatar.
+- Pair the focal object with one elevated status card containing a short activity title, one concise explanation and a single indeterminate indigo progress track.
+- Do not invent percentage completion or multiple staged checkpoints unless the underlying task exposes real progress.
+- Move forward automatically when work completes. Do not show a disabled Continue button during generation.
+- Respect Reduce Motion by holding the composition and progress indicator in a stable state.
+- On failure, replace the animation with a calm retry card. Reassure the user that their answers are preserved, keep technical detail visually secondary and use one clear Try again action.
+
 ### Sheets and Modals
 
 - White or near-white elevated surface.
