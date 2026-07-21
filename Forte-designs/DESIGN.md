@@ -801,6 +801,10 @@ Different cards may use different supportive colors. Maintain consistent layout 
 - Treat the Athlete Blueprint as the second chapter of the same readback system. Use the shared Indigo Mist interpretation card, relabel it **Coach's Read** and follow it with the evidence that supports the interpretation.
 - Group blueprint evidence into stacked read-only sections for athlete type, current state, physical baseline and history signals. Keep goal fit visually distinct but within the same indigo editorial language.
 - Keep **Accept blueprint** and **Edit answers** fixed at the bottom. Accepting advances to strategy generation while editing invalidates the generated blueprint and returns to the source questions.
+- Treat the Fitness Strategy as the final translation of the readback sequence: answers establish context, the blueprint describes the athlete and the strategy states how Forte will coach.
+- Present strategy snapshot metrics in a spacious 2-by-2 grid. Do not compress four metrics into one narrow row on phone widths.
+- Reuse the shared interpretation card for the **Coach Verdict**, then organize fit reasons, priorities, targets and operating rhythm as stacked read-only evidence. Use indigo functional icons rather than introducing a new illustration family.
+- Keep the final action fixed and explicit. Its label may change from **Review phases** to **Accept strategy** depending on whether generated phases exist.
 
 ### Apple Health Connection
 

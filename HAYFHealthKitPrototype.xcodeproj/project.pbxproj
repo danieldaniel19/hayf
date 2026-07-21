@@ -58,6 +58,7 @@
 		H00000040000000000000001 /* ForteOnboardingSummaryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */; };
 		H00000050000000000000001 /* ForteAppleHealthScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000150000000000000001 /* ForteAppleHealthScreen.swift */; };
 		J00000010000000000000001 /* ForteAthleteBlueprintScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */; };
+		K00000010000000000000001 /* ForteFitnessStrategyScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -125,6 +126,7 @@
 		H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingSummaryScreen.swift; sourceTree = "<group>"; };
 		H00000150000000000000001 /* ForteAppleHealthScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteAppleHealthScreen.swift; sourceTree = "<group>"; };
 		J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteAthleteBlueprintScreen.swift; sourceTree = "<group>"; };
+		K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteFitnessStrategyScreen.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -315,6 +317,7 @@
 				H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */,
 				H00000150000000000000001 /* ForteAppleHealthScreen.swift */,
 				J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */,
+				K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -468,6 +471,7 @@
 				H00000040000000000000001 /* ForteOnboardingSummaryScreen.swift in Sources */,
 				H00000050000000000000001 /* ForteAppleHealthScreen.swift in Sources */,
 				J00000010000000000000001 /* ForteAthleteBlueprintScreen.swift in Sources */,
+				K00000010000000000000001 /* ForteFitnessStrategyScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,

@@ -231,6 +231,22 @@ struct OnboardingFlowView: View {
                     onBack: goBack,
                     onExit: onExit
                 )
+            } else if step == .fitnessStrategy {
+                ForteFitnessStrategyScreen(
+                    coachVerdict: FitnessStrategyVisibleCopy.coachVerdict(currentFitnessStrategy.read),
+                    snapshotItems: forteStrategySnapshotItems,
+                    fitReasons: forteStrategyFitReasons,
+                    priorities: forteStrategyPriorities,
+                    targets: forteStrategyTargets,
+                    operatingRhythm: forteStrategyOperatingRhythm,
+                    completionErrorMessage: completionErrorMessage,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    primaryButtonTitle: primaryButtonTitle,
+                    onContinue: primaryAction,
+                    onBack: goBack,
+                    onExit: onExit
+                )
             } else if step.isGenerating {
                 ForteOnboardingLoadingScreen(
                     content: forteLoadingContent,
@@ -411,7 +427,7 @@ struct OnboardingFlowView: View {
         case .generatingStrategy:
             EmptyView()
         case .fitnessStrategy:
-            fitnessStrategyScreen
+            EmptyView()
         case .fitnessStrategyPhases:
             fitnessStrategyPhasesScreen
         }
@@ -1195,51 +1211,70 @@ struct OnboardingFlowView: View {
         )
     }
 
-    private var fitnessStrategyScreen: some View {
+    private var forteStrategySnapshotItems: [ForteStrategySnapshotItem] {
         let strategy = currentFitnessStrategy
 
-        return VStack(alignment: .leading, spacing: 26) {
-            OnboardingIntro(
-                eyebrow: "FITNESS STRATEGY",
-                title: "Your strategy\nis ready.",
-                copy: "Built from your goal and Athlete Blueprint, this is the approach HAYF will coach from before it turns the first weeks into workouts."
+        return strategy.snapshotItems.map { item in
+            ForteStrategySnapshotItem(
+                id: item.id,
+                systemImage: item.systemImage,
+                value: FitnessStrategyVisibleCopy.sanitize(item.value),
+                label: FitnessStrategyVisibleCopy.sanitize(item.label)
             )
+        }
+    }
 
-            SummarySection(title: "Strategy snapshot") {
-                FitnessStrategySnapshotGrid(items: strategy.snapshotItems)
-            }
+    private var forteStrategyFitReasons: [ForteStrategyEvidenceItem] {
+        currentFitnessStrategy.fitReasons.map { reason in
+            ForteStrategyEvidenceItem(
+                id: reason.id,
+                systemImage: reason.systemImage,
+                title: FitnessStrategyVisibleCopy.sanitize(reason.title),
+                summary: FitnessStrategyVisibleCopy.cardSummary(
+                    title: reason.title,
+                    summary: reason.summary
+                )
+            )
+        }
+    }
 
-            FitnessStrategyReadCard(read: strategy.read)
+    private var forteStrategyPriorities: [ForteStrategyEvidenceItem] {
+        currentFitnessStrategy.pillars.map { pillar in
+            ForteStrategyEvidenceItem(
+                id: pillar.id,
+                systemImage: "arrow.up.right",
+                title: FitnessStrategyVisibleCopy.sanitize(pillar.title),
+                summary: FitnessStrategyVisibleCopy.cardSummary(
+                    title: pillar.title,
+                    summary: pillar.summary
+                )
+            )
+        }
+    }
 
-            SummarySection(title: "Why this fits you") {
-                VStack(spacing: 10) {
-                    ForEach(strategy.fitReasons) { reason in
-                        FitnessStrategyFitReasonRow(reason: reason)
-                    }
-                }
-            }
+    private var forteStrategyTargets: [ForteStrategyTargetItem] {
+        currentFitnessStrategy.targets.map { target in
+            ForteStrategyTargetItem(
+                id: target.id,
+                title: FitnessStrategyVisibleCopy.sanitize(target.title),
+                summary: FitnessStrategyVisibleCopy.cardSummary(
+                    title: target.title,
+                    summary: target.summary
+                ),
+                displayValue: target.displayValue.map(FitnessStrategyVisibleCopy.sanitize)
+            )
+        }
+    }
 
-            SummarySection(title: "What HAYF will prioritize") {
-                VStack(spacing: 10) {
-                    ForEach(strategy.pillars) { pillar in
-                        FitnessStrategyPillarRow(pillar: pillar)
-                    }
-                }
-            }
-
-            SummarySection(title: "Strategy targets") {
-                VStack(spacing: 10) {
-                    ForEach(strategy.targets) { target in
-                        FitnessStrategyTargetRow(target: target, label: "Strategy target")
-                    }
-                }
-            }
-
-            if let operatingRhythm = strategy.operatingRhythm {
-                SummarySection(title: "Operating rhythm") {
-                    FitnessStrategyOperatingRhythmCard(rhythm: operatingRhythm)
-                }
-            }
+    private var forteStrategyOperatingRhythm: ForteStrategyRhythm? {
+        currentFitnessStrategy.operatingRhythm.map { rhythm in
+            ForteStrategyRhythm(
+                summary: FitnessStrategyVisibleCopy.cardSummary(
+                    title: "weekly rhythm",
+                    summary: rhythm.summary
+                ),
+                anchors: rhythm.anchors.map(FitnessStrategyVisibleCopy.sanitize)
+            )
         }
     }
 
@@ -9159,170 +9194,6 @@ private enum FitnessStrategyVisibleCopy {
     }
 }
 
-private struct FitnessStrategySnapshotGrid: View {
-    let items: [FitnessStrategySnapshotItem]
-    private let tileHeight: CGFloat = 104
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            ForEach(items) { item in
-                VStack(spacing: item.id == "priorities" ? 6 : 7) {
-                    Image(systemName: item.systemImage)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(HAYFColor.orange)
-                        .frame(height: 18)
-
-                    VStack(spacing: 2) {
-                        Text(FitnessStrategyVisibleCopy.sanitize(item.value))
-                            .font(.system(size: item.id == "priorities" ? 12 : 13, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(item.id == "priorities" ? 3 : 2)
-                            .minimumScaleFactor(0.82)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        Text(FitnessStrategyVisibleCopy.sanitize(item.label))
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(HAYFColor.secondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.82)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, minHeight: tileHeight)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(HAYFColor.orange.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-        }
-    }
-}
-
-private struct FitnessStrategyReadCard: View {
-    let read: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("COACH VERDICT")
-                .font(.system(size: 10, weight: .medium))
-                .kerning(1.2)
-                .foregroundStyle(HAYFColor.secondary)
-
-            Text(FitnessStrategyVisibleCopy.coachVerdict(read))
-                .font(.system(size: 18, weight: .regular))
-                .lineSpacing(5)
-                .foregroundStyle(HAYFColor.primary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.borderStrong, lineWidth: 1)
-        }
-    }
-}
-
-private struct FitnessStrategyGoalContextCard: View {
-    let context: FitnessStrategyGoalTargetContext
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("GOAL CONTEXT")
-                .font(.system(size: 10, weight: .medium))
-                .kerning(1.2)
-                .foregroundStyle(HAYFColor.secondary)
-
-            Text(FitnessStrategyVisibleCopy.sanitize(context.title))
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-
-            Text(FitnessStrategyVisibleCopy.cardSummary(title: context.title, summary: context.summary))
-                .font(.system(size: 14, weight: .regular))
-                .lineSpacing(3)
-                .foregroundStyle(HAYFColor.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct FitnessStrategyFitReasonRow: View {
-    let reason: FitnessStrategyFitReason
-
-    var body: some View {
-        FitnessStrategyIconRow(
-            systemImage: reason.systemImage,
-            title: reason.title,
-            summary: reason.summary
-        )
-    }
-}
-
-private struct FitnessStrategyPillarRow: View {
-    let pillar: FitnessStrategyPillar
-
-    var body: some View {
-        FitnessStrategyIconRow(
-            systemImage: "arrow.up.right",
-            title: pillar.title,
-            summary: pillar.summary
-        )
-    }
-}
-
-private struct FitnessStrategyIconRow: View {
-    let systemImage: String
-    let title: String
-    let summary: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Circle()
-                .fill(HAYFColor.orange.opacity(0.18))
-                .frame(width: 28, height: 28)
-                .overlay {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(HAYFColor.orange)
-                }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(FitnessStrategyVisibleCopy.sanitize(title))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text(FitnessStrategyVisibleCopy.cardSummary(title: title, summary: summary))
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
 private struct FitnessStrategyPhaseRow: View {
     let phase: FitnessStrategyPhase
 
@@ -9400,95 +9271,6 @@ private struct FitnessStrategyPhaseTargetRow: View {
         .padding(.vertical, 9)
         .background(HAYFColor.neutral)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
-}
-
-private struct FitnessStrategyOperatingRhythmCard: View {
-    let rhythm: FitnessStrategyOperatingRhythm
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(FitnessStrategyVisibleCopy.cardSummary(title: "weekly rhythm", summary: rhythm.summary))
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(rhythm.anchors, id: \.self) { anchor in
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle()
-                            .fill(HAYFColor.orange)
-                            .frame(width: 6, height: 6)
-                            .padding(.top, 7)
-
-                        Text(FitnessStrategyVisibleCopy.sanitize(anchor))
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundStyle(HAYFColor.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct FitnessStrategyTargetRow: View {
-    let target: FitnessStrategyTarget
-    let label: String
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "scope")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(HAYFColor.orange)
-                .frame(width: 28, height: 28)
-
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(FitnessStrategyVisibleCopy.sanitize(target.title))
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Spacer(minLength: 6)
-
-                    if let value = target.displayValue {
-                        Text(FitnessStrategyVisibleCopy.sanitize(value))
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(HAYFColor.orange.opacity(0.12))
-                            .clipShape(Capsule())
-                    }
-                }
-
-                Text(FitnessStrategyVisibleCopy.cardSummary(title: target.title, summary: target.summary))
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
     }
 }
 
