@@ -228,12 +228,10 @@ struct ForteAppleHealthScreen: View {
 
     private var privacyCard: some View {
         HStack(alignment: .top, spacing: 13) {
-            Image(systemName: "lock.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(ForteColor.indigoDeep)
-                .frame(width: 38, height: 38)
-                .background(ForteColor.indigoMist)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            ForteReviewIconBadge(
+                systemName: "lock.fill",
+                palette: .blue
+            )
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Private by design")
@@ -364,13 +362,10 @@ private struct ForteHealthDataList: View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: row.systemImage)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(ForteColor.indigoDeep)
-                        .frame(width: 38, height: 38)
-                        .background(ForteColor.indigoMist)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .accessibilityHidden(true)
+                    ForteReviewIconBadge(
+                        systemName: row.systemImage,
+                        palette: .cycling(index)
+                    )
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(row.title)

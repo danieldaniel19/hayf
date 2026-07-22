@@ -245,15 +245,12 @@ private struct ForteStrategySnapshotGrid: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(items) { item in
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 VStack(alignment: .leading, spacing: 12) {
-                    Image(systemName: item.systemImage)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(ForteColor.indigoDeep)
-                        .frame(width: 38, height: 38)
-                        .background(ForteColor.indigoSoft)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .accessibilityHidden(true)
+                    ForteReviewIconBadge(
+                        systemName: item.systemImage,
+                        palette: .cycling(index)
+                    )
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.value)
@@ -293,13 +290,11 @@ private struct ForteStrategyEvidenceList: View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: item.systemImage)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(ForteColor.indigoDeep)
-                        .frame(width: 38, height: 38)
-                        .background(ForteColor.indigoMist)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .accessibilityHidden(true)
+                    ForteReviewIconBadge(
+                        systemName: item.systemImage,
+                        palette: .cycling(index),
+                        iconSize: 15
+                    )
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
@@ -345,13 +340,11 @@ private struct ForteStrategyTargetList: View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "scope")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(ForteColor.indigoDeep)
-                        .frame(width: 38, height: 38)
-                        .background(ForteColor.indigoMist)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .accessibilityHidden(true)
+                    ForteReviewIconBadge(
+                        systemName: "scope",
+                        palette: .cycling(index + 4),
+                        iconSize: 15
+                    )
 
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -411,13 +404,10 @@ private struct ForteStrategyRhythmCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(ForteColor.indigoDeep)
-                    .frame(width: 38, height: 38)
-                    .background(ForteColor.indigoSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .accessibilityHidden(true)
+                ForteReviewIconBadge(
+                    systemName: "calendar.badge.clock",
+                    palette: .teal
+                )
 
                 Text(rhythm.summary)
                     .font(ForteTypography.editorial(size: 17, relativeTo: .headline))

@@ -215,7 +215,10 @@ private struct ForteBlueprintSnapshotList: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                ForteBlueprintSnapshotRow(item: item)
+                ForteBlueprintSnapshotRow(
+                    item: item,
+                    palette: .cycling(index)
+                )
 
                 if index < items.count - 1 {
                     Rectangle()
@@ -238,16 +241,14 @@ private struct ForteBlueprintSnapshotList: View {
 
 private struct ForteBlueprintSnapshotRow: View {
     let item: ForteBlueprintSnapshotItem
+    let palette: ForteReviewIconPalette
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: item.systemImage)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(ForteColor.indigoDeep)
-                .frame(width: 38, height: 38)
-                .background(ForteColor.indigoMist)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .accessibilityHidden(true)
+            ForteReviewIconBadge(
+                systemName: item.systemImage,
+                palette: palette
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.label.uppercased())
@@ -281,13 +282,11 @@ private struct ForteBlueprintHistoryList: View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(ForteColor.indigoDeep)
-                        .frame(width: 38, height: 38)
-                        .background(ForteColor.indigoMist)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .accessibilityHidden(true)
+                    ForteReviewIconBadge(
+                        systemName: "chart.line.uptrend.xyaxis",
+                        palette: .cycling(index + 3),
+                        iconSize: 15
+                    )
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
@@ -332,13 +331,10 @@ private struct ForteBlueprintGoalFitCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "scope")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(ForteColor.indigoDeep)
-                    .frame(width: 38, height: 38)
-                    .background(ForteColor.indigoSoft)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .accessibilityHidden(true)
+                ForteReviewIconBadge(
+                    systemName: "scope",
+                    palette: .blue
+                )
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(goalFit.headline)
@@ -357,6 +353,7 @@ private struct ForteBlueprintGoalFitCard: View {
                 ForteBlueprintSignalGroup(
                     title: "What supports it",
                     systemImage: "checkmark",
+                    palette: .teal,
                     items: goalFit.supports
                 )
             }
@@ -365,6 +362,7 @@ private struct ForteBlueprintGoalFitCard: View {
                 ForteBlueprintSignalGroup(
                     title: "What to account for",
                     systemImage: "minus",
+                    palette: .ochre,
                     items: goalFit.gaps
                 )
             }
@@ -390,6 +388,7 @@ private struct ForteBlueprintGoalFitCard: View {
 private struct ForteBlueprintSignalGroup: View {
     let title: String
     let systemImage: String
+    let palette: ForteReviewIconPalette
     let items: [String]
 
     var body: some View {
@@ -403,9 +402,9 @@ private struct ForteBlueprintSignalGroup: View {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: systemImage)
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(ForteColor.indigoDeep)
+                        .foregroundStyle(palette.foreground)
                         .frame(width: 18, height: 18)
-                        .background(ForteColor.indigoSoft)
+                        .background(palette.background)
                         .clipShape(Circle())
 
                     Text(item)

@@ -262,7 +262,10 @@ private struct ForteSummaryAnswerList: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(answers.enumerated()), id: \.element.id) { index, answer in
-                ForteSummaryAnswerRow(answer: answer)
+                ForteSummaryAnswerRow(
+                    answer: answer,
+                    palette: .cycling(index)
+                )
 
                 if index < answers.count - 1 {
                     Rectangle()
@@ -285,16 +288,14 @@ private struct ForteSummaryAnswerList: View {
 
 private struct ForteSummaryAnswerRow: View {
     let answer: ForteSummaryAnswer
+    let palette: ForteReviewIconPalette
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: answer.systemImage)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(ForteColor.indigoDeep)
-                .frame(width: 38, height: 38)
-                .background(ForteColor.indigoMist)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .accessibilityHidden(true)
+            ForteReviewIconBadge(
+                systemName: answer.systemImage,
+                palette: palette
+            )
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(answer.label)

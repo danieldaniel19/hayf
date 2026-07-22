@@ -794,8 +794,10 @@ Different cards may use different supportive colors. Maintain consistent layout 
 
 - Visually separate Forte's interpretation from the source answers so users can compare inference with evidence.
 - Present the interpretation in one soft Indigo Mist card labeled **Forte Readback**, using editorial body type and a compact code-native balancing-object mark. Do not use magic sparkles, a chatbot avatar or a conversational speech bubble.
+- Give dense read-only review rows gentle visual wayfinding through a shared six-color icon-well palette: violet, teal, coral, ochre, blue and rose. Cycle colors by information category while keeping the card surfaces white and the copy neutral.
+- Keep these review icons compact, code-native and softly tinted. Color supports scanning; it must not imply selection, status or urgency. Navigation, progress and primary actions remain indigo.
 - Keep the readback to one or two direct sentences. It should address the user and identify the most decision-relevant pattern rather than repeat every answer.
-- Place the source answers underneath in one white stacked surface with compact read-only rows, inset dividers and Indigo Mist icon wells.
+- Place the source answers underneath in one white stacked surface with compact read-only rows, inset dividers and softly tinted review icon wells.
 - Keep confirmation and correction equally clear: use a fixed primary **Looks right** action followed by a quieter **Edit answers** action.
 - Readbacks advance automatically only after explicit confirmation. Generated interpretation must never silently replace the user's original answers.
 - Treat the Athlete Blueprint as the second chapter of the same readback system. Use the shared Indigo Mist interpretation card, relabel it **Coach's Read** and follow it with the evidence that supports the interpretation.
@@ -811,7 +813,7 @@ Different cards may use different supportive colors. Maintain consistent layout 
 - Use Apple's official layered Health developer artwork as the visual anchor. Preserve its transparent background and original pink, teal and blue treatment so the brand callback remains distinct from Forte's indigo interaction language.
 - Keep the identity card's status capsule below the Apple Health title and connection description. It must remain on one line and must not compete with the artwork for horizontal space.
 - Present the connection state beside the Apple Health identity in a compact status capsule. Do not imply a successful connection before HealthKit confirms it.
-- Explain requested data in the same compact read-only metadata style as onboarding summaries: one stacked white surface, Indigo Mist icon wells and short plain-language descriptions.
+- Explain requested data in the same compact read-only metadata style as onboarding summaries: one stacked white surface, softly tinted review icon wells and short plain-language descriptions.
 - Put privacy reassurance near the data list. State that Forte computes features locally first and sends compact summaries rather than raw HealthKit samples.
 - Keep simulator fixture controls visually secondary and label them as sample data, not as an Apple Health connection.
 - The primary action remains fixed at the bottom and changes from connection to blueprint generation only when the underlying state permits it.
