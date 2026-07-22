@@ -15,6 +15,7 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 - Store completed onboarding in `public.onboarding_profiles`.
 - Store every AI attempt in `public.onboarding_ai_generations`, including failures.
 - Keep raw HealthKit samples on device.
+- Produce Athlete Blueprint profile scores in the independent deterministic `hayf-athlete-profile-engine`; AI owns only the short interpretation.
 - Keep local deterministic mock output as fallback so onboarding can complete if AI fails.
 - Keep onboarding AI focused on intake summaries and goal-candidate shaping. Training rhythms are generated later by the planning engine from the active block and plan context.
 - Let tester restart onboarding by deleting the signed-in user's `onboarding_profiles` row.
@@ -24,6 +25,7 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 - `supabase/config.toml`: Supabase project/function config.
 - `supabase/migrations/20260429212000_onboarding_ai.sql`: database tables, indexes, trigger, and RLS policies.
 - `supabase/functions/onboarding-ai/index.ts`: authenticated Edge Function and OpenAI call.
+- `services/athlete-profile-engine`: authenticated, stateless deterministic Athlete Blueprint scoring service.
 - `HAYFHealthKitPrototype/Onboarding/OnboardingFlowView.swift`: iOS provider, request/response payloads, fallback provider, and onboarding profile store.
 - `HAYFHealthKitPrototype/App/AppRootView.swift`: post-auth gate that uses `onboarding_profiles` as onboarding source of truth.
 
@@ -33,12 +35,13 @@ This is intentionally closer to a small typed API than a freeform chat workflow.
 2. `RemoteOnboardingAIProvider` builds an `OnboardingAIFunctionRequest`.
 3. The app invokes Supabase function `onboarding-ai`.
 4. The Edge Function verifies the Supabase Auth user from the request token.
-5. The function calls OpenAI Responses API with a strict JSON schema for the requested task.
-6. The function inserts one `onboarding_ai_generations` trace row.
-7. The app decodes the structured output and renders it.
-8. If anything fails, the app uses `MockOnboardingAIProvider` fallback output.
-9. At the final screen, the app finishes onboarding and hands the accepted inputs to post-onboarding planning.
-10. The app upserts `onboarding_profiles`.
+5. For Athlete Blueprint generation, the function calls the configured profile engine first, defaulting to the same project's `athlete-profile-engine` Edge Function when no explicit URL is available.
+6. The function calls OpenAI Responses API with a strict JSON schema for authored copy, then merges the untouched deterministic score envelope.
+7. The function inserts one `onboarding_ai_generations` trace row; compact scoring input is redacted.
+8. The app decodes the structured output and renders it.
+9. A missing or unavailable profile engine yields `profileScores: null` and the existing Coach's Read card; other AI failures use local fallback output.
+10. At the final screen, the app finishes onboarding and hands the accepted inputs to post-onboarding planning.
+11. The app upserts `onboarding_profiles`.
 
 ## Supported Tasks
 
@@ -273,6 +276,9 @@ npx supabase link --project-ref nehwppenlaxozpwqepwp
 npx supabase db push
 npx supabase secrets set OPENAI_API_KEY="..."
 npx supabase secrets set OPENAI_MODEL="gpt-5-mini"
+npx supabase secrets set ATHLETE_PROFILE_ENGINE_URL="https://hayf-athlete-profile-engine.example"
+npx supabase secrets set ATHLETE_PROFILE_ENGINE_API_KEY="..."
+npx supabase functions deploy athlete-profile-engine
 npx supabase functions deploy onboarding-ai
 ```
 
@@ -282,6 +288,7 @@ npx supabase functions deploy onboarding-ai
 - Supabase Dashboard has `onboarding_ai_generations`.
 - Supabase Dashboard has Edge Function `onboarding-ai`.
 - Supabase secrets include `OPENAI_API_KEY` and `OPENAI_MODEL`.
+- When radar scoring is enabled, Supabase secrets include `ATHLETE_PROFILE_ENGINE_URL` and `ATHLETE_PROFILE_ENGINE_API_KEY`.
 - Completing onboarding inserts/updates one `onboarding_profiles` row.
 - AI-backed steps insert `onboarding_ai_generations` rows.
 - Successful AI calls have `status = success`.

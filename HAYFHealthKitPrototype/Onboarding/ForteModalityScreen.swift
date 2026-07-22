@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ForteModalityScreen: View {
+    let intent: OnboardingIntent
     let selectedOptions: [TrainingOption]
     let progressStep: Int
     let totalSteps: Int
@@ -123,7 +124,9 @@ struct ForteModalityScreen: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
 
-            Text("Tap the training options in the order\nyou want Forte to prioritize them.")
+            Text(intent == .concreteGoal
+                 ? "Tap the training options in the order\nyou want Forte to prioritize around your goal."
+                 : "Tap the training options in the order\nyou want Forte to prioritize them.")
                 .font(.system(size: 15, weight: .regular))
                 .lineSpacing(5)
                 .foregroundStyle(ForteColor.inkSoft)

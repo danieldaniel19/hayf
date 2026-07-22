@@ -137,6 +137,8 @@ export function buildDeterministicInitialPlan(
         usableDates[Math.min(index, usableDates.length - 1)],
         index + 1,
         archetype,
+        spec.programStage,
+        spec.programWeekNumber,
       );
     });
     const targetCounts = countModalities(workouts);
@@ -200,9 +202,16 @@ function deterministicWorkout(
   scheduledDate: string,
   sequenceOrder: number,
   archetype: Row | undefined,
+  programStage: InitialRhythmSpec["programStage"],
+  programWeekNumber: number | null,
 ): InitialPlanWorkout {
   const durationMinutes = archetypeDuration(archetype);
-  const copy = workoutCopy(modality);
+  const copy = workoutCopy(
+    modality,
+    programStage,
+    programWeekNumber,
+    sequenceOrder,
+  );
   return {
     scheduledDate,
     sequenceOrder,
@@ -389,17 +398,110 @@ function stepGroup(
   return { title, description, durationMinutes, steps };
 }
 
-function workoutCopy(modality: string) {
+function workoutCopy(
+  modality: string,
+  programStage: InitialRhythmSpec["programStage"],
+  programWeekNumber: number | null,
+  sequenceOrder: number,
+) {
+  const summaryIndex = programStage === "launch"
+    ? sequenceOrder - 1
+    : 2 + ((programWeekNumber ?? 1) - 1) * 7 + sequenceOrder - 1;
+
   if (modality === "ride") {
-    return { title: "Base Ride", purpose: "Build aerobic rhythm" };
+    return {
+      title: "Base Ride",
+      purpose: rotatingCopy(summaryIndex, [
+        "Gentle spinning bridges safely into Week 1.",
+        "Easy cadence work establishes your cycling rhythm.",
+        "Steady riding adds controlled aerobic volume.",
+        "Smooth pedaling reinforces repeatable endurance.",
+        "Easy miles extend your aerobic cycling base.",
+        "Relaxed riding keeps weekly cycling load manageable.",
+        "Comfortable cadence supports steady aerobic work.",
+        "Light spinning develops efficient pedal rhythm.",
+        "Steady endurance keeps fatigue well contained.",
+        "Conversational riding builds aerobic durability.",
+        "Easy road time builds repeatable cycling confidence.",
+        "Smooth cadence adds useful low-stress volume.",
+        "Controlled endurance supports your later sessions.",
+        "Patient riding develops sustainable aerobic fitness.",
+        "Relaxed pedaling preserves energy for the week.",
+        "Easy spinning keeps your training rhythm steady.",
+      ]),
+    };
   }
   if (modality === "run") {
-    return { title: "Base Run", purpose: "Build aerobic rhythm" };
+    return {
+      title: "Base Run",
+      purpose: rotatingCopy(summaryIndex, [
+        "Gentle run-walk work rebuilds impact tolerance.",
+        "Relaxed running adds controlled aerobic time.",
+        "Easy running reinforces your weekly training rhythm.",
+        "Short easy miles extend your aerobic base.",
+        "Controlled running keeps the weekly load manageable.",
+        "Smooth running develops steady aerobic confidence.",
+        "Gentle strides support durable running mechanics.",
+        "Conversational running adds useful aerobic volume.",
+        "Easy footwork rebuilds efficient running rhythm.",
+        "Relaxed miles preserve energy for later sessions.",
+        "Steady running builds repeatable aerobic endurance.",
+        "Light running adds fitness without excess strain.",
+        "Patient pacing supports consistent weekly progress.",
+        "Easy movement strengthens your running foundation.",
+        "Controlled miles keep impact and fatigue balanced.",
+        "Smooth easy running maintains training momentum.",
+      ]),
+    };
   }
   if (modality === "strength") {
-    return { title: "Full Body A", purpose: "Build durable strength" };
+    return {
+      title: "Full Body A",
+      purpose: rotatingCopy(summaryIndex, [
+        "Controlled strength work rebuilds durable movement.",
+        "Steady lifting builds resilient total-body strength.",
+        "Simple strength work reinforces movement quality.",
+        "Measured lifting builds strength with low fatigue.",
+        "Balanced strength work supports the wider week.",
+        "Clean reps develop repeatable whole-body strength.",
+        "Controlled reps reinforce stable movement patterns.",
+        "Simple lifting develops useful full-body capacity.",
+        "Balanced resistance work supports durable training.",
+        "Steady strength practice improves movement control.",
+        "Measured sets build capacity with modest fatigue.",
+        "Clean lifting supports your broader training rhythm.",
+        "Foundational strength develops resilient movement.",
+        "Controlled resistance improves confident movement.",
+        "Balanced lifting adds useful muscular support.",
+        "Steady repetitions build lasting strength.",
+      ]),
+    };
   }
-  return { title: "Easy Training", purpose: "Build a repeatable rhythm" };
+  return {
+    title: "Easy Training",
+    purpose: rotatingCopy(summaryIndex, [
+      "Easy movement maintains a useful training rhythm.",
+      "Controlled movement supports the rest of your week.",
+      "A light session preserves steady training momentum.",
+      "Gentle work keeps your weekly rhythm intact.",
+      "Measured movement adds useful work without strain.",
+      "Low-load training supports steady weekly progress.",
+      "Easy practice reinforces consistent movement habits.",
+      "Gentle movement preserves energy for later sessions.",
+      "Controlled work adds fitness without excess fatigue.",
+      "Light training supports a sustainable weekly rhythm.",
+      "Smooth movement builds confidence without overload.",
+      "Easy effort maintains useful training continuity.",
+      "Measured practice keeps your plan moving forward.",
+      "Gentle training supports steady physical readiness.",
+      "Controlled movement builds weekly momentum.",
+      "Light activity preserves the habit without strain.",
+    ]),
+  };
+}
+
+function rotatingCopy(index: number, options: string[]) {
+  return options[((index % options.length) + options.length) % options.length];
 }
 
 function archetypeDuration(archetype: Row | undefined) {

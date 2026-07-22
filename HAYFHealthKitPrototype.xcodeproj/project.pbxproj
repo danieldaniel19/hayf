@@ -59,6 +59,8 @@
 		H00000050000000000000001 /* ForteAppleHealthScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000150000000000000001 /* ForteAppleHealthScreen.swift */; };
 		J00000010000000000000001 /* ForteAthleteBlueprintScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */; };
 		K00000010000000000000001 /* ForteFitnessStrategyScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */; };
+		L00000010000000000000001 /* ForteOnboardingChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = L00000110000000000000001 /* ForteOnboardingChrome.swift */; };
+		L00000020000000000000001 /* ForteGoalIntentScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = L00000120000000000000001 /* ForteGoalIntentScreens.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -127,6 +129,8 @@
 		H00000150000000000000001 /* ForteAppleHealthScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteAppleHealthScreen.swift; sourceTree = "<group>"; };
 		J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteAthleteBlueprintScreen.swift; sourceTree = "<group>"; };
 		K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteFitnessStrategyScreen.swift; sourceTree = "<group>"; };
+		L00000110000000000000001 /* ForteOnboardingChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingChrome.swift; sourceTree = "<group>"; };
+		L00000120000000000000001 /* ForteGoalIntentScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteGoalIntentScreens.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -232,6 +236,7 @@
 				A000001C000000000000001 /* HAYFColor.swift */,
 				A000001D000000000000001 /* HAYFLogo.swift */,
 				G00000110000000000000001 /* ForteDesign.swift */,
+				L00000110000000000000001 /* ForteOnboardingChrome.swift */,
 				G00000140000000000000001 /* ForteStackedChoiceList.swift */,
 				G00000160000000000000001 /* ForteTextArea.swift */,
 				G00000180000000000000001 /* ForteWheelSelector.swift */,
@@ -301,6 +306,7 @@
 			isa = PBXGroup;
 			children = (
 				A0000027000000000000001 /* OnboardingFlowView.swift */,
+				L00000120000000000000001 /* ForteGoalIntentScreens.swift */,
 				G00000120000000000000001 /* ForteIntentScreen.swift */,
 				G00000130000000000000001 /* ForteModalityScreen.swift */,
 				G00000150000000000000001 /* ForteInfrastructureScreen.swift */,
@@ -449,12 +455,14 @@
 				A00000090000000000000001 /* HAYFColor.swift in Sources */,
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
 				G00000010000000000000001 /* ForteDesign.swift in Sources */,
+				L00000010000000000000001 /* ForteOnboardingChrome.swift in Sources */,
 				G00000040000000000000001 /* ForteStackedChoiceList.swift in Sources */,
 				G00000060000000000000001 /* ForteTextArea.swift in Sources */,
 				G00000080000000000000001 /* ForteWheelSelector.swift in Sources */,
 				G000000A0000000000000001 /* ForteImageChoiceTile.swift in Sources */,
 				G000000F0000000000000001 /* ForteEditorialChoiceCard.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
+				L00000020000000000000001 /* ForteGoalIntentScreens.swift in Sources */,
 				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
 				G00000030000000000000001 /* ForteModalityScreen.swift in Sources */,
 				G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */,

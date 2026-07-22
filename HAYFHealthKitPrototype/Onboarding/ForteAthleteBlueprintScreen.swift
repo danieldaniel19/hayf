@@ -1,5 +1,320 @@
 import SwiftUI
 
+enum AthleteProfileDimensionKey: String, Codable, CaseIterable, Identifiable {
+    case consistency
+    case momentum
+    case strength
+    case trainingBase = "training_base"
+    case endurance
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .consistency: return "Consistency"
+        case .momentum: return "Momentum"
+        case .strength: return "Strength"
+        case .trainingBase: return "Training base"
+        case .endurance: return "Endurance"
+        }
+    }
+}
+
+struct AthleteProfileScoreComponent: Codable, Equatable {
+    let key: String
+    let value: Int?
+    let weight: Double
+    let status: String
+    let evidenceIds: [String]
+}
+
+struct AthleteProfileDimension: Codable, Equatable, Identifiable {
+    let key: AthleteProfileDimensionKey
+    let score: Int?
+    let status: String
+    let confidence: String
+    let components: [AthleteProfileScoreComponent]
+    let evidenceIds: [String]
+
+    var id: AthleteProfileDimensionKey { key }
+    var isAvailable: Bool {
+        status == "available" && score.map { (0...100).contains($0) } == true
+    }
+
+    var displayScore: Int? {
+        guard isAvailable, let score else { return nil }
+        return (score + 4) / 10
+    }
+
+    var displayValue: String {
+        displayScore.map(String.init) ?? "—"
+    }
+
+    var accessibilityValue: String {
+        isAvailable ? "\(displayValue) out of 10" : "Not enough evidence"
+    }
+
+    var accessibilityDescription: String {
+        "\(key.title), \(accessibilityValue.lowercased())"
+    }
+}
+
+struct AthleteProfileSourceSummary: Codable, Equatable {
+    let importedWorkoutCount: Int
+}
+
+struct AthleteProfileScores: Codable, Equatable {
+    let schemaVersion: String
+    let scoreVersion: String
+    let evaluatedAt: String
+    let dimensions: [AthleteProfileDimension]
+    let sourceSummary: AthleteProfileSourceSummary
+
+    var orderedDimensions: [AthleteProfileDimension] {
+        AthleteProfileDimensionKey.allCases.map { key in
+            dimensions.first { $0.key == key } ?? AthleteProfileDimension(
+                key: key,
+                score: nil,
+                status: "unavailable",
+                confidence: "insufficient",
+                components: [],
+                evidenceIds: []
+            )
+        }
+    }
+
+    var availableCount: Int {
+        orderedDimensions.filter(\.isAvailable).count
+    }
+
+    var presentation: AthleteProfilePresentation {
+        availableCount == 5 ? .complete : .partial
+    }
+
+    var jsonValue: JSONValue? {
+        try? JSONValue.isoEncoded(self)
+    }
+
+    static func decode(jsonValue: JSONValue) -> AthleteProfileScores? {
+        guard let data = try? JSONEncoder().encode(jsonValue) else { return nil }
+        guard let scores = try? JSONDecoder().decode(AthleteProfileScores.self, from: data),
+              scores.schemaVersion == "athlete-profile-scores.v1",
+              scores.scoreVersion == "profile-radar-v1.2.0",
+              scores.dimensions.map(\.key) == AthleteProfileDimensionKey.allCases,
+              scores.dimensions.allSatisfy({ dimension in
+                  dimension.status == "unavailable" ? dimension.score == nil : dimension.isAvailable
+              }) else { return nil }
+        return scores
+    }
+}
+
+enum AthleteProfilePresentation: Equatable {
+    case complete
+    case partial
+}
+
+enum AthleteProfileCardLayout: Equatable {
+    case onboarding
+    case profileCompact
+    case profileDetail
+
+    var chartHeight: CGFloat {
+        switch self {
+        case .onboarding: return 292
+        case .profileCompact: return 220
+        case .profileDetail: return 268
+        }
+    }
+
+    var cornerRadius: CGFloat {
+        self == .onboarding ? 24 : 12
+    }
+}
+
+struct AthleteProfileChartCard: View {
+    let scores: AthleteProfileScores
+    let summary: String
+    var layout: AthleteProfileCardLayout = .onboarding
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: layout == .profileCompact ? 12 : 16) {
+            Text("YOUR ATHLETE PROFILE")
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(2.0)
+                .foregroundStyle(ForteColor.ink)
+
+            AthleteRadarChart(dimensions: scores.orderedDimensions)
+                .frame(height: layout.chartHeight)
+
+            Rectangle()
+                .fill(ForteColor.borderSubtle)
+                .frame(height: 1)
+
+            Text(summary)
+                .font(layout == .profileCompact
+                    ? .system(size: 14, weight: .regular)
+                    : ForteTypography.editorial(size: 17, relativeTo: .body))
+                .lineSpacing(layout == .profileCompact ? 3 : 5)
+                .foregroundStyle(ForteColor.ink)
+                .lineLimit(layout == .profileCompact ? 2 : nil)
+                .fixedSize(horizontal: false, vertical: layout != .profileCompact)
+
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(ForteColor.indigoDeep)
+                    .frame(width: 28, height: 28)
+                    .background(ForteColor.indigoSoft)
+                    .clipShape(Circle())
+                    .accessibilityHidden(true)
+
+                Text(sourceText)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(ForteColor.inkMuted)
+            }
+
+        }
+        .padding(layout == .profileCompact ? 14 : 18)
+        .background(ForteColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: layout.cornerRadius, style: .continuous)
+                .stroke(ForteColor.borderSubtle.opacity(0.9), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(layout == .onboarding ? 0.055 : 0), radius: 16, y: 9)
+    }
+
+    private var sourceText: String {
+        let count = scores.sourceSummary.importedWorkoutCount
+        return "Based on \(count) imported workouts"
+    }
+}
+
+private struct AthleteRadarChart: View {
+    let dimensions: [AthleteProfileDimension]
+
+    var body: some View {
+        GeometryReader { geometry in
+            let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2 + 4)
+            let radius = min(geometry.size.width * 0.30, geometry.size.height * 0.31)
+
+            ZStack {
+                radarGrid(center: center, radius: radius)
+                    .stroke(ForteColor.borderSubtle, lineWidth: 1)
+
+                radarSpokes(center: center, radius: radius)
+                    .stroke(ForteColor.borderSubtle.opacity(0.8), lineWidth: 1)
+
+                if dimensions.allSatisfy(\.isAvailable) {
+                    radarPolygon(center: center, radius: radius)
+                        .fill(ForteColor.indigo.opacity(0.16))
+                    radarPolygon(center: center, radius: radius)
+                        .stroke(ForteColor.indigo, lineWidth: 2)
+                } else {
+                    partialRadar(center: center, radius: radius)
+                        .stroke(ForteColor.indigo, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                }
+
+                ForEach(Array(dimensions.enumerated()), id: \.element.id) { index, dimension in
+                    if let score = dimension.score, dimension.isAvailable {
+                        Circle()
+                            .fill(ForteColor.indigo)
+                            .frame(width: 9, height: 9)
+                            .position(point(index: index, value: CGFloat(score) / 100, center: center, radius: radius))
+                            .accessibilityHidden(true)
+                    }
+
+                    dimensionLabel(dimension)
+                        .frame(width: labelWidth(for: dimension.key))
+                        .position(labelPoint(index: index, center: center, radius: radius))
+                }
+            }
+        }
+    }
+
+    private func dimensionLabel(_ dimension: AthleteProfileDimension) -> some View {
+        VStack(spacing: 2) {
+            Text(dimension.key.title.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.7)
+                .foregroundStyle(ForteColor.ink)
+                .multilineTextAlignment(.center)
+
+            Text(dimension.displayValue)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(dimension.isAvailable ? ForteColor.indigoDeep : ForteColor.inkMuted)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(dimension.key.title)
+        .accessibilityValue(dimension.accessibilityValue)
+    }
+
+    private func radarGrid(center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        for ring in 1...5 {
+            let scale = CGFloat(ring) / 5
+            let points = (0..<5).map { point(index: $0, value: scale, center: center, radius: radius) }
+            path.move(to: points[0])
+            points.dropFirst().forEach { path.addLine(to: $0) }
+            path.closeSubpath()
+        }
+        return path
+    }
+
+    private func radarSpokes(center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        for index in 0..<5 {
+            path.move(to: center)
+            path.addLine(to: point(index: index, value: 1, center: center, radius: radius))
+        }
+        return path
+    }
+
+    private func radarPolygon(center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        let points = dimensions.enumerated().map { index, dimension in
+            point(index: index, value: CGFloat(dimension.score ?? 0) / 100, center: center, radius: radius)
+        }
+        guard let first = points.first else { return path }
+        path.move(to: first)
+        points.dropFirst().forEach { path.addLine(to: $0) }
+        path.closeSubpath()
+        return path
+    }
+
+    private func partialRadar(center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        guard dimensions.count == 5 else { return path }
+        for index in 0..<5 {
+            let next = (index + 1) % 5
+            guard dimensions[index].isAvailable,
+                  dimensions[next].isAvailable,
+                  let score = dimensions[index].score,
+                  let nextScore = dimensions[next].score else { continue }
+            path.move(to: point(index: index, value: CGFloat(score) / 100, center: center, radius: radius))
+            path.addLine(to: point(index: next, value: CGFloat(nextScore) / 100, center: center, radius: radius))
+        }
+        return path
+    }
+
+    private func point(index: Int, value: CGFloat, center: CGPoint, radius: CGFloat) -> CGPoint {
+        let angle = -CGFloat.pi / 2 + CGFloat(index) * (2 * CGFloat.pi / 5)
+        return CGPoint(
+            x: center.x + cos(angle) * radius * value,
+            y: center.y + sin(angle) * radius * value
+        )
+    }
+
+    private func labelPoint(index: Int, center: CGPoint, radius: CGFloat) -> CGPoint {
+        let multiplier: CGFloat = index == 0 ? 1.43 : 1.46
+        return point(index: index, value: multiplier, center: center, radius: radius)
+    }
+
+    private func labelWidth(for key: AthleteProfileDimensionKey) -> CGFloat {
+        key == .trainingBase ? 96 : 78
+    }
+}
+
 struct ForteBlueprintSnapshotItem: Identifiable, Equatable {
     let label: String
     let systemImage: String
@@ -24,6 +339,7 @@ struct ForteBlueprintGoalFit: Equatable {
 
 struct ForteAthleteBlueprintScreen: View {
     let coachRead: String
+    let profileScores: AthleteProfileScores?
     let snapshotItems: [ForteBlueprintSnapshotItem]
     let historyItems: [ForteBlueprintHistoryItem]
     let goalFit: ForteBlueprintGoalFit
@@ -48,11 +364,18 @@ struct ForteAthleteBlueprintScreen: View {
                     VStack(alignment: .leading, spacing: 0) {
                         hero
 
-                        ForteAIReadbackCard(
-                            label: "COACH'S READ",
-                            text: coachRead,
-                            footer: "Built from your answers and available health data"
-                        )
+                        if let profileScores {
+                            AthleteProfileChartCard(
+                                scores: profileScores,
+                                summary: coachRead
+                            )
+                        } else {
+                            ForteAIReadbackCard(
+                                label: "COACH'S READ",
+                                text: coachRead,
+                                footer: "Built from your answers and available health data"
+                            )
+                        }
 
                         sectionLabel("BLUEPRINT SNAPSHOT")
                             .padding(.top, 28)
@@ -224,7 +547,7 @@ private struct ForteBlueprintSnapshotList: View {
                     Rectangle()
                         .fill(ForteColor.borderSubtle.opacity(0.78))
                         .frame(height: 1)
-                        .padding(.leading, 66)
+                        .padding(.leading, 76)
                 }
             }
         }
@@ -245,10 +568,7 @@ private struct ForteBlueprintSnapshotRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ForteReviewIconBadge(
-                systemName: item.systemImage,
-                palette: palette
-            )
+            snapshotIcon
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.label.uppercased())
@@ -273,6 +593,34 @@ private struct ForteBlueprintSnapshotRow: View {
         .padding(.vertical, 13)
         .accessibilityElement(children: .combine)
     }
+
+    @ViewBuilder
+    private var snapshotIcon: some View {
+        if let assetName = snapshotAssetName {
+            Image(assetName)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
+        } else {
+            ForteReviewIconBadge(
+                systemName: item.systemImage,
+                palette: palette,
+                size: 48,
+                iconSize: 18
+            )
+        }
+    }
+
+    private var snapshotAssetName: String? {
+        switch item.label {
+        case "Athlete type": return "ForteBlueprintAthleteType"
+        case "Current state": return "ForteBlueprintCurrentState"
+        case "Physical baseline": return "ForteSummaryBodyBaseline"
+        default: return nil
+        }
+    }
 }
 
 private struct ForteBlueprintHistoryList: View {
@@ -282,11 +630,12 @@ private struct ForteBlueprintHistoryList: View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 HStack(alignment: .top, spacing: 12) {
-                    ForteReviewIconBadge(
-                        systemName: "chart.line.uptrend.xyaxis",
-                        palette: .cycling(index + 3),
-                        iconSize: 15
-                    )
+                    Image("ForteHealthTrainingHistory")
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
@@ -310,7 +659,7 @@ private struct ForteBlueprintHistoryList: View {
                     Rectangle()
                         .fill(ForteColor.borderSubtle.opacity(0.78))
                         .frame(height: 1)
-                        .padding(.leading, 66)
+                        .padding(.leading, 76)
                 }
             }
         }
@@ -331,10 +680,12 @@ private struct ForteBlueprintGoalFitCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
-                ForteReviewIconBadge(
-                    systemName: "scope",
-                    palette: .blue
-                )
+                Image("ForteStrategyTarget")
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(width: 48, height: 48)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(goalFit.headline)

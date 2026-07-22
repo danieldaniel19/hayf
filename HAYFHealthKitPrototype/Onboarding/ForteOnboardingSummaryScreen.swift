@@ -1,6 +1,51 @@
 import SwiftUI
 
+enum ForteSummaryAnswerRole: String, CaseIterable, Equatable {
+    case training
+    case access
+    case anchor
+    case availability
+    case capacity
+    case risks
+    case injuries
+    case bodyBaseline
+    case support
+    case floor
+    case goal
+    case timeframe
+    case experience
+    case tradeoff
+    case direction
+    case challenge
+    case avoidance
+    case intensity
+
+    var assetName: String {
+        switch self {
+        case .training: return "ForteSummaryTraining"
+        case .access: return "ForteSummaryAccess"
+        case .anchor: return "ForteSummaryAnchor"
+        case .availability: return "ForteSummaryAvailability"
+        case .capacity: return "ForteSummaryCapacity"
+        case .risks: return "ForteSummaryRisks"
+        case .injuries: return "ForteSummaryInjuries"
+        case .bodyBaseline: return "ForteSummaryBodyBaseline"
+        case .support: return "ForteSummarySupport"
+        case .floor: return "ForteSummaryFloor"
+        case .goal: return "ForteStrategyGoalSignal"
+        case .timeframe: return "ForteStrategyCadence"
+        case .experience: return "ForteHealthTrainingHistory"
+        case .tradeoff: return "ForteStrategyTradeoff"
+        case .direction: return "ForteStrategyDriver"
+        case .challenge: return "ForteStrategyTarget"
+        case .avoidance: return "ForteStrategyProtect"
+        case .intensity: return "ForteStrategyPriority"
+        }
+    }
+}
+
 struct ForteSummaryAnswer: Identifiable, Equatable {
+    let role: ForteSummaryAnswerRole
     let label: String
     let systemImage: String
     let values: [String]
@@ -271,7 +316,7 @@ private struct ForteSummaryAnswerList: View {
                     Rectangle()
                         .fill(ForteColor.borderSubtle.opacity(0.78))
                         .frame(height: 1)
-                        .padding(.leading, 66)
+                        .padding(.leading, 76)
                 }
             }
         }
@@ -292,10 +337,7 @@ private struct ForteSummaryAnswerRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ForteReviewIconBadge(
-                systemName: answer.systemImage,
-                palette: palette
-            )
+            reviewIcon
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(answer.label)
@@ -326,6 +368,16 @@ private struct ForteSummaryAnswerRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var reviewIcon: some View {
+        Image(answer.role.assetName)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: 48, height: 48)
+            .accessibilityHidden(true)
     }
 }
 

@@ -337,22 +337,22 @@ struct ForteAppleHealthScreen: View {
 private struct ForteHealthDataList: View {
     private let rows = [
         ForteHealthDataItem(
-            systemImage: "figure.strengthtraining.traditional",
+            assetName: "ForteHealthTrainingHistory",
             title: "Training history",
             copy: "Workouts, modalities, duration and recency."
         ),
         ForteHealthDataItem(
-            systemImage: "figure.walk",
+            assetName: "ForteHealthDailyActivity",
             title: "Daily activity",
             copy: "Steps, active energy and exercise minutes."
         ),
         ForteHealthDataItem(
-            systemImage: "moon.stars",
+            assetName: "ForteHealthRecovery",
             title: "Recovery",
             copy: "Sleep, resting heart rate, HRV and cardio fitness."
         ),
         ForteHealthDataItem(
-            systemImage: "figure",
+            assetName: "ForteHealthBodyContext",
             title: "Body context",
             copy: "Body metrics and available nutrition logs."
         )
@@ -362,10 +362,12 @@ private struct ForteHealthDataList: View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 HStack(alignment: .top, spacing: 12) {
-                    ForteReviewIconBadge(
-                        systemName: row.systemImage,
-                        palette: .cycling(index)
-                    )
+                    Image(row.assetName)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(row.title)
@@ -389,7 +391,7 @@ private struct ForteHealthDataList: View {
                     Rectangle()
                         .fill(ForteColor.borderSubtle.opacity(0.78))
                         .frame(height: 1)
-                        .padding(.leading, 66)
+                        .padding(.leading, 76)
                 }
             }
         }
@@ -405,7 +407,7 @@ private struct ForteHealthDataList: View {
 }
 
 private struct ForteHealthDataItem: Identifiable {
-    let systemImage: String
+    let assetName: String
     let title: String
     let copy: String
 

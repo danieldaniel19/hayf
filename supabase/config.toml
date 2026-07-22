@@ -5,3 +5,6 @@ verify_jwt = true
 
 [functions.planning-ai]
 verify_jwt = true
+
+[functions.athlete-profile-engine]
+verify_jwt = false

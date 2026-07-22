@@ -84,6 +84,7 @@ async function generatePlan(state: TwoWeekPlanState) {
       "Respect the validated Training Architecture, Fitness Strategy, recovery envelope, hard-day cap, bad-day floor, and weekly plan rules.",
       "When sessionLengthMode is fixed_typical_duration, treat sessionLengthMinutes as the normal session target. When it is varies_by_modality, size each modality from its approved archetype and evidence instead of applying one shared duration. Cycling above 120 minutes requires supporting history, recovery, and strategy context.",
       "For each rhythm, write weekContext.strategyExplanation as one concrete, coach-to-athlete sentence of at most 180 characters. Name what the session mix develops, why its load fits this point in the phase, and the recovery tradeoff. Use you or your where natural.",
+      "The purpose field is the athlete-facing session-card summary. Write a distinct complete sentence of 7-12 words and at most 80 characters for every workout. Before writing it, reason from the modality and prescription, scheduled weekday, chronological position within the week, duration and intensity, Launch or absolute program week, neighboring load, active phase or re-entry state, and the concrete goal or strategy target advanced. Synthesize at least three relevant signals instead of listing metadata, vary which signals lead each sentence, and rewrite repeated or near-duplicate purposes. Never copy weekContext, prescription, title, or another purpose; never use a generic label such as Build aerobic rhythm; never truncate or add ellipses.",
       "Do not emit deterministic fallback markers or generic templates. If the constraints conflict, still return the safest valid plan inside the provided architecture.",
       "Set block.context to an empty object; Supabase will add persisted context after validation.",
     ].join(" "),
@@ -98,6 +99,12 @@ async function generatePlan(state: TwoWeekPlanState) {
         available_day_parts: packet.planning_constraints.available_day_parts,
         duration_source: "approved_archetypes_typical_duration_minutes_and_user_session_length",
         reentry: architecture.reentry,
+        session_card_summary: {
+          field: "purpose",
+          words: "7-12",
+          max_characters: 80,
+          unique_across_visible_rhythms: true,
+        },
       },
     },
     inputSummary: {
@@ -351,7 +358,7 @@ const workoutSchema = {
     title: { type: "string", maxLength: 32 },
     durationMinutes: { type: "number" },
     intensityLabel: { type: "string" },
-    purpose: { type: "string" },
+    purpose: { type: "string", maxLength: 80 },
     prescription: {
       type: "object",
       additionalProperties: false,
@@ -650,6 +657,7 @@ function validateDraftPlanArtifact(
     throw new Error("Two-week plan compiler returned an unexpected committed week start.");
   }
   const allowed = new Set(plannerInput.allowed_modalities.map(normalizeModality));
+  const purposeKeys = new Set<string>();
   for (const [rhythmIndex, rhythm] of artifact.rhythms.entries()) {
     const expected = openingPlan.rhythms[rhythmIndex];
     if (!expected) throw new Error(`Two-week plan compiler returned an extra rhythm at index ${rhythmIndex}.`);
@@ -694,6 +702,11 @@ function validateDraftPlanArtifact(
         throw new Error(`Two-week plan compiler returned invalid duration for ${workout.title}.`);
       }
       validateCompactWorkoutCopy(workout);
+      const purposeKey = normalizeLoose(workout.purpose);
+      if (purposeKeys.has(purposeKey)) {
+        throw new Error(`Two-week plan compiler repeated a session-card summary: ${workout.purpose}.`);
+      }
+      purposeKeys.add(purposeKey);
     }
     validateWorkoutModalityTargets(rhythm, expected.modalityTargets);
     validateRecoveryLabels(rhythm);
@@ -1007,6 +1020,17 @@ function validateCompactWorkoutCopy(workout: DraftTwoWeekPlanArtifact["rhythms"]
   if (workout.fuelingSummary.length > 20 || workout.fuelingSummary.trim().split(/\s+/).length > 3) {
     throw new Error(`Workout fuel summary is too long: ${workout.fuelingSummary}.`);
   }
+  const purpose = workout.purpose.trim();
+  const purposeWords = purpose.split(/\s+/).length;
+  if (
+    purpose.length > 80 ||
+    purposeWords < 5 ||
+    purposeWords > 12 ||
+    !/[.!?]$/.test(purpose) ||
+    /^build aerobic rhythm[.!]?$/i.test(purpose)
+  ) {
+    throw new Error(`Workout session-card summary is not compact and specific for ${workout.title}: ${workout.purpose}.`);
+  }
   for (const value of [workout.title, workout.intensityLabel, workout.purpose, workout.fuelingSummary]) {
     if (/[—–]/.test(value)) throw new Error(`Workout copy contains a prohibited dash glyph: ${workout.title}.`);
     if (/\b(?:RIR|RPE)\b/i.test(value)) throw new Error(`Workout copy contains internal effort shorthand: ${workout.title}.`);
@@ -1275,8 +1299,12 @@ function applyPlanContractGuardrails(
     const selected = desiredModalities.map((modality, workoutIndex) => {
       const matchingIndex = unused.findIndex((workout) => workoutModality(workout) === normalizeModality(modality));
       const candidate = matchingIndex >= 0 ? unused.splice(matchingIndex, 1)[0] : null;
+      const source = candidate ?? {
+        ...deterministicDraftWorkout(modality, workoutIndex, architecture),
+        purpose: deterministicSessionPurpose(modality, spec, workoutIndex),
+      };
       return normalizeDraftWorkout(
-        candidate ?? deterministicDraftWorkout(modality, workoutIndex, architecture),
+        source,
         modality,
         scheduledDates[workoutIndex],
         workoutIndex,
@@ -1466,7 +1494,7 @@ function weekRhythm(
         title: archetype ? titleFromArchetype(archetype) : `${titleCase(modality)} Support`,
         durationMinutes: archetype ? typicalDuration(archetype) : 35,
         intensityLabel: archetype ? intensityLabel(archetype.intensity_domain) : "Easy",
-        purpose: archetype?.purpose ?? "Support the strategy without crowding recovery.",
+        purpose: deterministicSessionPurpose(modality, spec, index),
         prescription: {
           warmup: "Start easy and check readiness.",
           main: [
@@ -1481,6 +1509,93 @@ function weekRhythm(
       }, modality, date, index, architecture);
     }),
   };
+}
+
+function deterministicSessionPurpose(
+  modality: string,
+  spec: Pick<OpeningRhythmSpec, "programStage" | "programWeekNumber">,
+  workoutIndex: number,
+) {
+  const normalized = normalizeModality(modality);
+  const summaryIndex = spec.programStage === "launch"
+    ? workoutIndex
+    : 2 + ((spec.programWeekNumber ?? 1) - 1) * 7 + workoutIndex;
+  const options = normalized === "cycling"
+    ? [
+      "Gentle spinning bridges safely into Week 1.",
+      "Easy cadence work establishes your cycling rhythm.",
+      "Steady riding adds controlled aerobic volume.",
+      "Smooth pedaling reinforces repeatable endurance.",
+      "Easy miles extend your aerobic cycling base.",
+      "Relaxed riding keeps weekly cycling load manageable.",
+      "Comfortable cadence supports steady aerobic work.",
+      "Light spinning develops efficient pedal rhythm.",
+      "Steady endurance keeps fatigue well contained.",
+      "Conversational riding builds aerobic durability.",
+      "Easy road time builds repeatable cycling confidence.",
+      "Smooth cadence adds useful low-stress volume.",
+      "Controlled endurance supports your later sessions.",
+      "Patient riding develops sustainable aerobic fitness.",
+      "Relaxed pedaling preserves energy for the week.",
+      "Easy spinning keeps your training rhythm steady.",
+    ]
+    : normalized === "running"
+    ? [
+      "Gentle run-walk work rebuilds impact tolerance.",
+      "Relaxed running adds controlled aerobic time.",
+      "Easy running reinforces your weekly training rhythm.",
+      "Short easy miles extend your aerobic base.",
+      "Controlled running keeps the weekly load manageable.",
+      "Smooth running develops steady aerobic confidence.",
+      "Gentle strides support durable running mechanics.",
+      "Conversational running adds useful aerobic volume.",
+      "Easy footwork rebuilds efficient running rhythm.",
+      "Relaxed miles preserve energy for later sessions.",
+      "Steady running builds repeatable aerobic endurance.",
+      "Light running adds fitness without excess strain.",
+      "Patient pacing supports consistent weekly progress.",
+      "Easy movement strengthens your running foundation.",
+      "Controlled miles keep impact and fatigue balanced.",
+      "Smooth easy running maintains training momentum.",
+    ]
+    : normalized === "strength"
+    ? [
+      "Controlled strength work rebuilds durable movement.",
+      "Steady lifting builds resilient total-body strength.",
+      "Simple strength work reinforces movement quality.",
+      "Measured lifting builds strength with low fatigue.",
+      "Balanced strength work supports the wider week.",
+      "Clean reps develop repeatable whole-body strength.",
+      "Controlled reps reinforce stable movement patterns.",
+      "Simple lifting develops useful full-body capacity.",
+      "Balanced resistance work supports durable training.",
+      "Steady strength practice improves movement control.",
+      "Measured sets build capacity with modest fatigue.",
+      "Clean lifting supports your broader training rhythm.",
+      "Foundational strength develops resilient movement.",
+      "Controlled resistance improves confident movement.",
+      "Balanced lifting adds useful muscular support.",
+      "Steady repetitions build lasting strength.",
+    ]
+    : [
+      "Easy movement maintains a useful training rhythm.",
+      "Controlled movement supports the rest of your week.",
+      "A light session preserves steady training momentum.",
+      "Gentle work keeps your weekly rhythm intact.",
+      "Measured movement adds useful work without strain.",
+      "Low-load training supports steady weekly progress.",
+      "Easy practice reinforces consistent movement habits.",
+      "Gentle movement preserves energy for later sessions.",
+      "Controlled work adds fitness without excess fatigue.",
+      "Light training supports a sustainable weekly rhythm.",
+      "Smooth movement builds confidence without overload.",
+      "Easy effort maintains useful training continuity.",
+      "Measured practice keeps your plan moving forward.",
+      "Gentle training supports steady physical readiness.",
+      "Controlled movement builds weekly momentum.",
+      "Light activity preserves the habit without strain.",
+    ];
+  return options[((summaryIndex % options.length) + options.length) % options.length];
 }
 
 function weekStrategyExplanation(spec: OpeningRhythmSpec, architecture: TrainingArchitecture) {
@@ -1520,13 +1635,15 @@ function applyReentryGuardrails(
     rhythm.hardEasyDistribution.hard = 0;
     rhythm.hardEasyDistribution.easy = Math.max(1, rhythm.hardEasyDistribution.easy);
     rhythm.hardEasyDistribution.moderate = Math.max(0, rhythm.workouts.length - rhythm.hardEasyDistribution.easy);
-    for (const workout of rhythm.workouts) {
+    for (const [workoutIndex, workout] of rhythm.workouts.entries()) {
       if (unsafeIntensity.test(`${workout.title} ${workout.intensityLabel} ${workout.purpose} ${workout.prescription.main.join(" ")}`)) {
         workout.title = `${titleCase(normalizeModality(workout.activityType))} Re-entry`;
         workout.intensityLabel = weekIndex === 0 ? "Easy" : "Easy to moderate";
-        workout.purpose = weekIndex === 0
-          ? "Restore repeatable training tolerance without chasing fatigue."
-          : "Build gently on the committed re-entry week if recovery is stable.";
+        workout.purpose = deterministicSessionPurpose(
+          workout.activityType,
+          rhythm,
+          workoutIndex,
+        );
         workout.prescription = {
           warmup: "Start very easy and check for pain, unusual heaviness, or poor coordination.",
           main: ["Complete a controlled conversational-effort session and stop with plenty in reserve."],

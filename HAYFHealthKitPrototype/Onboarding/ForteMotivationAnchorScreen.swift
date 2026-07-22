@@ -33,7 +33,7 @@ struct ForteMotivationAnchorScreen: View {
                         }
 
                         ForteTextArea(
-                            title: "Anything behind that?",
+                            title: "Anything besides that?",
                             placeholder: "I feel better when I train, but I lose the rhythm whenever work gets intense…",
                             text: $motivationNote,
                             characterLimit: 240
@@ -117,7 +117,7 @@ struct ForteMotivationAnchorScreen: View {
                 .tracking(3.4)
                 .foregroundStyle(ForteColor.indigoDeep)
 
-            Text("What are you trying\nto keep true?")
+            Text("What are you trying to achieve?")
                 .font(ForteTypography.editorial(size: 31, relativeTo: .largeTitle))
                 .tracking(-0.35)
                 .foregroundStyle(ForteColor.ink)

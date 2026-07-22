@@ -62,12 +62,142 @@ struct OnboardingFlowView: View {
                     onExit: onExit,
                     onContinue: primaryAction
                 )
+            } else if step == .goalBrief {
+                ForteGoalBriefScreen(
+                    goalBrief: $draft.goalBrief,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .goalExperience {
+                ForteGoalExperienceScreen(
+                    selectedExperience: draft.goalExperience,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { draft.goalExperience = $0 },
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .goalTimeline {
+                ForteGoalTimelineScreen(
+                    selectedTimeline: $draft.goalTimeline,
+                    goalDate: $draft.goalDate,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
             } else if step == .options {
                 ForteModalityScreen(
+                    intent: currentIntent,
                     selectedOptions: draft.trainingOptions,
                     progressStep: activeSegments,
                     totalSteps: totalSegments,
                     onToggle: toggleTrainingOption,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .findDirection {
+                ForteGoalDirectionScreen(
+                    selectedDirection: draft.goalDirection,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { direction in
+                        guard draft.goalDirection != direction else { return }
+                        invalidateGoalCandidates()
+                        draft.goalDirection = direction
+                    },
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .findChallenge {
+                ForteChallengeStyleScreen(
+                    selectedStyle: draft.challengeStyle,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { style in
+                        guard draft.challengeStyle != style else { return }
+                        invalidateGoalCandidates()
+                        draft.challengeStyle = style
+                    },
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .findAvoids {
+                ForteGoalAvoidanceScreen(
+                    selectedAvoidances: draft.goalAvoidances,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggle: toggleAvoidance,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .findIntensity {
+                ForteGoalIntensityScreen(
+                    selectedIntensity: draft.goalIntensity ?? .steady,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: setGoalIntensity,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+                .onAppear { draft.initializeGoalIntensityForDiscovery() }
+            } else if step == .goalCandidates {
+                ForteGoalCandidatesScreen(
+                    candidates: displayGoalCandidates,
+                    selectedCandidateID: selectedGoalCandidateID,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { candidate in
+                        selectedGoalCandidateID = candidate.id
+                        draft.chosenGoal = candidate
+                    },
+                    onEdit: prepareCandidateEdit,
+                    onBlend: {
+                        blendCandidateIDs = []
+                        blendedCandidate = nil
+                        step = .blendCandidates
+                    },
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .editCandidate {
+                ForteEditGoalCandidateScreen(
+                    goalText: $editingGoalText,
+                    timeline: $editingGoalTimeline,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .blendCandidates {
+                ForteBlendGoalCandidatesScreen(
+                    candidates: displayGoalCandidates,
+                    selectedCandidateIDs: blendCandidateIDs,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onToggle: toggleBlendCandidate,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .blendPreview {
+                ForteBlendGoalPreviewScreen(
+                    candidate: blendedCandidate ?? fallbackBlendedCandidate,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onChooseDifferent: { step = .blendCandidates },
                     onBack: goBack,
                     onExit: onExit,
                     onContinue: primaryAction
@@ -115,6 +245,16 @@ struct OnboardingFlowView: View {
                     onToggleDay: toggleAvailableDay,
                     onToggleDayPart: toggleAvailableDayPart,
                     onToggleFlexible: toggleUltraFlexibleAvailability,
+                    onBack: goBack,
+                    onExit: onExit,
+                    onContinue: primaryAction
+                )
+            } else if step == .goalPriority {
+                ForteGoalPriorityScreen(
+                    selectedPriority: draft.goalPriority,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onSelect: { draft.goalPriority = $0 },
                     onBack: goBack,
                     onExit: onExit,
                     onContinue: primaryAction
@@ -193,7 +333,7 @@ struct OnboardingFlowView: View {
                 )
             } else if step == .summary {
                 ForteOnboardingSummaryScreen(
-                    readback: currentSummary.readback,
+                    readback: FitnessStrategyVisibleCopy.sanitize(currentSummary.readback),
                     answers: forteSummaryAnswers,
                     progressStep: activeSegments,
                     totalSteps: totalSegments,
@@ -220,7 +360,8 @@ struct OnboardingFlowView: View {
                 )
             } else if step == .athleteBlueprint {
                 ForteAthleteBlueprintScreen(
-                    coachRead: currentAthleteBlueprint.coachRead.preview,
+                    coachRead: FitnessStrategyVisibleCopy.sanitize(currentAthleteBlueprint.coachRead.preview),
+                    profileScores: currentAthleteBlueprint.profileScores,
                     snapshotItems: forteBlueprintSnapshotItems,
                     historyItems: forteBlueprintHistoryItems,
                     goalFit: forteBlueprintGoalFit,
@@ -238,12 +379,21 @@ struct OnboardingFlowView: View {
                     fitReasons: forteStrategyFitReasons,
                     priorities: forteStrategyPriorities,
                     targets: forteStrategyTargets,
-                    operatingRhythm: forteStrategyOperatingRhythm,
                     completionErrorMessage: completionErrorMessage,
                     progressStep: activeSegments,
                     totalSteps: totalSegments,
                     primaryButtonTitle: primaryButtonTitle,
                     onContinue: primaryAction,
+                    onBack: goBack,
+                    onExit: onExit
+                )
+            } else if step == .fitnessStrategyPhases {
+                ForteFitnessStrategyPhasesScreen(
+                    phases: forteStrategyPhases,
+                    completionErrorMessage: completionErrorMessage,
+                    progressStep: activeSegments,
+                    totalSteps: totalSegments,
+                    onAccept: primaryAction,
                     onBack: goBack,
                     onExit: onExit
                 )
@@ -264,7 +414,7 @@ struct OnboardingFlowView: View {
                     onExit: onExit
                 )
             } else {
-                legacyOnboardingFlow
+                EmptyView()
             }
         }
         .animation(.easeInOut(duration: 0.2), value: step)
@@ -293,783 +443,6 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var legacyOnboardingFlow: some View {
-        ZStack {
-            HAYFColor.neutral
-                .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                onboardingHeader
-                    .padding(.horizontal, 24)
-                    .padding(.top, 24)
-
-                ScrollView(showsIndicators: false) {
-                    screenContent
-                        .padding(.horizontal, 24)
-                        .padding(.top, 30)
-                        .padding(.bottom, 24)
-                }
-                .id(step)
-
-                bottomAction
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 18)
-            }
-            .frame(maxWidth: 480)
-        }
-    }
-
-    private var onboardingHeader: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 8) {
-                ForEach(0..<totalSegments, id: \.self) { index in
-                    Capsule()
-                        .fill(index < activeSegments ? HAYFColor.orange : HAYFColor.borderStrong)
-                        .frame(height: 3)
-                }
-            }
-
-            HStack {
-                Text(progressLabel)
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
-
-                Spacer()
-
-                HStack(spacing: 8) {
-                    if step.showsBackButton {
-                        Button {
-                            goBack()
-                        } label: {
-                            OnboardingHeaderIcon(systemName: "arrow.left")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Back")
-                    }
-
-                    Button {
-                        onExit()
-                    } label: {
-                        OnboardingHeaderIcon(systemName: "xmark")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Exit onboarding")
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var screenContent: some View {
-        switch step {
-        case .intent:
-            intentScreen
-        case .goalBrief:
-            concreteGoalBriefScreen
-        case .goalExperience:
-            goalExperienceScreen
-        case .goalTimeline:
-            goalTimelineScreen
-        case .goalPriority:
-            goalPriorityScreen
-        case .options:
-            trainingOptionsScreen
-        case .infrastructure:
-            infrastructureScreen
-        case .anchor:
-            motivationAnchorScreen
-        case .findDirection:
-            goalDirectionScreen
-        case .findChallenge:
-            challengeStyleScreen
-        case .findAvoids:
-            goalAvoidsScreen
-        case .findIntensity:
-            goalIntensityScreen
-        case .generatingCandidates:
-            EmptyView()
-        case .goalCandidates:
-            goalCandidatesScreen
-        case .editCandidate:
-            editCandidateScreen
-        case .blendCandidates:
-            blendCandidatesScreen
-        case .generatingBlend:
-            EmptyView()
-        case .blendPreview:
-            blendPreviewScreen
-        case .weeklyCapacity:
-            weeklyCapacityScreen
-        case .weeklyAvailability:
-            weeklyAvailabilityScreen
-        case .friction:
-            frictionScreen
-        case .injuries:
-            injuryScreen
-        case .bodyBasics:
-            bodyBasicsScreen
-        case .bodyFatEstimate:
-            bodyFatEstimateScreen
-        case .support:
-            supportStyleScreen
-        case .floor:
-            badDayFloorScreen
-        case .generatingSummary:
-            EmptyView()
-        case .summary:
-            EmptyView()
-        case .health:
-            EmptyView()
-        case .generatingBlueprint:
-            EmptyView()
-        case .athleteBlueprint:
-            EmptyView()
-        case .generatingStrategy:
-            EmptyView()
-        case .fitnessStrategy:
-            EmptyView()
-        case .fitnessStrategyPhases:
-            fitnessStrategyPhasesScreen
-        }
-    }
-
-    private var intentScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What kind of help\ndo you want?",
-                copy: "HAYF will adapt the setup based on how you want to train."
-            )
-
-            VStack(spacing: 12) {
-                ForEach(OnboardingIntent.allCases) { intent in
-                    OnboardingOptionCard(
-                        title: intent.title,
-                        subtitle: intent.subtitle,
-                        systemImage: intent.systemImage,
-                        isSelected: selectedIntent == intent
-                    ) {
-                        selectedIntent = intent
-                    }
-                }
-            }
-        }
-    }
-
-    private var trainingOptionsScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What modalities can\nHAYF recommend?",
-                copy: selectedIntent == .concreteGoal
-                    ? "Tap the training options in the order you want HAYF to prioritize them around your goal."
-                    : "Tap the training options in the order you want HAYF to prioritize them."
-            )
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(TrainingOption.allCases) { option in
-                    SelectableTile(
-                        title: option.title,
-                        systemImage: option.systemImage,
-                        selectionRank: draft.trainingOptionRank(for: option),
-                        isLocked: !option.isOnboardingEnabled
-                    ) {
-                        guard option.isOnboardingEnabled else { return }
-                        if selectedIntent == .findGoal {
-                            invalidateGoalCandidates()
-                        }
-                        draft.toggleTrainingOption(option)
-                    }
-                }
-            }
-
-        }
-    }
-
-    private var concreteGoalBriefScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What are you\nworking toward?",
-                copy: "Say it naturally. HAYF will pull out the target, timeline, and what needs clarifying."
-            )
-
-            OnboardingTextArea(
-                title: "Goal brief",
-                placeholder: "Run a half marathon under 2 hours in October while keeping some strength.",
-                text: $draft.goalBrief,
-                characterLimit: 280
-            )
-        }
-    }
-
-    private var goalExperienceScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "How long have\nyou trained?",
-                copy: "HAYF will merge this data point with your workout history sync later to create a comprehensive context."
-            )
-
-            OptionGroup(title: "How experienced are you with training?") {
-                VStack(spacing: 10) {
-                    ForEach(GoalExperience.allCases) { experience in
-                        DetailedSelectableRow(
-                            title: experience.title,
-                            subtitle: experience.subtitle,
-                            systemImage: experience.systemImage,
-                            isSelected: draft.goalExperience == experience
-                        ) {
-                            draft.goalExperience = experience
-                        }
-                    }
-                }
-            }
-
-        }
-    }
-
-    private var goalTimelineScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What horizon\nare we coaching?",
-                copy: "If you do not have a fixed date, HAYF will default to a 12-week horizon whenever it needs one."
-            )
-
-            OptionGroup(title: "Timeline") {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        ForEach(GoalTimeline.allCases) { timeline in
-                            CompactChoiceButton(
-                                title: timeline.title,
-                                isSelected: draft.goalTimeline == timeline
-                            ) {
-                                draft.goalTimeline = timeline
-                            }
-                        }
-                    }
-
-                    if draft.goalTimeline == .specificDate {
-                        GoalDatePicker(date: $draft.goalDate)
-                    }
-                }
-            }
-        }
-    }
-
-    private var goalPriorityScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "How should HAYF\nprioritize sessions?",
-                copy: "This gives HAYF a clear rule for busy weeks."
-            )
-
-            OptionGroup(title: "If the week gets tight, protect...") {
-                VStack(spacing: 10) {
-                    ForEach(GoalPriority.allCases) { priority in
-                        DetailedSelectableRow(
-                            title: priority.title,
-                            subtitle: priority.subtitle,
-                            systemImage: priority.systemImage,
-                            isSelected: draft.goalPriority == priority
-                        ) {
-                            draft.goalPriority = priority
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var motivationAnchorScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What are you trying\nto keep true?",
-                copy: "Consistency usually protects something. Help me understand you better."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(MotivationAnchor.allCases) { anchor in
-                    SelectableRow(
-                        title: anchor.title,
-                        systemImage: anchor.systemImage,
-                        isSelected: draft.motivationAnchors.contains(anchor)
-                    ) {
-                        draft.toggleMotivationAnchor(anchor)
-                    }
-                }
-            }
-
-            OnboardingTextArea(
-                title: "Anything behind that?",
-                placeholder: "I feel better when I train, but I lose the rhythm whenever work gets intense...",
-                text: $draft.motivationNote,
-                characterLimit: 240
-            )
-        }
-    }
-
-    private var goalDirectionScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What kind of change\nwould feel exciting?",
-                copy: "HAYF will use this as the emotional direction before turning it into a concrete goal."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(GoalDirection.allCases) { direction in
-                    DetailedSelectableRow(
-                        title: direction.title,
-                        subtitle: direction.subtitle,
-                        systemImage: direction.systemImage,
-                        isSelected: draft.goalDirection == direction
-                    ) {
-                        guard draft.goalDirection != direction else { return }
-                        invalidateGoalCandidates()
-                        draft.goalDirection = direction
-                    }
-                }
-            }
-        }
-    }
-
-    private var challengeStyleScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What kind of challenge\nkeeps you interested?",
-                copy: "Different goals motivate differently. Pick the style that feels easiest to care about."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(ChallengeStyle.allCases) { style in
-                    DetailedSelectableRow(
-                        title: style.title,
-                        subtitle: style.subtitle,
-                        systemImage: style.systemImage,
-                        isSelected: draft.challengeStyle == style
-                    ) {
-                        guard draft.challengeStyle != style else { return }
-                        invalidateGoalCandidates()
-                        draft.challengeStyle = style
-                    }
-                }
-            }
-        }
-    }
-
-    private var goalAvoidsScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What should HAYF\navoid building around?",
-                copy: "This keeps goal ideas useful instead of technically impressive but wrong for your life."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(GoalAvoidance.onboardingCases) { avoidance in
-                    SelectableRow(
-                        title: avoidance.title,
-                        systemImage: avoidance.systemImage,
-                        isSelected: draft.goalAvoidances.contains(avoidance)
-                    ) {
-                        toggleAvoidance(avoidance)
-                    }
-                }
-            }
-
-        }
-    }
-
-    private var goalIntensityScreen: some View {
-        let selectedIntensity = draft.goalIntensity ?? .steady
-
-        return VStack(alignment: .leading, spacing: 28) {
-            OnboardingIntro(
-                title: "How ambitious should\nyour goal feel?",
-                copy: "Choose how much challenge HAYF should build into your goal options."
-            )
-
-            GoalIntensitySelector(
-                selection: selectedIntensity,
-                onSelectionChanged: setGoalIntensity
-            )
-
-            GoalIntensityExplanation(intensity: selectedIntensity)
-        }
-        .onAppear {
-            draft.initializeGoalIntensityForDiscovery()
-        }
-    }
-
-    private var infrastructureScreen: some View {
-        let options = draft.requiredInfrastructureOptions
-
-        return VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What do you\nhave access to?",
-                copy: "HAYF should only build around equipment and environments you can reliably use."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(options) { option in
-                    SelectableRow(
-                        title: option.title,
-                        systemImage: option.systemImage,
-                        isSelected: draft.infrastructureAccess.contains(option)
-                    ) {
-                        if selectedIntent == .findGoal {
-                            invalidateGoalCandidates()
-                        }
-                        draft.infrastructureAccess.toggle(option)
-                    }
-                }
-            }
-        }
-    }
-
-    private var goalCandidatesScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Which goal feels\nmost like you?",
-                copy: "HAYF shaped three goals from what you told us. Choose the one you want to chase first."
-            )
-
-            VStack(spacing: 12) {
-                ForEach(displayGoalCandidates) { candidate in
-                    GoalCandidateCard(
-                        candidate: candidate,
-                        isSelected: selectedGoalCandidateID == candidate.id,
-                        selectionStyle: .single
-                    ) {
-                        selectedGoalCandidateID = candidate.id
-                        draft.chosenGoal = candidate
-                    }
-                }
-            }
-
-            PersonalizationNote()
-        }
-    }
-
-    private var editCandidateScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Make the goal\nyours.",
-                copy: "Keep the useful shape, but rewrite anything that does not sound like the target you want."
-            )
-
-            OnboardingTextArea(
-                title: "Edited goal",
-                placeholder: "Improve 10K pace while keeping one weekly strength session...",
-                text: $editingGoalText,
-                characterLimit: 320
-            )
-
-            OptionGroup(title: "Timeframe") {
-                HStack(spacing: 10) {
-                    ForEach(GoalTimeline.discoveryCases) { timeline in
-                        CompactChoiceButton(
-                            title: timeline.title,
-                            isSelected: editingGoalTimeline == timeline
-                        ) {
-                            editingGoalTimeline = timeline
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var blendCandidatesScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Pick two goals\nto blend.",
-                copy: "HAYF will combine the useful parts into one clearer direction."
-            )
-
-            VStack(spacing: 12) {
-                ForEach(displayGoalCandidates) { candidate in
-                    GoalCandidateCard(
-                        candidate: candidate,
-                        isSelected: blendCandidateIDs.contains(candidate.id),
-                        selectionStyle: .multiple
-                    ) {
-                        toggleBlendCandidate(candidate)
-                    }
-                }
-            }
-        }
-    }
-
-    private var blendPreviewScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Here's the\nblended goal.",
-                copy: "Use this direction, or go back if the mix does not feel right."
-            )
-
-            GoalCandidateCard(
-                candidate: blendedCandidate ?? fallbackBlendedCandidate,
-                isSelected: true,
-                selectionStyle: .single
-            ) {
-                blendedCandidate = blendedCandidate ?? fallbackBlendedCandidate
-            }
-
-            PersonalizationNote()
-        }
-    }
-
-    private var weeklyCapacityScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What feels realistic\nmost weeks?",
-                copy: "Set a typical weekly rhythm. HAYF can still adapt when life or training changes."
-            )
-
-            HStack(alignment: .top, spacing: 12) {
-                CapacityWheelColumn(title: currentIntent == .concreteGoal ? "Total days / week" : "Days per week") {
-                    WheelChoicePicker(
-                        options: TrainingFrequency.allCases,
-                        selection: Binding(
-                            get: { draft.frequency ?? .three },
-                            set: { draft.frequency = $0 }
-                        ),
-                        accessibilityLabel: "Training days per week"
-                    )
-                }
-                .frame(maxWidth: .infinity)
-
-                CapacityWheelColumn(title: "Session length") {
-                    WheelChoicePicker(
-                        options: SessionLength.allCases,
-                        selection: Binding(
-                            get: { draft.sessionLength ?? .thirty },
-                            set: { draft.sessionLength = $0 }
-                        ),
-                        accessibilityLabel: "Typical session length"
-                    )
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .onAppear {
-            draft.frequency = draft.frequency ?? .three
-            draft.sessionLength = draft.sessionLength ?? .thirty
-        }
-    }
-
-    private var weeklyAvailabilityScreen: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            OnboardingIntro(
-                title: "When can training\nusually happen?",
-                copy: "Pick every day and time window that is genuinely available most weeks."
-            )
-
-            OptionGroup(title: "Available days") {
-                WeekdayAvailabilityRow(selection: Binding(
-                    get: { draft.availableDays },
-                    set: { draft.setAvailableDays($0) }
-                ))
-            }
-
-            OptionGroup(title: "Available times") {
-                DayPartAvailabilityRow(selection: Binding(
-                    get: { draft.availableDayParts },
-                    set: { draft.setAvailableDayParts($0) }
-                ))
-            }
-
-            Button {
-                draft.toggleUltraFlexibleAvailability()
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                    Text("Whenever, I’m ultra flexible")
-                    Spacer()
-                    Image(systemName: draft.ultraFlexibleAvailability ? "checkmark.square.fill" : "square")
-                }
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(draft.ultraFlexibleAvailability ? HAYFColor.orange : HAYFColor.primary)
-                .padding(.horizontal, 16)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(draft.ultraFlexibleAvailability ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(draft.ultraFlexibleAvailability ? HAYFColor.orange : HAYFColor.border, lineWidth: 1)
-                }
-            }
-            .buttonStyle(.plain)
-        }
-        .onAppear {
-            draft.availableDayParts.remove(.midday)
-        }
-    }
-
-    private var frictionScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "What usually breaks\nconsistency?",
-                copy: "HAYF will plan around these instead of pretending they don't exist."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(ConsistencyBlocker.allCases) { blocker in
-                    SelectableRow(
-                        title: blocker.title,
-                        systemImage: blocker.systemImage,
-                        isSelected: draft.blockers.contains(blocker)
-                    ) {
-                        draft.blockers.toggle(blocker)
-                    }
-                }
-            }
-
-            OnboardingTextArea(
-                title: "Anything specific?",
-                placeholder: "Early meetings, late workdays, weekends away...",
-                text: $draft.blockerNote,
-                characterLimit: 220
-            )
-        }
-    }
-
-    private var injuryScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Anything HAYF should\nwatch out for?",
-                copy: "Even minor discomforts matter if they should change load, exercise choices, or progression."
-            )
-
-            OnboardingTextArea(
-                title: "Injuries or discomforts",
-                placeholder: "Knee pain on descents, shoulder discomfort overhead, returning from an ankle issue, or anything HAYF should plan around...",
-                text: $draft.injuryNotes,
-                characterLimit: 220
-            )
-        }
-    }
-
-    private var bodyBasicsScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Let's set your\ncurrent baseline.",
-                copy: "Health imports can be stale. These answers become the first body-composition baseline HAYF can trust today."
-            )
-
-            HStack(alignment: .top, spacing: 12) {
-                NumberWheelPicker(
-                    title: "Weight",
-                    unit: "kg",
-                    values: Array(25...250),
-                    defaultValue: 70,
-                    text: $draft.bodyMassKilogramsInput
-                )
-
-                NumberWheelPicker(
-                    title: "Height",
-                    unit: "cm",
-                    values: Array(100...230),
-                    defaultValue: 173,
-                    text: $draft.heightCentimetersInput
-                )
-            }
-        }
-        .onAppear {
-            if draft.bodyMassKilogramsInput.trimmed.isEmpty {
-                draft.bodyMassKilogramsInput = "70"
-            }
-            if draft.heightCentimetersInput.trimmed.isEmpty {
-                draft.heightCentimetersInput = "173"
-            }
-        }
-    }
-
-    private var bodyFatEstimateScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "Estimate your\nbody-fat range.",
-                copy: "A range is enough. HAYF will use it as an estimated baseline, not as a lab measurement."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(BodyFatBand.options(for: physiologyReference)) { band in
-                    DetailedSelectableRow(
-                        title: band.title,
-                        subtitle: band.subtitle,
-                        systemImage: "figure",
-                        isSelected: draft.bodyFatBand == band,
-                        badge: band.badgeTitle
-                    ) {
-                        draft.selectBodyFatBand(band)
-                    }
-                }
-
-                DetailedSelectableRow(
-                    title: "I’m not sure",
-                    subtitle: bodyFatEstimateOptionSubtitle,
-                    systemImage: "function",
-                    isSelected: draft.bodyFatEstimateSource == .bmiAgePhysiology,
-                    badge: "Our estimate",
-                    isEnabled: estimatedBodyFatPercentage != nil
-                ) {
-                    guard let estimate = estimatedBodyFatPercentage else { return }
-                    draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
-                }
-            }
-        }
-        .onAppear {
-            guard draft.bodyFatEstimateSource == .bmiAgePhysiology else { return }
-            if let estimate = estimatedBodyFatPercentage {
-                draft.selectEstimatedBodyFat(estimate, physiologyReference: physiologyReference)
-            } else {
-                draft.bodyFatBand = nil
-                draft.bodyFatEstimatedPercentage = nil
-                draft.bodyFatEstimateSource = nil
-            }
-        }
-    }
-
-    private var supportStyleScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: "When you lose consistency,\nwhat helps?",
-                copy: "HAYF can adjust how it nudges you when the week starts slipping."
-            )
-
-            VStack(spacing: 10) {
-                ForEach(CoachingSupportStyle.allCases) { supportStyle in
-                    DetailedSelectableRow(
-                        title: supportStyle.title,
-                        subtitle: supportStyle.subtitle,
-                        systemImage: supportStyle.systemImage,
-                        isSelected: draft.supportStyle == supportStyle
-                    ) {
-                        draft.supportStyle = supportStyle
-                    }
-                }
-            }
-        }
-    }
-
-    private var badDayFloorScreen: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            OnboardingIntro(
-                title: currentIntent == .concreteGoal ? "What's the smallest\ngoal-safe version?" : "On a bad day,\nwhat still counts?",
-                copy: currentIntent == .concreteGoal ? "Earlier you chose what to protect when the week gets tight. This sets the minimum action that still keeps the plan alive." : "This gives HAYF a floor, so consistency doesn't become all-or-nothing."
-            )
-
-            VStack(spacing: 12) {
-                ForEach(BadDayFloor.allCases) { floor in
-                    DetailedSelectableRow(
-                        title: floor.title,
-                        subtitle: floor.subtitle,
-                        systemImage: floor.systemImage,
-                        isSelected: draft.badDayFloor == floor
-                    ) {
-                        draft.badDayFloor = floor
-                    }
-                }
-            }
-        }
-    }
 
     private var estimatedBodyFatPercentage: Double? {
         BodyFatEstimator.estimate(
@@ -1078,13 +451,6 @@ struct OnboardingFlowView: View {
             birthdate: birthdate,
             physiologyReference: physiologyReference
         )
-    }
-
-    private var bodyFatEstimateOptionSubtitle: String {
-        guard let estimate = estimatedBodyFatPercentage else {
-            return "Enter valid weight and height to unlock our rough estimate."
-        }
-        return "About \(Int(estimate.rounded()))%. Rough BMI, age and physiology approximation—not the most accurate."
     }
 
     private func selectEstimatedBodyFat() {
@@ -1108,46 +474,46 @@ struct OnboardingFlowView: View {
         switch currentIntent {
         case .stayConsistent:
             return [
-                SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
-                SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
-                SummaryItem(systemImage: "bolt.heart", label: "Anchor", value: draft.motivationInputSummary),
-                SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
-                SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
-                SummaryItem(systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerInputSummary),
-                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
-                SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
-                SummaryItem(systemImage: "figure.cooldown", label: "Support", value: draft.supportSummary),
-                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+                SummaryItem(role: .training, systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(role: .access, systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
+                SummaryItem(role: .anchor, systemImage: "bolt.heart", label: "Anchor", value: draft.motivationInputSummary),
+                SummaryItem(role: .availability, systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
+                SummaryItem(role: .capacity, systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
+                SummaryItem(role: .risks, systemImage: "exclamationmark.triangle", label: "Risks", value: draft.blockerInputSummary),
+                SummaryItem(role: .injuries, systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
+                SummaryItem(role: .bodyBaseline, systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
+                SummaryItem(role: .support, systemImage: "figure.cooldown", label: "Support", value: draft.supportSummary),
+                SummaryItem(role: .floor, systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
         case .concreteGoal:
             return [
-                SummaryItem(systemImage: "flag", label: "Goal", value: draft.goalSummary, presentsAsSingleBullet: true),
-                SummaryItem(systemImage: "calendar", label: "Timeline", value: draft.timelineSummary),
-                SummaryItem(systemImage: "figure.run", label: "Experience", value: draft.experienceSummary),
-                SummaryItem(systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
-                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
-                SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
-                SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
-                SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
-                SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
-                SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
-                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+                SummaryItem(role: .goal, systemImage: "flag", label: "Goal", value: draft.goalSummary, presentsAsSingleBullet: true),
+                SummaryItem(role: .timeframe, systemImage: "calendar", label: "Timeline", value: draft.timelineSummary),
+                SummaryItem(role: .experience, systemImage: "figure.run", label: "Experience", value: draft.experienceSummary),
+                SummaryItem(role: .tradeoff, systemImage: "arrow.left.arrow.right", label: "Tradeoff", value: draft.prioritySummary),
+                SummaryItem(role: .injuries, systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
+                SummaryItem(role: .training, systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(role: .access, systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
+                SummaryItem(role: .availability, systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
+                SummaryItem(role: .capacity, systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
+                SummaryItem(role: .bodyBaseline, systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
+                SummaryItem(role: .floor, systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
         case .findGoal:
             return [
-                SummaryItem(systemImage: "target", label: "Chosen goal", value: draft.goalSummary, presentsAsSingleBullet: true),
-                SummaryItem(systemImage: "calendar", label: "Timeframe", value: draft.timelineSummary),
-                SummaryItem(systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
-                SummaryItem(systemImage: "flag", label: "Challenge", value: draft.challengeSummary),
-                SummaryItem(systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
-                SummaryItem(systemImage: "gauge.with.dots.needle.33percent", label: "Intensity", value: draft.intensitySummary),
-                SummaryItem(systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
-                SummaryItem(systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
-                SummaryItem(systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
-                SummaryItem(systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
-                SummaryItem(systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
-                SummaryItem(systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
-                SummaryItem(systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
+                SummaryItem(role: .goal, systemImage: "target", label: "Chosen goal", value: draft.goalSummary, presentsAsSingleBullet: true),
+                SummaryItem(role: .timeframe, systemImage: "calendar", label: "Timeframe", value: draft.timelineSummary),
+                SummaryItem(role: .direction, systemImage: "sparkle", label: "Direction", value: draft.directionSummary),
+                SummaryItem(role: .challenge, systemImage: "flag", label: "Challenge", value: draft.challengeSummary),
+                SummaryItem(role: .avoidance, systemImage: "nosign", label: "Avoid", value: draft.avoidsSummary),
+                SummaryItem(role: .intensity, systemImage: "gauge.with.dots.needle.33percent", label: "Intensity", value: draft.intensitySummary),
+                SummaryItem(role: .injuries, systemImage: "cross.case", label: "Injuries", value: draft.injurySummary, presentsAsSingleBullet: true),
+                SummaryItem(role: .training, systemImage: "figure.strengthtraining.traditional", label: "Training", value: draft.trainingSummary),
+                SummaryItem(role: .access, systemImage: "building.2", label: "Access", value: draft.infrastructureSummary),
+                SummaryItem(role: .availability, systemImage: "calendar.badge.clock", label: "Availability", value: draft.availabilitySummary),
+                SummaryItem(role: .capacity, systemImage: "timer", label: "Capacity", value: draft.rhythmSummary),
+                SummaryItem(role: .bodyBaseline, systemImage: "figure", label: "Body baseline", value: draft.bodyBaselineSummary),
+                SummaryItem(role: .floor, systemImage: "arrow.down.circle", label: "Floor", value: draft.floorSummary)
             ]
         }
     }
@@ -1155,6 +521,7 @@ struct OnboardingFlowView: View {
     private var forteSummaryAnswers: [ForteSummaryAnswer] {
         currentInputSummaryRows.map { row in
             ForteSummaryAnswer(
+                role: row.role,
                 label: row.label,
                 systemImage: row.systemImage,
                 values: SummaryValueParser.items(
@@ -1172,20 +539,20 @@ struct OnboardingFlowView: View {
             ForteBlueprintSnapshotItem(
                 label: "Athlete type",
                 systemImage: "person.text.rectangle",
-                title: blueprint.archetype.label,
-                summary: blueprint.archetype.explanation
+                title: FitnessStrategyVisibleCopy.sanitize(blueprint.archetype.label),
+                summary: FitnessStrategyVisibleCopy.sanitize(blueprint.archetype.explanation)
             ),
             ForteBlueprintSnapshotItem(
                 label: "Current state",
                 systemImage: "waveform.path.ecg",
-                title: blueprint.currentTrainingState.label,
-                summary: blueprint.currentTrainingState.summary
+                title: FitnessStrategyVisibleCopy.sanitize(blueprint.currentTrainingState.label),
+                summary: FitnessStrategyVisibleCopy.sanitize(blueprint.currentTrainingState.summary)
             ),
             ForteBlueprintSnapshotItem(
                 label: "Physical baseline",
                 systemImage: "figure",
-                title: blueprint.physicalBaseline.label,
-                summary: blueprint.physicalBaseline.summary
+                title: FitnessStrategyVisibleCopy.sanitize(blueprint.physicalBaseline.label),
+                summary: FitnessStrategyVisibleCopy.sanitize(blueprint.physicalBaseline.summary)
             )
         ]
     }
@@ -1194,8 +561,8 @@ struct OnboardingFlowView: View {
         currentAthleteBlueprint.historyFindings.map { finding in
             ForteBlueprintHistoryItem(
                 id: finding.id,
-                title: finding.title,
-                summary: finding.summary
+                title: FitnessStrategyVisibleCopy.sanitize(finding.title),
+                summary: FitnessStrategyVisibleCopy.sanitize(finding.summary)
             )
         }
     }
@@ -1204,10 +571,10 @@ struct OnboardingFlowView: View {
         let goalFit = currentAthleteBlueprint.goalFit
 
         return ForteBlueprintGoalFit(
-            headline: goalFit.headline,
-            summary: goalFit.summary,
-            supports: goalFit.supports,
-            gaps: goalFit.gaps
+            headline: FitnessStrategyVisibleCopy.sanitize(goalFit.headline),
+            summary: FitnessStrategyVisibleCopy.sanitize(goalFit.summary),
+            supports: goalFit.supports.map(FitnessStrategyVisibleCopy.sanitize),
+            gaps: goalFit.gaps.map(FitnessStrategyVisibleCopy.sanitize)
         )
     }
 
@@ -1266,116 +633,26 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var forteStrategyOperatingRhythm: ForteStrategyRhythm? {
-        currentFitnessStrategy.operatingRhythm.map { rhythm in
-            ForteStrategyRhythm(
-                summary: FitnessStrategyVisibleCopy.cardSummary(
-                    title: "weekly rhythm",
-                    summary: rhythm.summary
-                ),
-                anchors: rhythm.anchors.map(FitnessStrategyVisibleCopy.sanitize)
+    private var forteStrategyPhases: [ForteStrategyPhaseItem] {
+        currentFitnessStrategy.phases.map { phase in
+            ForteStrategyPhaseItem(
+                id: phase.id,
+                name: FitnessStrategyVisibleCopy.sanitize(phase.name),
+                objective: FitnessStrategyVisibleCopy.phaseObjective(name: phase.name, objective: phase.objective),
+                assetName: ForteStrategyPhaseVisualRole(phaseID: phase.id).assetName,
+                targets: phase.targets.map { target in
+                    ForteStrategyPhaseTargetItem(
+                        id: target.id,
+                        title: FitnessStrategyVisibleCopy.sanitize(target.title),
+                        summary: FitnessStrategyVisibleCopy.cardSummary(title: target.title, summary: target.summary),
+                        displayValue: target.displayValue.map(FitnessStrategyVisibleCopy.sanitize),
+                        assetName: ForteStrategyPhaseTargetVisualRole(targetID: target.id, title: target.title).assetName
+                    )
+                }
             )
         }
     }
 
-    private var fitnessStrategyPhasesScreen: some View {
-        let strategy = currentFitnessStrategy
-
-        return VStack(alignment: .leading, spacing: 26) {
-            OnboardingIntro(
-                eyebrow: "STRATEGY PHASES",
-                title: "How HAYF will\nsequence this.",
-                copy: "These phases turn the strategy targets into a simple progression. Weekly targets come next with your plan."
-            )
-
-            SummarySection(title: "How the strategy unfolds") {
-                VStack(spacing: 10) {
-                    ForEach(strategy.phases) { phase in
-                        FitnessStrategyPhaseRow(phase: phase)
-                    }
-                }
-            }
-
-            FitnessStrategyPlanBridgeCard()
-        }
-    }
-
-    private var bottomAction: some View {
-        VStack(spacing: 14) {
-            OnboardingPrimaryButton(
-                title: primaryButtonTitle,
-                isEnabled: canContinue,
-                isLoading: healthRequestState == .requesting || step.isGenerating || isCompleting
-            ) {
-                primaryAction()
-            }
-
-            if let completionErrorMessage,
-               step == .fitnessStrategy || step == .fitnessStrategyPhases {
-                Text(completionErrorMessage)
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.error)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if step == .summary {
-                Button("Edit answers") {
-                    step = summaryEditStep
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(HAYFColor.surface)
-                .clipShape(Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(HAYFColor.borderStrong, lineWidth: 1)
-                }
-            } else if step == .goalCandidates {
-                HStack(spacing: 12) {
-                    Button("Edit selected") {
-                        prepareCandidateEdit()
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(selectedGoalCandidateID == nil ? HAYFColor.muted : HAYFColor.primary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .background(HAYFColor.surface)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(HAYFColor.border, lineWidth: 1)
-                    }
-                    .disabled(selectedGoalCandidateID == nil)
-
-                    Button("Blend two") {
-                        blendCandidateIDs = []
-                        blendedCandidate = nil
-                        step = .blendCandidates
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .background(HAYFColor.surface)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(HAYFColor.border, lineWidth: 1)
-                    }
-                }
-            } else if step == .blendPreview {
-                Button("Choose different goals") {
-                    step = .blendCandidates
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .buttonStyle(.plain)
-            }
-        }
-    }
 
     private var primaryButtonTitle: String {
         switch step {
@@ -1411,62 +688,6 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var canContinue: Bool {
-        switch step {
-        case .intent:
-            return selectedIntent != nil
-        case .goalBrief:
-            return !draft.goalBrief.trimmed.isEmpty
-        case .goalExperience:
-            return draft.goalExperience != nil
-        case .goalTimeline:
-            return draft.goalTimeline != nil
-        case .goalPriority:
-            return draft.goalPriority != nil
-        case .options:
-            return !draft.trainingOptions.isEmpty
-        case .infrastructure:
-            return !draft.infrastructureAccess.isEmpty
-        case .anchor:
-            return !draft.motivationAnchors.isEmpty
-        case .findDirection:
-            return draft.goalDirection != nil
-        case .findChallenge:
-            return draft.challengeStyle != nil
-        case .findAvoids:
-            return !draft.goalAvoidances.isEmpty
-        case .findIntensity:
-            return draft.goalIntensity != nil
-        case .goalCandidates:
-            return selectedGoalCandidateID != nil
-        case .editCandidate:
-            return !editingGoalText.trimmed.isEmpty
-        case .blendCandidates:
-            return blendCandidateIDs.count == 2
-        case .blendPreview:
-            return blendedCandidate != nil
-        case .weeklyCapacity:
-            return draft.hasWeeklyCapacity
-        case .weeklyAvailability:
-            return !draft.availableDays.isEmpty && !draft.availableDayParts.isEmpty
-        case .friction:
-            return !draft.blockers.isEmpty
-        case .injuries:
-            return true
-        case .bodyBasics:
-            return draft.hasValidBodyBasics
-        case .bodyFatEstimate:
-            return draft.bodyFatBand != nil
-        case .support:
-            return draft.supportStyle != nil
-        case .floor:
-            return draft.badDayFloor != nil
-        case .generatingSummary, .generatingCandidates, .generatingBlend, .generatingBlueprint, .generatingStrategy:
-            return false
-        default:
-            return true
-        }
-    }
 
     private func primaryAction() {
         switch step {
@@ -1512,8 +733,8 @@ struct OnboardingFlowView: View {
             draft.chosenGoal = GoalCandidate(
                 id: "edited-goal",
                 title: editingGoalText.trimmed,
-                rationale: "Edited by you from HAYF's suggested direction.",
-                tracking: "HAYF will track consistency, recovery, and the goal markers you choose.",
+                rationale: "Edited by you from Forte's suggested direction.",
+                tracking: "Forte will track consistency, recovery, and the goal markers you choose.",
                 timeline: editingGoalTimeline,
                 systemImage: "pencil"
             )
@@ -1711,14 +932,6 @@ struct OnboardingFlowView: View {
         }
     }
 
-    private var progressLabel: String {
-        if step.isGenerating {
-            return "Building"
-        }
-
-        return "Step \(activeSegments) of \(totalSegments)"
-    }
-
     private var forteLoadingContent: ForteOnboardingLoadingContent {
         switch step {
         case .generatingCandidates:
@@ -1829,13 +1042,7 @@ struct OnboardingFlowView: View {
 
     private func toggleAvoidance(_ avoidance: GoalAvoidance) {
         invalidateGoalCandidates()
-        if avoidance == .nothingSpecific {
-            draft.goalAvoidances = [.nothingSpecific]
-            return
-        }
-
-        draft.goalAvoidances.remove(.nothingSpecific)
-        draft.goalAvoidances.toggle(avoidance)
+        draft.goalAvoidances.toggleOnboardingAvoidance(avoidance)
     }
 
     private func setGoalIntensity(_ intensity: GoalIntensity) {
@@ -1856,14 +1063,7 @@ struct OnboardingFlowView: View {
     }
 
     private func toggleBlendCandidate(_ candidate: GoalCandidate) {
-        if blendCandidateIDs.contains(candidate.id) {
-            blendCandidateIDs.remove(candidate.id)
-        } else if blendCandidateIDs.count < 2 {
-            blendCandidateIDs.insert(candidate.id)
-        } else if let first = blendCandidateIDs.first {
-            blendCandidateIDs.remove(first)
-            blendCandidateIDs.insert(candidate.id)
-        }
+        blendCandidateIDs = GoalCandidateBlendSelection.toggling(candidate.id, in: blendCandidateIDs)
     }
 
     private func generateSummary() async {
@@ -2130,7 +1330,7 @@ struct OnboardingFlowView: View {
             } catch {
                 completionLogger.error("Onboarding completion failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
-                    completionErrorMessage = "HAYF saved your strategy but could not finish plan setup. Tap Accept strategy to resume."
+                    completionErrorMessage = "Forte saved your strategy but could not finish plan setup. Tap Accept strategy to resume."
                 }
             }
         }
@@ -2188,7 +1388,8 @@ struct OnboardingFlowView: View {
                 "supports": .array(blueprint.goalFit.supports.map { .string($0) }),
                 "gaps": .array(blueprint.goalFit.gaps.map { .string($0) }),
                 "detail": blueprintDetailArtifact(blueprint.goalFit.detail)
-            ])
+            ]),
+            "profileScores": blueprint.profileScores?.jsonValue ?? .null
         ])
     }
 
@@ -2539,7 +1740,7 @@ enum OnboardingIntent: String, CaseIterable, Identifiable {
         case .concreteGoal:
             return "This path will capture target, baseline, timeline, constraints, and realism."
         case .findGoal:
-            return "This path will help HAYF propose goal candidates from identity, preferences, and constraints."
+            return "This path will help Forte propose goal candidates from identity, preferences, and constraints."
         }
     }
 }
@@ -3032,6 +2233,7 @@ private struct AthleteBlueprintAICompactContext: Codable {
     let onboardingSignals: AthleteBlueprintAIOnboardingSignals
     let evidenceSummary: AthleteBlueprintAIEvidenceSummary
     let sectionSeeds: AthleteBlueprintAISectionSeeds
+    let scoringInput: AthleteProfileScoringInput
     let doNotClaim: [String]
 
     init(
@@ -3051,12 +2253,163 @@ private struct AthleteBlueprintAICompactContext: Codable {
         onboardingSignals = AthleteBlueprintAIOnboardingSignals(draft: draft)
         evidenceSummary = AthleteBlueprintAIEvidenceSummary(evidence: evidence)
         sectionSeeds = AthleteBlueprintAISectionSeeds(output: fallback)
+        scoringInput = AthleteProfileScoringInput(
+            intent: intent,
+            goal: goal,
+            draft: draft,
+            snapshot: snapshot
+        )
         doNotClaim = [
             "Treat onboarding bodyBaseline as the current body-composition truth. Treat imported HealthKit body metrics as trend context only when section seeds explicitly include them.",
             "Do not infer motivation, personality, or physiology beyond the section seeds and onboarding signals.",
             "Do not reject the user's selected goal because historical dominant modalities differ from their chosen feasible training options."
         ]
     }
+}
+
+private struct AthleteProfileScoringInput: Codable {
+    let schemaVersion: String
+    let intent: String
+    let normalizedGoal: AthleteProfileScoringGoal
+    let availability: AthleteProfileScoringAvailability
+    let feasibleModalities: [String]
+    let evidence: AthleteProfileScoringEvidence?
+
+    init(
+        intent: OnboardingIntent,
+        goal: AthleteBlueprintGoal,
+        draft: ConsistencyOnboardingDraft,
+        snapshot: HealthFeatureSnapshot?
+    ) {
+        schemaVersion = "athlete-profile-scoring-input.v1"
+        self.intent = intent.rawValue
+        normalizedGoal = AthleteProfileScoringGoal(
+            category: goal.category.rawValue,
+            horizonWeeks: goal.horizonWeeks
+        )
+        availability = AthleteProfileScoringAvailability(
+            targetSessionsPerWeek: Self.weeklySessions(from: draft.frequency),
+            availableDaysCount: draft.availableDays.count,
+            ultraFlexible: draft.ultraFlexibleAvailability
+        )
+        feasibleModalities = draft.trainingOptions.map(\.rawValue)
+        evidence = snapshot.map(AthleteProfileScoringEvidence.init(snapshot:))
+    }
+
+    private static func weeklySessions(from frequency: TrainingFrequency?) -> Int {
+        switch frequency {
+        case .two: return 2
+        case .three: return 3
+        case .four: return 4
+        case .fivePlus: return 5
+        case .changes, nil: return 3
+        }
+    }
+}
+
+private struct AthleteProfileScoringGoal: Codable {
+    let category: String
+    let horizonWeeks: Int
+}
+
+private struct AthleteProfileScoringAvailability: Codable {
+    let targetSessionsPerWeek: Int
+    let availableDaysCount: Int
+    let ultraFlexible: Bool
+}
+
+private struct AthleteProfileScoringEvidence: Codable {
+    let snapshotGeneratedAt: String
+    let totalWorkouts: Int
+    let lastWorkoutAt: String?
+    let windows: AthleteProfileScoringWindows
+    let consistency: AthleteProfileScoringConsistency
+    let modalityMix: [AthleteProfileScoringModality]
+    let strengthContinuity: AthleteProfileScoringStrength
+    let longestWorkouts: [AthleteProfileScoringLongestWorkout]
+    let bestDistanceEfforts: [AthleteProfileScoringBestEffort]
+
+    init(snapshot: HealthFeatureSnapshot) {
+        snapshotGeneratedAt = Self.isoString(snapshot.generatedAt)
+        totalWorkouts = snapshot.workoutLedger.totalWorkouts
+        lastWorkoutAt = snapshot.workoutLedger.lastWorkout.map { Self.isoString($0.startDate) }
+        windows = AthleteProfileScoringWindows(
+            days7: snapshot.workoutLedger.windows.first { $0.window == "7d" }.map(AthleteProfileScoringWindow.init(summary:)),
+            days28: snapshot.workoutLedger.windows.first { $0.window == "28d" }.map(AthleteProfileScoringWindow.init(summary:))
+        )
+        consistency = AthleteProfileScoringConsistency(
+            weeksAnalyzed: snapshot.fitnessHistory.consistency.weeksAnalyzed,
+            activeWeeks: snapshot.fitnessHistory.consistency.activeWeeks,
+            longestActiveWeekStreak: snapshot.fitnessHistory.consistency.longestActiveWeekStreak
+        )
+        modalityMix = snapshot.fitnessHistory.trainingIdentity.modalityMix.map {
+            AthleteProfileScoringModality(
+                modality: $0.modality,
+                workouts: $0.workouts,
+                shareOfMinutes: $0.shareOfMinutes,
+                lastWorkoutAt: $0.lastWorkoutDate.map(Self.isoString)
+            )
+        }
+        strengthContinuity = AthleteProfileScoringStrength(
+            strengthWorkouts90Days: snapshot.fitnessHistory.strengthContinuity.strengthWorkouts90Days,
+            daysSinceLastStrength: snapshot.fitnessHistory.strengthContinuity.daysSinceLastStrength
+        )
+        longestWorkouts = snapshot.fitnessHistory.performance.longestWorkoutsByModality.map {
+            AthleteProfileScoringLongestWorkout(
+                modality: $0.modality,
+                durationMinutes: $0.durationMinutes
+            )
+        }
+        bestDistanceEfforts = snapshot.fitnessHistory.performance.bestDistanceEfforts.map {
+            AthleteProfileScoringBestEffort(modality: $0.modality)
+        }
+    }
+
+    private static func isoString(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
+    }
+}
+
+private struct AthleteProfileScoringWindows: Codable {
+    let days7: AthleteProfileScoringWindow?
+    let days28: AthleteProfileScoringWindow?
+}
+
+private struct AthleteProfileScoringWindow: Codable {
+    let workouts: Int
+    let totalMinutes: Double
+
+    init(summary: WorkoutWindowSummary) {
+        workouts = summary.workouts
+        totalMinutes = summary.totalMinutes
+    }
+}
+
+private struct AthleteProfileScoringConsistency: Codable {
+    let weeksAnalyzed: Int
+    let activeWeeks: Int
+    let longestActiveWeekStreak: Int
+}
+
+private struct AthleteProfileScoringModality: Codable {
+    let modality: String
+    let workouts: Int
+    let shareOfMinutes: Double
+    let lastWorkoutAt: String?
+}
+
+private struct AthleteProfileScoringStrength: Codable {
+    let strengthWorkouts90Days: Int
+    let daysSinceLastStrength: Int?
+}
+
+private struct AthleteProfileScoringLongestWorkout: Codable {
+    let modality: String
+    let durationMinutes: Double
+}
+
+private struct AthleteProfileScoringBestEffort: Codable {
+    let modality: String
 }
 
 private struct AthleteBlueprintAIGoalPayload: Codable {
@@ -3230,9 +2583,11 @@ private struct AthleteBlueprintAIPayload: Codable {
     let physicalBaseline: AthleteBlueprintAITextPair
     let historyFindings: [AthleteBlueprintAIHistoryFindingPayload]
     let goalFit: AthleteBlueprintAIGoalFitPayload
+    let profileScores: AthleteProfileScores?
 
     func merged(with fallback: AthleteBlueprintOutput) -> AthleteBlueprintOutput {
         return AthleteBlueprintOutput(
+            profileScores: profileScores,
             coachRead: AthleteBlueprintCoachRead(
                 preview: (coachRead.trimmed.isEmpty ? fallback.coachRead.text : coachRead.trimmed)
                     .limitedSentences(maxSentences: 2, maxCharacters: 190),
@@ -4372,10 +3727,31 @@ struct OnboardingSummaryOutput {
 
 private struct SummaryItem: Identifiable {
     let id = UUID()
+    let role: ForteSummaryAnswerRole
     let systemImage: String
     let label: String
     let value: String
     var presentsAsSingleBullet = false
+}
+
+enum SummaryValueParser {
+    static func items(from value: String, presentsAsSingleBullet: Bool) -> [String] {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        guard !presentsAsSingleBullet else { return [trimmed] }
+
+        return trimmed
+            .components(separatedBy: ",")
+            .map {
+                $0.replacingOccurrences(
+                    of: #"^\s*\d+\.\s+"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { !$0.isEmpty }
+    }
 }
 
 struct GoalCandidate: Identifiable, Equatable {
@@ -4385,6 +3761,21 @@ struct GoalCandidate: Identifiable, Equatable {
     let tracking: String
     let timeline: GoalTimeline
     let systemImage: String
+}
+
+enum GoalCandidateBlendSelection {
+    static func toggling(_ candidateID: String, in selection: Set<String>) -> Set<String> {
+        var updated = selection
+        if updated.contains(candidateID) {
+            updated.remove(candidateID)
+        } else if updated.count < 2 {
+            updated.insert(candidateID)
+        } else if let first = updated.first {
+            updated.remove(first)
+            updated.insert(candidateID)
+        }
+        return updated
+    }
 }
 
 private struct RemoteOnboardingAIProvider: OnboardingAIProvider {
@@ -5539,13 +4930,13 @@ enum GoalIntensity: Int, CaseIterable, Codable, Identifiable {
     var explanation: String {
         switch self {
         case .gentle:
-            return "HAYF will suggest approachable goals with modest demands and room to build confidence."
+            return "Forte will suggest approachable goals with modest demands and room to build confidence."
         case .steady:
-            return "HAYF will suggest meaningful goals that require consistent effort without making the outcome overly aggressive."
+            return "Forte will suggest meaningful goals that require consistent effort without making the outcome overly aggressive."
         case .ambitious:
-            return "HAYF will suggest demanding goals with a clear stretch outcome and stronger commitment."
+            return "Forte will suggest demanding goals with a clear stretch outcome and stronger commitment."
         case .extreme:
-            return "HAYF will suggest the boldest defensible goals while respecting your selected training setup and avoidances."
+            return "Forte will suggest the boldest defensible goals while respecting your selected training setup and avoidances."
         }
     }
 
@@ -5681,6 +5072,18 @@ enum GoalAvoidance: String, CaseIterable, Identifiable {
         case .gymDependence: return "building.2"
         case .nothingSpecific: return "checkmark"
         }
+    }
+}
+
+extension Set where Element == GoalAvoidance {
+    mutating func toggleOnboardingAvoidance(_ avoidance: GoalAvoidance) {
+        if avoidance == .nothingSpecific {
+            self = [.nothingSpecific]
+            return
+        }
+
+        remove(.nothingSpecific)
+        toggle(avoidance)
     }
 }
 
@@ -5887,775 +5290,6 @@ private enum HealthRequestState: Equatable {
     }
 }
 
-private struct OnboardingIntro: View {
-    var eyebrow = "ONBOARDING"
-    let title: String
-    let copy: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(eyebrow)
-                .font(.system(size: 12, weight: .medium))
-                .kerning(1.2)
-                .foregroundStyle(HAYFColor.secondary)
-
-            Text(title)
-                .font(.system(size: 32, weight: .bold, design: .default))
-                .lineSpacing(1)
-                .foregroundStyle(HAYFColor.primary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 22)
-
-            Text(copy)
-                .font(.system(size: 16, weight: .regular))
-                .lineSpacing(4)
-                .foregroundStyle(HAYFColor.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 16)
-        }
-    }
-}
-
-private struct OnboardingHeaderIcon: View {
-    let systemName: String
-
-    var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 16, weight: .medium))
-            .foregroundStyle(HAYFColor.primary)
-            .frame(width: 42, height: 42)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
-    }
-}
-
-private struct OnboardingOptionCard: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                HAYFIcon(systemImage: systemImage, isSelected: isSelected)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-
-                    Text(subtitle)
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
-                }
-
-                Spacer()
-
-                RadioDot(isSelected: isSelected)
-            }
-            .padding(18)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.4 : 1)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct SelectableTile: View {
-    let title: String
-    let systemImage: String
-    let selectionRank: Int?
-    var isLocked = false
-    let action: () -> Void
-
-    private var isSelected: Bool {
-        selectionRank != nil
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 10) {
-                HAYFIcon(systemImage: systemImage, isSelected: isSelected)
-                    .opacity(isLocked ? 0.45 : 1)
-
-                Text(title)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(isLocked ? HAYFColor.muted : HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 104)
-            .overlay(alignment: .topTrailing) {
-                if isLocked {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(HAYFColor.muted)
-                        .padding(12)
-                } else if let selectionRank {
-                    PriorityBadge(rank: selectionRank)
-                        .padding(10)
-                }
-            }
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.4 : 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(isLocked)
-        .accessibilityLabel(isLocked ? "\(title), not available yet" : title)
-        .accessibilityHint(isLocked ? "This modality is locked for testing." : "")
-    }
-}
-
-private struct PriorityBadge: View {
-    let rank: Int
-
-    var body: some View {
-        Text("\(rank)")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Color.white)
-            .frame(width: 24, height: 24)
-            .background(HAYFColor.orange)
-            .clipShape(Circle())
-    }
-}
-
-private struct SelectableRow: View {
-    let title: String
-    let systemImage: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                HAYFIcon(systemImage: systemImage, isSelected: isSelected, size: 32, iconSize: 17)
-
-                Text(title)
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-                    .layoutPriority(1)
-
-                Spacer()
-
-                CheckmarkBox(isSelected: isSelected)
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 54)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct DetailedSelectableRow: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let isSelected: Bool
-    var badge: String? = nil
-    var isEnabled = true
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 15) {
-                HAYFIcon(systemImage: systemImage, isSelected: isSelected, size: 42, iconSize: 22)
-                    .opacity(isEnabled ? 1 : 0.45)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        Text(title)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(isEnabled ? HAYFColor.primary : HAYFColor.muted)
-
-                        if let badge {
-                            Text(badge)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(isEnabled ? HAYFColor.orange : HAYFColor.muted)
-                                .lineLimit(1)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(HAYFColor.orange.opacity(isEnabled ? 0.09 : 0.04))
-                                .clipShape(Capsule())
-                        }
-                    }
-
-                    Text(subtitle)
-                        .font(.system(size: 14, weight: .regular))
-                        .lineSpacing(3)
-                        .foregroundStyle(HAYFColor.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer()
-
-                if isEnabled {
-                    RadioDot(isSelected: isSelected)
-                } else {
-                    Image(systemName: "lock.fill")
-                        .foregroundStyle(HAYFColor.muted)
-                }
-            }
-            .padding(16)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.4 : 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-    }
-}
-
-private struct OptionGroup<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.secondary)
-
-            content()
-        }
-    }
-}
-
-private struct CapacityWheelColumn<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(HAYFColor.secondary)
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .bottomLeading)
-
-            content()
-        }
-    }
-}
-
-private struct CompactChoiceButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.78)
-                .frame(maxWidth: .infinity)
-                .frame(height: 68)
-                .background(HAYFColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.4 : 1)
-                }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct FlexibleChoiceGrid<Item: Identifiable & Hashable>: View where Item: ChoiceDisplayable {
-    let items: [Item]
-    @Binding var selection: Set<Item>
-
-    private let columns = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(items) { item in
-                CompactChoiceButton(
-                    title: item.choiceTitle,
-                    isSelected: selection.contains(item)
-                ) {
-                    selection.toggle(item)
-                }
-            }
-        }
-    }
-}
-
-private struct WeekdayAvailabilityRow: View {
-    @Binding var selection: Set<Weekday>
-
-    var body: some View {
-        HStack(spacing: 7) {
-            ForEach(Weekday.allCases) { day in
-                if day == .saturday {
-                    Divider()
-                        .frame(height: 28)
-                        .padding(.horizontal, 1)
-                }
-                CompactWeekdayButton(
-                    title: day.singleLetterTitle,
-                    isSelected: selection.contains(day)
-                ) {
-                    selection.toggle(day)
-                }
-            }
-        }
-    }
-}
-
-private struct CompactWeekdayButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
-                .frame(maxWidth: .infinity)
-                .frame(height: 42)
-                .background(isSelected ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
-                }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct DayPartAvailabilityRow: View {
-    @Binding var selection: Set<DayPart>
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(DayPart.allCases) { dayPart in
-                DayPartAvailabilityButton(
-                    title: dayPart.title,
-                    systemImage: dayPart.systemImage,
-                    isSelected: selection.contains(dayPart)
-                ) {
-                    selection.toggle(dayPart)
-                }
-            }
-        }
-    }
-}
-
-private struct DayPartAvailabilityButton: View {
-    let title: String
-    let systemImage: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 7) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 18, weight: .regular))
-                    .symbolRenderingMode(.monochrome)
-
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
-            }
-            .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 74)
-            .background(isSelected ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private protocol ChoiceDisplayable {
-    var choiceTitle: String { get }
-}
-
-extension Weekday: ChoiceDisplayable {
-    var choiceTitle: String { shortTitle }
-}
-
-extension DayPart: ChoiceDisplayable {
-    var choiceTitle: String { title }
-}
-
-private protocol WheelDisplayable {
-    var wheelTitle: String { get }
-}
-
-extension TrainingFrequency: WheelDisplayable {
-    var wheelTitle: String { title }
-}
-
-extension SessionLength: WheelDisplayable {
-    var wheelTitle: String { title }
-}
-
-private struct WheelChoicePicker<Option: Identifiable & Hashable & WheelDisplayable>: View {
-    let options: [Option]
-    @Binding var selection: Option
-    let accessibilityLabel: String
-
-    var body: some View {
-        Picker(accessibilityLabel, selection: $selection) {
-            ForEach(options) { option in
-                Text(option.wheelTitle)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                    .tag(option)
-            }
-        }
-        .labelsHidden()
-        .pickerStyle(.wheel)
-        .colorScheme(.light)
-        .tint(HAYFColor.primary)
-        .frame(maxWidth: .infinity)
-        .frame(height: 150)
-        .clipped()
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(selection.wheelTitle)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct NumberWheelPicker: View {
-    let title: String
-    let unit: String
-    let values: [Int]
-    let defaultValue: Int
-    @Binding var text: String
-
-    private var selection: Binding<Int> {
-        Binding(
-            get: {
-                let parsed = Double(text.replacingOccurrences(of: ",", with: ".")) ?? Double(defaultValue)
-                let value = Int(parsed.rounded())
-                guard values.contains(value) else {
-                    return defaultValue
-                }
-                return value
-            },
-            set: { value in
-                text = "\(value)"
-            }
-        )
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(HAYFColor.secondary)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-
-            Picker("", selection: selection) {
-                ForEach(values, id: \.self) { value in
-                    Text("\(value) \(unit)")
-                        .font(.system(size: 21, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-                        .tag(value)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.wheel)
-            .colorScheme(.light)
-            .tint(HAYFColor.primary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 118)
-            .clipped()
-        }
-        .frame(maxWidth: .infinity)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct NumericInputField: View {
-    let title: String
-    let placeholder: String
-    let unit: String
-    @Binding var text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(HAYFColor.secondary)
-
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                TextField(placeholder, text: $text)
-                    .keyboardType(.decimalPad)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text(unit)
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(HAYFColor.secondary)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity)
-        .frame(height: 82)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct GoalDatePicker: View {
-    @Binding var date: Date
-
-    var body: some View {
-        HStack(spacing: 12) {
-            HAYFIcon(systemImage: "calendar", isSelected: true, size: 32, iconSize: 17)
-
-            Text("Goal date")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-
-            Spacer()
-
-            DatePicker(
-                "Goal date",
-                selection: $date,
-                in: Date.now...,
-                displayedComponents: .date
-            )
-            .labelsHidden()
-            .tint(HAYFColor.orange)
-        }
-        .padding(.horizontal, 14)
-        .frame(minHeight: 54)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(HAYFColor.orange, lineWidth: 1.3)
-        }
-    }
-}
-
-private struct OnboardingTextArea: View {
-    let title: String
-    let placeholder: String
-    @Binding var text: String
-    let characterLimit: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(HAYFColor.secondary)
-
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Text(placeholder)
-                        .font(.system(size: 15, weight: .regular))
-                        .lineSpacing(4)
-                        .foregroundStyle(Color(red: 163 / 255, green: 163 / 255, blue: 163 / 255))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                }
-
-                TextEditor(text: Binding(
-                    get: { text },
-                    set: { text = String($0.prefix(characterLimit)) }
-                ))
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(HAYFColor.primary)
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .padding(10)
-            }
-            .frame(height: 128)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(HAYFColor.border, lineWidth: 1)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Text("\(text.count)/\(characterLimit)")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(HAYFColor.muted)
-                    .padding(14)
-            }
-        }
-    }
-}
-
-enum SummaryValueParser {
-    static func items(from value: String, presentsAsSingleBullet: Bool) -> [String] {
-        if presentsAsSingleBullet {
-            return [value]
-        }
-
-        return value
-            .split(separator: ",")
-            .map { fragment in
-                String(fragment)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
-            }
-            .filter { !$0.isEmpty }
-    }
-}
-
-private struct SummarySection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .medium))
-                .kerning(1.2)
-                .foregroundStyle(HAYFColor.secondary)
-
-            content()
-        }
-    }
-}
-
-private enum GoalCandidateSelectionStyle {
-    case single
-    case multiple
-}
-
-private struct GoalCandidateCard: View {
-    let candidate: GoalCandidate
-    let isSelected: Bool
-    let selectionStyle: GoalCandidateSelectionStyle
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text(candidate.title.goalCardTitle(timeline: candidate.timeline))
-                            .font(.system(size: 17, weight: .semibold))
-                            .lineSpacing(2)
-                            .foregroundStyle(HAYFColor.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        GoalTimeframeChip(title: candidate.timeline.title, isSelected: isSelected)
-                    }
-
-                    Spacer(minLength: 10)
-
-                    switch selectionStyle {
-                    case .single:
-                        RadioDot(isSelected: isSelected)
-                    case .multiple:
-                        CheckmarkBox(isSelected: isSelected)
-                    }
-                }
-
-                Text(candidate.rationale.goalCardRationale())
-                    .font(.system(size: 14, weight: .regular))
-                    .lineSpacing(4)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(18)
-            .background(isSelected ? HAYFColor.orange.opacity(0.06) : HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange.opacity(0.72) : HAYFColor.border, lineWidth: isSelected ? 1.3 : 1)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct GoalTimeframeChip: View {
-    let title: String
-    let isSelected: Bool
-
-    var body: some View {
-        Text(title)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.muted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(isSelected ? HAYFColor.orange.opacity(0.10) : HAYFColor.surfaceRaised)
-            .clipShape(Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(isSelected ? HAYFColor.orange.opacity(0.18) : HAYFColor.border, lineWidth: 1)
-            }
-    }
-}
-
-private struct PersonalizationNote: View {
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            HAYFIcon(systemImage: "lock", isSelected: true, size: 30, iconSize: 15)
-
-            Text("Used to personalize your setup. You stay in control of what HAYF remembers.")
-                .font(.system(size: 13, weight: .regular))
-                .lineSpacing(3)
-                .foregroundStyle(HAYFColor.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
 
 private struct FitnessStrategyOutput: Decodable {
     let read: String
@@ -7958,6 +6592,7 @@ private extension Array {
 }
 
 private struct AthleteBlueprintOutput {
+    let profileScores: AthleteProfileScores?
     let coachRead: AthleteBlueprintCoachRead
     let archetype: AthleteBlueprintArchetype
     let currentTrainingState: AthleteBlueprintCurrentState
@@ -8119,6 +6754,7 @@ private enum AthleteBlueprintBuilder {
         )
 
         return AthleteBlueprintOutput(
+            profileScores: nil,
             coachRead: coachRead,
             archetype: archetype,
             currentTrainingState: currentState,
@@ -9127,6 +7763,7 @@ private struct BodyCompositionGoalSupport {
 private enum FitnessStrategyVisibleCopy {
     static func sanitize(_ value: String) -> String {
         value
+            .replacingOccurrences(of: "HAYF", with: "Forte")
             .replacingOccurrences(of: "—", with: "-")
             .replacingOccurrences(of: "–", with: "-")
             .replacingOccurrences(
@@ -9194,124 +7831,6 @@ private enum FitnessStrategyVisibleCopy {
     }
 }
 
-private struct FitnessStrategyPhaseRow: View {
-    let phase: FitnessStrategyPhase
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(FitnessStrategyVisibleCopy.sanitize(phase.name).uppercased())
-                .font(.system(size: 10, weight: .medium))
-                .kerning(1.2)
-                .foregroundStyle(HAYFColor.secondary)
-
-            Text(FitnessStrategyVisibleCopy.phaseObjective(name: phase.name, objective: phase.objective))
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(spacing: 6) {
-                ForEach(phase.targets) { target in
-                    FitnessStrategyPhaseTargetRow(target: target)
-                }
-            }
-            .padding(.top, 2)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
-    }
-}
-
-private struct FitnessStrategyPhaseTargetRow: View {
-    let target: FitnessStrategyTarget
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "smallcircle.filled.circle")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(HAYFColor.orange)
-                .frame(width: 16, height: 18)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(FitnessStrategyVisibleCopy.sanitize(target.title))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    Spacer(minLength: 6)
-
-                    if let value = target.displayValue {
-                        Text(FitnessStrategyVisibleCopy.sanitize(value))
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(HAYFColor.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(HAYFColor.orange.opacity(0.1))
-                            .clipShape(Capsule())
-                    }
-                }
-
-                Text(FitnessStrategyVisibleCopy.cardSummary(title: target.title, summary: target.summary))
-                    .font(.system(size: 13, weight: .regular))
-                    .lineSpacing(2)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(HAYFColor.neutral)
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
-}
-
-private struct FitnessStrategyPlanBridgeCard: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("WEEKLY TARGETS COME NEXT")
-                .font(.system(size: 10, weight: .medium))
-                .kerning(1.2)
-                .foregroundStyle(HAYFColor.secondary)
-
-            Text("After you accept, HAYF turns this strategy into your first two visible weeks.")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text("Current week committed · next week draft · weekly targets attached to each week")
-                .font(.system(size: 13, weight: .regular))
-                .lineSpacing(2)
-                .foregroundStyle(HAYFColor.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.orange.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(HAYFColor.orange.opacity(0.22), lineWidth: 1)
-        }
-    }
-}
-
-private extension FitnessStrategyTarget {
-    var metricCategoryDisplay: String {
-        metricCategory
-            .split(separator: "_")
-            .map { $0.capitalized }
-            .joined(separator: " ")
-    }
-}
 
 private struct AthleteBlueprintDetailSheet: View {
     let detail: AthleteBlueprintDetail
@@ -9320,7 +7839,7 @@ private struct AthleteBlueprintDetailSheet: View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 22) {
                 Capsule()
-                    .fill(HAYFColor.borderStrong)
+                    .fill(ForteColor.borderSubtle)
                     .frame(width: 46, height: 5)
                     .frame(maxWidth: .infinity)
                     .padding(.bottom, 2)
@@ -9329,19 +7848,19 @@ private struct AthleteBlueprintDetailSheet: View {
                     Text(detail.title.uppercased())
                         .font(.system(size: 11, weight: .medium))
                         .kerning(1.2)
-                        .foregroundStyle(HAYFColor.secondary)
+                        .foregroundStyle(ForteColor.inkSoft)
 
                     Text(detail.summary)
                         .font(.system(size: 20, weight: .semibold))
                         .lineSpacing(4)
-                        .foregroundStyle(HAYFColor.primary)
+                        .foregroundStyle(ForteColor.ink)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let body = detail.body {
                         Text(body)
                             .font(.system(size: 15, weight: .regular))
                             .lineSpacing(4)
-                            .foregroundStyle(HAYFColor.secondary)
+                            .foregroundStyle(ForteColor.inkSoft)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 2)
                     }
@@ -9362,14 +7881,14 @@ private struct AthleteBlueprintDetailSheet: View {
                     Text(caveat)
                         .font(.system(size: 14, weight: .regular))
                         .lineSpacing(4)
-                        .foregroundStyle(HAYFColor.muted)
+                        .foregroundStyle(ForteColor.inkMuted)
                         .padding(14)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(HAYFColor.surface)
+                        .background(ForteColor.surface)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .overlay {
                             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(HAYFColor.border, lineWidth: 1)
+                                .stroke(ForteColor.borderSubtle, lineWidth: 1)
                         }
                 }
             }
@@ -9377,7 +7896,7 @@ private struct AthleteBlueprintDetailSheet: View {
             .padding(.top, 10)
             .padding(.bottom, 28)
         }
-        .background(HAYFColor.neutral.ignoresSafeArea())
+        .background(ForteColor.background.ignoresSafeArea())
     }
 }
 
@@ -9387,14 +7906,14 @@ private struct BlueprintEvidenceRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
             Circle()
-                .fill(HAYFColor.orange)
+                .fill(ForteColor.indigo)
                 .frame(width: 7, height: 7)
                 .padding(.top, 8)
 
             Text(text)
                 .font(.system(size: 15, weight: .regular))
                 .lineSpacing(4)
-                .foregroundStyle(HAYFColor.secondary)
+                .foregroundStyle(ForteColor.inkSoft)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -9409,236 +7928,26 @@ private struct BlueprintMetaPill: View {
             Text(label.uppercased())
                 .font(.system(size: 10, weight: .medium))
                 .kerning(1.0)
-                .foregroundStyle(HAYFColor.muted)
+                .foregroundStyle(ForteColor.inkMuted)
 
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
+                .foregroundStyle(ForteColor.ink)
                 .lineLimit(2)
                 .minimumScaleFactor(0.82)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 72, alignment: .center)
         .padding(.horizontal, 12)
-        .background(HAYFColor.surface)
+        .background(ForteColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
+                .stroke(ForteColor.borderSubtle, lineWidth: 1)
         }
     }
 }
 
-private struct HAYFIcon: View {
-    let systemImage: String
-    var isSelected: Bool
-    var size: CGFloat = 44
-    var iconSize: CGFloat = 22
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: iconSize, weight: .regular))
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(isSelected ? HAYFColor.orange : HAYFColor.primary)
-            .frame(width: size, height: size)
-    }
-}
-
-private struct RadioDot: View {
-    let isSelected: Bool
-
-    var body: some View {
-        Circle()
-            .stroke(isSelected ? HAYFColor.orange : HAYFColor.borderStrong, lineWidth: 1.5)
-            .frame(width: 20, height: 20)
-            .overlay {
-                if isSelected {
-                    Circle()
-                        .fill(HAYFColor.orange)
-                        .frame(width: 10, height: 10)
-                }
-            }
-    }
-}
-
-private struct CheckmarkBox: View {
-    let isSelected: Bool
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-            .fill(isSelected ? HAYFColor.orange : Color.clear)
-            .frame(width: 22, height: 22)
-            .overlay {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(isSelected ? HAYFColor.orange : HAYFColor.borderStrong, lineWidth: 1.4)
-            }
-            .overlay {
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white)
-                }
-            }
-    }
-}
-
-private struct GoalIntensitySelector: View {
-    let selection: GoalIntensity
-    let onSelectionChanged: (GoalIntensity) -> Void
-
-    var body: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 0) {
-                ForEach(GoalIntensity.allCases) { intensity in
-                    VStack(spacing: 4) {
-                        Text("\(intensity.level)")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(intensity.title)
-                            .font(.system(size: 13, weight: selection == intensity ? .semibold : .regular))
-                    }
-                    .foregroundStyle(selection == intensity ? HAYFColor.orange : HAYFColor.muted)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        onSelectionChanged(intensity)
-                    }
-                }
-            }
-            .accessibilityHidden(true)
-
-            GeometryReader { geometry in
-                let thumbDiameter: CGFloat = 28
-                let leading = thumbDiameter / 2
-                let usableWidth = max(0, geometry.size.width - thumbDiameter)
-                let fraction = CGFloat(selection.rawValue) / CGFloat(GoalIntensity.allCases.count - 1)
-                let thumbX = leading + (usableWidth * fraction)
-
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(HAYFColor.borderStrong)
-                        .frame(height: 5)
-                        .padding(.horizontal, leading)
-
-                    Capsule()
-                        .fill(HAYFColor.orange)
-                        .frame(width: max(0, thumbX - leading), height: 5)
-                        .offset(x: leading)
-
-                    ForEach(GoalIntensity.allCases) { intensity in
-                        let markerFraction = CGFloat(intensity.rawValue) / CGFloat(GoalIntensity.allCases.count - 1)
-                        let markerX = leading + (usableWidth * markerFraction)
-
-                        Circle()
-                            .fill(intensity.rawValue <= selection.rawValue ? HAYFColor.orange : HAYFColor.borderStrong)
-                            .frame(width: 8, height: 8)
-                            .position(x: markerX, y: geometry.size.height / 2)
-                    }
-
-                    Circle()
-                        .fill(HAYFColor.orange)
-                        .frame(width: thumbDiameter, height: thumbDiameter)
-                        .overlay {
-                            Circle()
-                                .fill(.white)
-                                .frame(width: 8, height: 8)
-                        }
-                        .shadow(color: Color.black.opacity(0.12), radius: 5, y: 2)
-                        .position(x: thumbX, y: geometry.size.height / 2)
-                }
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let normalized = Double((value.location.x - leading) / max(1, usableWidth))
-                            onSelectionChanged(GoalIntensity.nearest(to: normalized * 3))
-                        }
-                )
-            }
-            .frame(height: 44)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Goal intensity")
-            .accessibilityValue(selection.title)
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment:
-                    onSelectionChanged(GoalIntensity(rawValue: min(3, selection.rawValue + 1)) ?? selection)
-                case .decrement:
-                    onSelectionChanged(GoalIntensity(rawValue: max(0, selection.rawValue - 1)) ?? selection)
-                @unknown default:
-                    break
-                }
-            }
-        }
-        .animation(.easeOut(duration: 0.16), value: selection)
-    }
-}
-
-private struct GoalIntensityExplanation: View {
-    let intensity: GoalIntensity
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(HAYFColor.orange)
-                .frame(width: 24)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(intensity.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(HAYFColor.primary)
-
-                Text(intensity.explanation)
-                    .font(.system(size: 15, weight: .regular))
-                    .lineSpacing(3)
-                    .foregroundStyle(HAYFColor.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.orange.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(HAYFColor.orange.opacity(0.2), lineWidth: 1)
-        }
-    }
-}
-
-private struct OnboardingPrimaryButton: View {
-    let title: String
-    let isEnabled: Bool
-    var isLoading = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                if isLoading {
-                    ProgressView()
-                        .tint(.white)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text(title)
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(isEnabled ? .white : HAYFColor.muted)
-                        .frame(maxWidth: .infinity)
-                }
-
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(isEnabled ? .white : HAYFColor.muted)
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 56)
-            .background(isEnabled ? HAYFColor.primary : HAYFColor.surfaceDisabled)
-            .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled || isLoading)
-    }
-}
 
 struct StoredOnboardingProfile: Decodable, Identifiable {
     let id: UUID

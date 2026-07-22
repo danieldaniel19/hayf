@@ -96,7 +96,7 @@ struct ForteInjuryScreen: View {
                 .tracking(3.4)
                 .foregroundStyle(ForteColor.indigoDeep)
 
-            Text("Anything Forte should\nwatch out for?")
+            Text("Any injuries that Forte should watch out for?")
                 .font(ForteTypography.editorial(size: 31, relativeTo: .largeTitle))
                 .tracking(-0.35)
                 .foregroundStyle(ForteColor.ink)

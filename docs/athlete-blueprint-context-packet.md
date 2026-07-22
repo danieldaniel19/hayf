@@ -36,6 +36,49 @@ The packet may not include:
 - evidence whose allowed-claim set is empty
 - stale values without an explicit evidence class and caveat
 
+The separate profile-scoring input is also never an AI input. It is a compact server-to-server payload assembled from the same local `HealthFeatureSnapshot`, sent only to `hayf-athlete-profile-engine`, and removed from AI traces.
+
+## Deterministic Profile-Scoring Sidecar
+
+Blueprint generation may carry a temporary `scoringInput` alongside the AI packet. It uses `athlete-profile-scoring-input.v1` and contains only:
+
+- normalized goal category and horizon
+- feasible modalities
+- declared weekly frequency, available-day count, and flexibility
+- snapshot timestamp and imported-workout count
+- compact 7- and 28-day workout windows
+- active-week and longest-streak summaries
+- modality session/minute mix
+- strength continuity
+- longest endurance efforts and best-distance effort breadth
+
+It must never contain raw HealthKit samples, body composition, sleep, HRV, VO₂ max, or recovery signals. The scoring endpoint rejects unsupported fields.
+
+Before AI generation, `onboarding-ai` calls the authenticated scoring endpoint with a three-second timeout. The score envelope is deliberately withheld from the AI context. The model writes the short synthesis from the approved athlete history and onboarding evidence, then the full deterministic envelope is merged into the response after generation.
+
+The returned envelope is:
+
+```json
+{
+  "schemaVersion": "athlete-profile-scores.v1",
+  "scoreVersion": "profile-radar-v1.2.0",
+  "evaluatedAt": "2026-05-17T10:00:00Z",
+  "dimensions": [
+    {
+      "key": "consistency",
+      "score": 92,
+      "status": "available",
+      "confidence": "high",
+      "components": [],
+      "evidenceIds": []
+    }
+  ],
+  "sourceSummary": { "importedWorkoutCount": 837 }
+}
+```
+
+The fixed complete order is `consistency`, `momentum`, `strength`, `training_base`, `endurance`. Contract values are rounded integers from 0–100. iOS presents them as whole numbers from 0–10, with exact halves rounding down. An available zero is plotted at the radar origin. An unavailable dimension has `score: null`; missing evidence is never replaced with a neutral number.
+
 ## Top-Level Schema
 
 ```json
@@ -411,10 +454,17 @@ Retain debug visibility into evidence that exists but was intentionally excluded
 5. derive approved findings locally
 6. derive hidden coach inputs locally
 7. generate do_not_claim entries locally
-8. assemble Athlete Blueprint Context Packet locally
-9. send only that packet for AI generation
-10. receive structured Athlete Blueprint JSON
+8. assemble Athlete Blueprint Context Packet and compact scoring input locally
+9. call the deterministic profile service server-to-server when configured
+10. add only validated dimension highlights to the AI packet
+11. receive structured Athlete Blueprint prose
+12. merge the untouched score envelope after generation
+13. persist the accepted envelope with the accepted blueprint revision
 ```
+
+The orchestrator uses `ATHLETE_PROFILE_ENGINE_URL` when present and otherwise derives the same-project Edge Function URL from `SUPABASE_URL`. If the request times out or the response is malformed, generation continues with `profileScores: null`. The iOS client uses the existing text card, preserving older revisions and outage compatibility.
+
+Scoring telemetry records only score version, outcome status, unavailable dimension keys, and latency. Neither the compact scoring input nor health payload contents may be written to traces.
 
 ## Example Packet Excerpt
 
@@ -472,3 +522,6 @@ Retain debug visibility into evidence that exists but was intentionally excluded
 4. Hidden coach-side findings travel in the packet even when they are not user-facing.
 5. Section-level input lists make every generated section auditable.
 6. `do_not_claim` is a first-class part of the contract, not a prompt afterthought.
+7. Radar indicators are deterministic, versioned evidence summaries; AI owns only the short interpretation.
+8. Body composition and recovery evidence remain outside `profile-radar-v1.2.0` until longitudinal personal baselines and coverage metadata support a trustworthy Recovery axis.
+9. Missing or invalid scoring output always degrades to the existing Coach's Read experience.

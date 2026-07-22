@@ -110,7 +110,7 @@ const workoutSuggestionSchema: Schema = {
     estimatedElevationMeters: { type: ["number", "null"] },
     plannedLocationLabel: { type: ["string", "null"] },
     intensityLabel: { type: "string" },
-    purpose: { type: "string" },
+    purpose: { type: "string", maxLength: 80 },
     prescription: prescriptionSchema,
     fuelingSummary: { type: "string" },
     rationale: { type: "string", maxLength: 96 },
@@ -280,7 +280,7 @@ const planningOutputSchemas: Record<string, AITouchpointResponseMetadata> = {
                     title: { type: "string" },
                     durationMinutes: { type: "integer" },
                     intensityLabel: { type: "string" },
-                    purpose: { type: "string" },
+                    purpose: { type: "string", maxLength: 80 },
                     prescription: {
                       type: "object",
                       additionalProperties: false,
@@ -548,7 +548,11 @@ export const AI_TOUCHPOINT_RESPONSE_METADATA: Record<AITouchpointGroup, Record<s
         additionalProperties: false,
         required: ["coachRead", "athleteArchetype", "currentTrainingState", "physicalBaseline", "historyFindings", "goalFit"],
         properties: {
-          coachRead: { type: "string" },
+          coachRead: {
+            type: "string",
+            maxLength: 190,
+            description: "One or two AI-authored sentences synthesizing the athlete's history, present state, and one coaching implication without quoting or ranking radar scores.",
+          },
           athleteArchetype: textPairSchema,
           currentTrainingState: textPairSchema,
           physicalBaseline: textPairSchema,

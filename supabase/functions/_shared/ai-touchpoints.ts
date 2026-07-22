@@ -33,7 +33,7 @@ const DEFAULT_MODEL = DEFAULT_AI_MODEL;
 const DEFAULT_SYSTEM_PROMPT =
   "Return strict JSON that matches the requested schema.";
 const WORKOUT_CANDIDATE_RULES =
-  "Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Rationale and weeklyImpact must each be one short sentence under 14 words.";
+  "Keep titles short, no em dashes; use commas or parentheses only for user-specific details. Treat activityType as immutable truth: title, purpose, and prescription must describe that exact modality, so a walk is never called a run, ride, or hike. Purpose is the session-card summary: one complete 7-12 word sentence, at most 80 characters, specific to the candidate's modality, dose, intensity, role, and surrounding plan context. Every returned candidate purpose must be distinct; never use a generic label, reuse another candidate's purpose, truncate it, or add ellipses. Rationale and weeklyImpact must each be one short sentence under 14 words.";
 
 export function defaultAIModel() {
   return Deno.env.get("OPENAI_MODEL") || DEFAULT_MODEL;

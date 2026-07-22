@@ -21,18 +21,12 @@ struct ForteStrategyTargetItem: Identifiable, Equatable {
     let displayValue: String?
 }
 
-struct ForteStrategyRhythm: Equatable {
-    let summary: String
-    let anchors: [String]
-}
-
 struct ForteFitnessStrategyScreen: View {
     let coachVerdict: String
     let snapshotItems: [ForteStrategySnapshotItem]
     let fitReasons: [ForteStrategyEvidenceItem]
     let priorities: [ForteStrategyEvidenceItem]
     let targets: [ForteStrategyTargetItem]
-    let operatingRhythm: ForteStrategyRhythm?
     let completionErrorMessage: String?
     let progressStep: Int
     let totalSteps: Int
@@ -91,13 +85,6 @@ struct ForteFitnessStrategyScreen: View {
                             ForteStrategyTargetList(items: targets)
                         }
 
-                        if let operatingRhythm {
-                            sectionLabel("OPERATING RHYTHM")
-                                .padding(.top, 28)
-                                .padding(.bottom, 12)
-
-                            ForteStrategyRhythmCard(rhythm: operatingRhythm)
-                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 12)
@@ -245,12 +232,14 @@ private struct ForteStrategySnapshotGrid: View {
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: 10) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            ForEach(items) { item in
                 VStack(alignment: .leading, spacing: 12) {
-                    ForteReviewIconBadge(
-                        systemName: item.systemImage,
-                        palette: .cycling(index)
-                    )
+                    Image(snapshotAssetName(for: item))
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.value)
@@ -281,6 +270,33 @@ private struct ForteStrategySnapshotGrid: View {
             }
         }
     }
+
+    private func snapshotAssetName(for item: ForteStrategySnapshotItem) -> String {
+        let label = item.label.lowercased()
+
+        if label.contains("primary") || label.contains("driver") {
+            return "ForteStrategyDriver"
+        }
+        if label.contains("budget") || label.contains("session") || label.contains("frequency") {
+            return "ForteSummaryCapacity"
+        }
+        if label.contains("horizon") || label.contains("timeframe") || label == "weeks" {
+            return "ForteSummaryAvailability"
+        }
+        if label.contains("tradeoff") {
+            return "ForteStrategyTradeoff"
+        }
+        if label.contains("priorit") {
+            return "ForteSummaryTraining"
+        }
+
+        switch item.id {
+        case "timeframe": return "ForteSummaryAvailability"
+        case "frequency": return "ForteSummaryCapacity"
+        case "priorities": return "ForteSummaryTraining"
+        default: return "ForteStrategyTarget"
+        }
+    }
 }
 
 private struct ForteStrategyEvidenceList: View {
@@ -290,11 +306,7 @@ private struct ForteStrategyEvidenceList: View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 HStack(alignment: .top, spacing: 12) {
-                    ForteReviewIconBadge(
-                        systemName: item.systemImage,
-                        palette: .cycling(index),
-                        iconSize: 15
-                    )
+                    evidenceIcon(for: item, index: index)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(item.title)
@@ -318,7 +330,7 @@ private struct ForteStrategyEvidenceList: View {
                     Rectangle()
                         .fill(ForteColor.borderSubtle.opacity(0.78))
                         .frame(height: 1)
-                        .padding(.leading, 66)
+                        .padding(.leading, 76)
                 }
             }
         }
@@ -331,6 +343,64 @@ private struct ForteStrategyEvidenceList: View {
         }
         .shadow(color: Color.black.opacity(0.055), radius: 16, y: 9)
     }
+
+    @ViewBuilder
+    private func evidenceIcon(for item: ForteStrategyEvidenceItem, index: Int) -> some View {
+        if let assetName = evidenceAssetName(for: item) {
+            Image(assetName)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
+        } else {
+            ForteReviewIconBadge(
+                systemName: item.systemImage,
+                palette: .cycling(index),
+                size: 48,
+                iconSize: 18
+            )
+        }
+    }
+
+    private func evidenceAssetName(for item: ForteStrategyEvidenceItem) -> String? {
+        let title = item.title.lowercased()
+
+        if title.contains("built for you") || title.contains("athlete") || title.contains("blueprint") {
+            return "ForteBlueprintAthleteType"
+        }
+        if title.contains("core work") || title.contains("training first") {
+            return "ForteSummaryTraining"
+        }
+        if title.contains("recovery") || title.contains("drop-off") || title.contains("drop off") {
+            return "ForteHealthRecovery"
+        }
+        if title.contains("protect") {
+            return "ForteStrategyProtect"
+        }
+        if title.contains("support") {
+            return "ForteSummarySupport"
+        }
+        if title.contains("progress") || title.contains("earn") {
+            return "ForteStrategyPriority"
+        }
+        if title.contains("friction") || title.contains("access") || title.contains("setup") {
+            return "ForteSummaryAccess"
+        }
+        if title.contains("floor") {
+            return "ForteSummaryFloor"
+        }
+        if title.contains("window") || title.contains("available") {
+            return "ForteSummaryAvailability"
+        }
+
+        switch item.id {
+        case "available_window": return "ForteSummaryAvailability"
+        case "training_access": return "ForteSummaryAccess"
+        case "blueprint_base": return "ForteBlueprintAthleteType"
+        default: return item.systemImage == "arrow.up.right" ? "ForteStrategyPriority" : nil
+        }
+    }
 }
 
 private struct ForteStrategyTargetList: View {
@@ -340,11 +410,12 @@ private struct ForteStrategyTargetList: View {
         VStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 HStack(alignment: .top, spacing: 12) {
-                    ForteReviewIconBadge(
-                        systemName: "scope",
-                        palette: .cycling(index + 4),
-                        iconSize: 15
-                    )
+                    Image(targetAssetName(for: item))
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 5) {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -383,7 +454,7 @@ private struct ForteStrategyTargetList: View {
                     Rectangle()
                         .fill(ForteColor.borderSubtle.opacity(0.78))
                         .frame(height: 1)
-                        .padding(.leading, 66)
+                        .padding(.leading, 76)
                 }
             }
         }
@@ -396,57 +467,36 @@ private struct ForteStrategyTargetList: View {
         }
         .shadow(color: Color.black.opacity(0.055), radius: 16, y: 9)
     }
-}
 
-private struct ForteStrategyRhythmCard: View {
-    let rhythm: ForteStrategyRhythm
+    private func targetAssetName(for item: ForteStrategyTargetItem) -> String {
+        let id = item.id.lowercased()
+        let title = item.title.lowercased()
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                ForteReviewIconBadge(
-                    systemName: "calendar.badge.clock",
-                    palette: .teal
-                )
-
-                Text(rhythm.summary)
-                    .font(ForteTypography.editorial(size: 17, relativeTo: .headline))
-                    .lineSpacing(4)
-                    .foregroundStyle(ForteColor.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(alignment: .leading, spacing: 9) {
-                ForEach(Array(rhythm.anchors.enumerated()), id: \.offset) { _, anchor in
-                    HStack(alignment: .top, spacing: 8) {
-                        Circle()
-                            .fill(ForteColor.indigoDeep)
-                            .frame(width: 6, height: 6)
-                            .padding(.top, 6)
-
-                        Text(anchor)
-                            .font(.system(size: 13, weight: .regular))
-                            .lineSpacing(3)
-                            .foregroundStyle(ForteColor.inkSoft)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
+        if id.contains("body_mass") || title.contains("body-mass") || title.contains("body trend") {
+            return "ForteSummaryBodyBaseline"
         }
-        .padding(18)
-        .background(
-            LinearGradient(
-                colors: [ForteColor.indigoMist, ForteColor.surface],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(ForteColor.indigoDeep.opacity(0.12), lineWidth: 1)
+        if title.contains("strength") {
+            return "ForteModalityStrength"
         }
-        .shadow(color: ForteColor.indigoDeep.opacity(0.08), radius: 18, y: 10)
-        .accessibilityElement(children: .combine)
+        if id.contains("gap_recovery") || title.contains("drop-off") || title.contains("drop off") || title.contains("hard day") || title.contains("recovery cap") {
+            return "ForteHealthRecovery"
+        }
+        if id.contains("anchor") || title.contains("stays visible") || title.contains("path protected") {
+            return "ForteSummaryAnchor"
+        }
+        if id.contains("weekly_min_sessions") || id.contains("rhythm") || title.contains("sessions per week") {
+            return "ForteSummaryCapacity"
+        }
+        if id.contains("goal_signal") || id.contains("strong_weeks") || title.contains("capstone") || title.contains("result captured") {
+            return "ForteStrategyGoalSignal"
+        }
+        if id.contains("strength_exposure") || title.contains("strength exposure") {
+            return "ForteSummaryTraining"
+        }
+        if id.contains("aerobic") || title.contains("aerobic") || title.contains("swimming min") || title.contains("running min") || title.contains("cycling min") {
+            return "ForteStrategyGoalSignal"
+        }
+
+        return "ForteStrategyTarget"
     }
 }
