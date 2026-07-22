@@ -1,0 +1,93 @@
+{
+  "task": "generate_athlete_blueprint",
+  "context": {
+    "intent": "concreteGoal",
+    "normalizedGoal": {
+      "displayText": "complete a strong endurance block",
+      "horizonWeeks": 12,
+      "category": "endurance"
+    },
+    "feasibleTrainingOptions": [
+      { "activity": "running", "title": "Running", "priority": 1 },
+      { "activity": "strength", "title": "Strength", "priority": 2 }
+    ],
+    "onboardingSignals": {
+      "frequency": "three",
+      "availableDays": ["monday", "wednesday", "saturday"]
+    },
+    "evidenceSummary": {
+      "importedWorkoutCount": 837,
+      "dominantModalities": ["cycling", "strength", "running"]
+    },
+    "sectionSeeds": {
+      "athleteArchetype": {
+        "canonicalLabel": "Hybrid athlete",
+        "evidence": ["837 imported workouts across endurance and strength modalities."]
+      },
+      "currentTrainingState": {
+        "canonicalLabel": "Building momentum",
+        "evidence": ["Five workouts were recorded in the last seven days."]
+      },
+      "physicalBaseline": {
+        "canonicalLabel": "Established training base",
+        "evidence": ["The workout history supports both endurance and strength training."]
+      },
+      "historyFindings": [
+        {
+          "id": "training_history",
+          "evidence": ["The imported history spans 313 weeks."]
+        }
+      ],
+      "goalFit": {
+        "canonicalHeadline": "Strong foundation",
+        "supports": ["Endurance and strength are both feasible training options."],
+        "gaps": []
+      }
+    },
+    "scoringInput": {
+      "schemaVersion": "athlete-profile-scoring-input.v1",
+      "intent": "concreteGoal",
+      "normalizedGoal": { "category": "endurance", "horizonWeeks": 12 },
+      "availability": {
+        "targetSessionsPerWeek": 3,
+        "availableDaysCount": 4,
+        "ultraFlexible": false
+      },
+      "feasibleModalities": ["running", "strength"],
+      "evidence": {
+        "snapshotGeneratedAt": "__NOW__",
+        "totalWorkouts": 837,
+        "lastWorkoutAt": "__NOW__",
+        "windows": {
+          "days7": { "workouts": 5, "totalMinutes": 458 },
+          "days28": { "workouts": 22, "totalMinutes": 2178 }
+        },
+        "consistency": {
+          "weeksAnalyzed": 313,
+          "activeWeeks": 231,
+          "longestActiveWeekStreak": 44
+        },
+        "modalityMix": [
+          { "modality": "cycling", "workouts": 249, "shareOfMinutes": 0.54, "lastWorkoutAt": "__NOW__" },
+          { "modality": "strength", "workouts": 307, "shareOfMinutes": 0.25, "lastWorkoutAt": "__NOW__" },
+          { "modality": "running", "workouts": 150, "shareOfMinutes": 0.08, "lastWorkoutAt": "__NOW__" }
+        ],
+        "strengthContinuity": {
+          "strengthWorkouts90Days": 17,
+          "daysSinceLastStrength": 0
+        },
+        "longestWorkouts": [
+          { "modality": "cycling", "durationMinutes": 1190 },
+          { "modality": "running", "durationMinutes": 117 }
+        ],
+        "bestDistanceEfforts": [
+          { "modality": "cycling" },
+          { "modality": "running" }
+        ]
+      }
+    },
+    "doNotClaim": [
+      "Do not claim these indicators are grades, percentiles, or medical assessments."
+    ]
+  }
+}

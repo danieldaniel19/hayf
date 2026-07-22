@@ -38,6 +38,9 @@ Hosted Supabase is not changed by this flow.
    ```text
    OPENAI_API_KEY=<server-side dev key>
    OPENAI_MODEL=gpt-5-mini
+   ATHLETE_PROFILE_ENGINE_URL=http://host.docker.internal:54321/functions/v1/athlete-profile-engine
+   ATHLETE_PROFILE_ENGINE_API_KEY=local-athlete-profile-engine-dev
+   ATHLETE_PROFILE_ENGINE_TIMEOUT_MS=10000
    TRAINING_ORCHESTRATOR_URL=http://host.docker.internal:8787
    TRAINING_ORCHESTRATOR_API_KEY=local-langgraph-dev
    TRAINING_ORCHESTRATOR_REQUIRED=true
@@ -81,7 +84,15 @@ This serves local `onboarding-ai` and `planning-ai` with `TRAINING_ORCHESTRATOR_
 
 ### Xcode
 
-1. Select the shared scheme `HAYF Local LangGraph`.
+Before opening Xcode, verify the exact Athlete Blueprint scoring path:
+
+```bash
+tools/local-langgraph/verify-athlete-profile.sh
+```
+
+Do not run onboarding unless this prints `Forte Dev radar preflight passed`.
+
+1. Select the shared scheme `Forte Dev` or `HAYF Local LangGraph`.
 2. Run on an iOS simulator.
 3. The app auto-signs into the local Supabase user in Debug builds only.
 4. Complete onboarding.

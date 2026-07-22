@@ -45,7 +45,7 @@ struct PlanScreenView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                HAYFColor.neutral
+                ForteColor.background
                     .ignoresSafeArea()
 
                 Group {
@@ -982,10 +982,10 @@ private struct PlanContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 18)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
             .padding(.bottom, 28)
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
         }
         .refreshable {
@@ -1340,10 +1340,10 @@ private struct PlanTargetProgressBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(HAYFColor.borderStrong)
+                    .fill(ForteColor.indigoMist)
 
                 Capsule()
-                    .fill(HAYFColor.orange)
+                    .fill(ForteColor.indigo)
                     .frame(width: proxy.size.width * CGFloat(min(max(progress ?? 0, 0), 1)))
                     .opacity(progress == nil ? 0 : 1)
             }
@@ -1428,66 +1428,53 @@ private struct PlanWorkoutsPanel: View {
     let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 0) {
-                PlanWeekSwitcher(
-                    selectedWeek: selectedWeek,
-                    selectWeek: { selectedWeek = $0 }
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Your plan")
+                .font(ForteTypography.editorial(size: 32, relativeTo: .largeTitle))
+                .foregroundStyle(ForteColor.ink)
+                .accessibilityAddTraits(.isHeader)
+
+            PlanWeekSwitcher(
+                selectedWeek: selectedWeek,
+                selectWeek: { selectedWeek = $0 }
+            )
+
+            if pendingProposal != nil || pendingReview != nil {
+                PlanReviewChangesCTA(
+                    pendingReview: pendingReview,
+                    pendingProposal: pendingProposal,
+                    isReviewing: isReviewingPlanChanges,
+                    review: reviewPlanChanges
                 )
-                .padding(.bottom, 16)
-
-                if pendingProposal != nil || pendingReview != nil {
-                    PlanReviewChangesCTA(
-                        pendingReview: pendingReview,
-                        pendingProposal: pendingProposal,
-                        isReviewing: isReviewingPlanChanges,
-                        review: reviewPlanChanges
-                    )
-                    .padding(.bottom, 14)
-                } else if let reviewConfirmationMessage {
-                    PlanReviewConfirmationRow(message: reviewConfirmationMessage)
-                        .padding(.bottom, 14)
-                }
-
-                if let movingWorkout {
-                    PlanMoveCue(workout: movingWorkout, cancel: cancelMoveWorkout)
-                        .padding(.bottom, 14)
-                }
-
-                PlanWeekSection(
-                    title: title(for: selectedWeek),
-                    rhythm: rhythm(for: selectedWeek),
-                    groups: groups(for: selectedWeek),
-                    homeLocationLabel: homeLocationLabel,
-                    targets: weekTargets(for: selectedWeek),
-                    evaluations: evaluations,
-                    movingWorkout: movingWorkout,
-                    isAnalyzingEdit: isAnalyzingEdit,
-                    showWeekContext: {
-                        guard let rhythm = rhythm(for: selectedWeek) else { return }
-                        selectedWeekContext = PlanWeekContextPresentation(
-                            rhythm: rhythm,
-                            phases: phases,
-                            workouts: groups(for: selectedWeek).flatMap(\.workouts),
-                            userName: userName
-                        )
-                    },
-                    showTargetDetail: showTargetDetail,
-                    moveWorkout: moveWorkout,
-                    beginMoveWorkout: beginMoveWorkout,
-                    deleteWorkout: deleteWorkout,
-                    replaceWorkout: replaceWorkout,
-                    showWorkoutDetail: showWorkoutDetail,
-                    showDayActions: showDayActions
-                )
+            } else if let reviewConfirmationMessage {
+                PlanReviewConfirmationRow(message: reviewConfirmationMessage)
             }
-            .padding(18)
-            .background(HAYFColor.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
+
+            if let movingWorkout {
+                PlanMoveCue(workout: movingWorkout, cancel: cancelMoveWorkout)
             }
+
+            PlanWeekSection(
+                rhythm: rhythm(for: selectedWeek),
+                contextTitle: contextPresentation(for: selectedWeek)?.headerTitle,
+                groups: groups(for: selectedWeek),
+                defaultExpandedWorkoutID: defaultExpandedWorkoutID(for: selectedWeek),
+                homeLocationLabel: homeLocationLabel,
+                targets: weekTargets(for: selectedWeek),
+                evaluations: evaluations,
+                movingWorkout: movingWorkout,
+                isAnalyzingEdit: isAnalyzingEdit,
+                showWeekContext: {
+                    selectedWeekContext = contextPresentation(for: selectedWeek)
+                },
+                showTargetDetail: showTargetDetail,
+                moveWorkout: moveWorkout,
+                beginMoveWorkout: beginMoveWorkout,
+                deleteWorkout: deleteWorkout,
+                replaceWorkout: replaceWorkout,
+                showWorkoutDetail: showWorkoutDetail,
+                showDayActions: showDayActions
+            )
         }
         .sheet(item: $selectedWeekContext) { context in
             PlanWeekContextSheet(context: context)
@@ -1497,19 +1484,18 @@ private struct PlanWorkoutsPanel: View {
         }
     }
 
-    private func title(for week: PlanWeekBucket) -> String {
-        switch week {
-        case .current:
-            return "This week"
-        case .next:
-            return "Next week"
-        case .outside:
-            return "Week"
-        }
-    }
-
     private func rhythm(for week: PlanWeekBucket) -> PlanWeeklyRhythm? {
         weeklyRhythms.first { PlanDate.bucket(for: $0.weekStartDate) == week }
+    }
+
+    private func contextPresentation(for week: PlanWeekBucket) -> PlanWeekContextPresentation? {
+        guard let rhythm = rhythm(for: week) else { return nil }
+        return PlanWeekContextPresentation(
+            rhythm: rhythm,
+            phases: phases,
+            workouts: groups(for: week).flatMap(\.workouts),
+            userName: userName
+        )
     }
 
     private func weekTargets(for week: PlanWeekBucket) -> [PlanGoalTarget] {
@@ -1519,18 +1505,36 @@ private struct PlanWorkoutsPanel: View {
 
     private func groups(for week: PlanWeekBucket) -> [PlanWorkoutDayGroup] {
         let weekRhythm = rhythm(for: week)
-        let filtered = workouts.filter { PlanDate.bucket(for: $0.scheduledDate) == week }
+        let filtered = workouts.filter {
+            PlanDate.bucket(for: $0.scheduledDate) == week &&
+                ![.deleted, .superseded].contains($0.status)
+        }
         let grouped = Dictionary(grouping: filtered, by: \.scheduledDate)
 
         return PlanDate.weekDates(for: week).map { date in
             PlanWorkoutDayGroup(
                 date: date,
-                workouts: grouped[date] ?? [],
+                workouts: (grouped[date] ?? []).sorted {
+                    if $0.sequenceOrder != $1.sequenceOrder {
+                        return $0.sequenceOrder < $1.sequenceOrder
+                    }
+                    return $0.id.uuidString < $1.id.uuidString
+                },
                 weeklyPlanID: weekRhythm?.id,
                 weekStatus: weekRhythm?.status,
                 constraint: weekRhythm?.constraint(for: date)
             )
         }
+    }
+
+    private func defaultExpandedWorkoutID(for week: PlanWeekBucket) -> UUID? {
+        groups(for: week)
+            .flatMap(\.workouts)
+            .first {
+                PlanDate.isTodayOrFuture($0.scheduledDate) &&
+                    [.planned, .current, .checkedIn, .adjusted].contains($0.status)
+            }?
+            .id
     }
 }
 
@@ -1645,17 +1649,17 @@ private struct PlanWeekSwitcher: View {
     let selectWeek: (PlanWeekBucket) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 0) {
             switcherButton(title: "This week", week: .current)
             switcherButton(title: "Next week", week: .next)
         }
-        .padding(4)
+        .padding(3)
         .frame(maxWidth: .infinity)
-        .background(HAYFColor.neutral)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(ForteColor.surface)
+        .clipShape(Capsule())
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
+            Capsule()
+                .stroke(ForteColor.borderSubtle, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)
     }
@@ -1663,33 +1667,31 @@ private struct PlanWeekSwitcher: View {
     private func switcherButton(title: String, week: PlanWeekBucket) -> some View {
         Button(action: { selectWeek(week) }) {
             Text(title)
-                .font(.system(size: 14, weight: selectedWeek == week ? .semibold : .medium))
-                .foregroundStyle(selectedWeek == week ? HAYFColor.primary : HAYFColor.muted)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(selectedWeek == week ? Color.white : ForteColor.inkSoft)
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
                 .frame(maxWidth: .infinity)
-                .frame(height: 36)
+                .frame(height: 42)
                 .background {
                     if selectedWeek == week {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(HAYFColor.surface)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .stroke(HAYFColor.borderStrong, lineWidth: 1)
-                            }
+                        Capsule()
+                            .fill(ForteColor.indigo)
                     }
                 }
         }
         .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.18), value: selectedWeek)
         .accessibilityLabel(title)
         .accessibilityValue(selectedWeek == week ? "Selected" : "")
     }
 }
 
 private struct PlanWeekSection: View {
-    let title: String
     let rhythm: PlanWeeklyRhythm?
+    let contextTitle: String?
     let groups: [PlanWorkoutDayGroup]
+    let defaultExpandedWorkoutID: UUID?
     let homeLocationLabel: String?
     let targets: [PlanGoalTarget]
     let evaluations: [PlanGoalEvaluation]
@@ -1704,23 +1706,16 @@ private struct PlanWeekSection: View {
     let showWorkoutDetail: (PlanWorkout) -> Void
     let showDayActions: (PlanWorkoutDayGroup) -> Void
 
+    @State private var expandedWorkoutID: UUID?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .center, spacing: 8) {
-                    Text(title)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(HAYFColor.primary)
-
-                    if let rhythm {
-                        PlanWeekStatusChip(
-                            status: rhythm.status,
-                            open: showWeekContext
-                        )
-                    }
-
-                    Spacer(minLength: 8)
-                }
+        VStack(alignment: .leading, spacing: 16) {
+            if let rhythm {
+                PlanWeekContextRow(
+                    status: rhythm.status,
+                    title: contextTitle ?? rhythm.objective,
+                    open: showWeekContext
+                )
             }
 
             if !targets.isEmpty {
@@ -1731,29 +1726,105 @@ private struct PlanWeekSection: View {
                 )
             }
 
-            VStack(spacing: 8) {
+            VStack(spacing: 0) {
                 ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-                    VStack(spacing: 8) {
-                        PlanWorkoutDayRow(
-                            group: group,
-                            homeLocationLabel: homeLocationLabel,
-                            movingWorkout: movingWorkout,
-                            isAnalyzingEdit: isAnalyzingEdit,
-                            moveWorkout: moveWorkout,
-                            beginMoveWorkout: beginMoveWorkout,
-                            deleteWorkout: deleteWorkout,
-                            replaceWorkout: replaceWorkout,
-                            showWorkoutDetail: showWorkoutDetail,
-                            showDayActions: showDayActions
-                        )
-
-                        if index < groups.count - 1 {
-                            PlanWorkoutDayDivider()
-                        }
-                    }
+                    PlanWorkoutDayRow(
+                        group: group,
+                        emptyRowPosition: emptyRowPosition(at: index),
+                        homeLocationLabel: homeLocationLabel,
+                        expandedWorkoutID: expandedWorkoutID,
+                        movingWorkout: movingWorkout,
+                        isAnalyzingEdit: isAnalyzingEdit,
+                        expandWorkout: { workout in
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                expandedWorkoutID = workout.id
+                            }
+                        },
+                        moveWorkout: moveWorkout,
+                        beginMoveWorkout: beginMoveWorkout,
+                        deleteWorkout: deleteWorkout,
+                        replaceWorkout: replaceWorkout,
+                        showWorkoutDetail: showWorkoutDetail,
+                        showDayActions: showDayActions
+                    )
+                    .padding(.top, scheduleTopSpacing(at: index))
                 }
             }
         }
+        .onAppear {
+            if expandedWorkoutID == nil {
+                expandedWorkoutID = defaultExpandedWorkoutID
+            }
+        }
+        .onChange(of: defaultExpandedWorkoutID) { _, newValue in
+            expandedWorkoutID = newValue
+        }
+    }
+
+    private func scheduleTopSpacing(at index: Int) -> CGFloat {
+        guard index > 0 else { return 0 }
+        let currentIsEmpty = groups[index].workouts.isEmpty
+        let previousIsEmpty = groups[index - 1].workouts.isEmpty
+        return currentIsEmpty && previousIsEmpty ? 0 : 12
+    }
+
+    private func emptyRowPosition(at index: Int) -> PlanEmptyRowPosition {
+        let previousIsEmpty = index > 0 && groups[index - 1].workouts.isEmpty
+        let nextIsEmpty = index + 1 < groups.count && groups[index + 1].workouts.isEmpty
+        return PlanEmptyRowPosition(
+            joinsPrevious: previousIsEmpty,
+            joinsNext: nextIsEmpty
+        )
+    }
+}
+
+private struct PlanWeekContextRow: View {
+    let status: String
+    let title: String
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                Image(systemName: status == "draft" ? "clock" : "checkmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ForteColor.indigoDeep)
+                    .frame(width: 28, height: 28)
+                    .background(ForteColor.indigoSoft)
+                    .clipShape(Circle())
+
+                Text(status == "draft" ? "Draft" : "Committed")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ForteColor.ink)
+
+                Text("·")
+                    .foregroundStyle(ForteColor.inkMuted)
+
+                Text(title)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(ForteColor.inkSoft)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(ForteColor.inkMuted)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 56)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ForteColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(ForteColor.borderSubtle.opacity(0.78), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open " + (status == "draft" ? "draft" : "committed") + " week context, " + title)
+        .accessibilityHint("Shows why your coach planned this week")
     }
 }
 
@@ -2160,16 +2231,31 @@ private struct PlanWeeklyTargetsView: View {
     let workouts: [PlanWorkout]
 
     var body: some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
-            spacing: 8
-        ) {
-            ForEach(targets.prefix(3)) { target in
-                PlanWeeklyTargetCard(
-                    target: target,
-                    evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
-                    workouts: workouts
-                )
+        VStack(alignment: .leading, spacing: 8) {
+            Text("The promise for this week")
+                .font(ForteTypography.editorial(size: 20, relativeTo: .title3))
+                .foregroundStyle(ForteColor.ink)
+
+            VStack(spacing: 0) {
+                ForEach(Array(targets.prefix(3).enumerated()), id: \.element.id) { index, target in
+                    PlanWeeklyTargetCard(
+                        target: target,
+                        evaluation: PlanTargetDisplay.latestEvaluation(for: target, in: evaluations),
+                        workouts: workouts
+                    )
+
+                    if index < min(targets.count, 3) - 1 {
+                        Divider()
+                            .overlay(ForteColor.borderSubtle)
+                            .padding(.leading, 72)
+                    }
+                }
+            }
+            .background(ForteColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(ForteColor.borderSubtle.opacity(0.72), lineWidth: 1)
             }
         }
     }
@@ -2181,29 +2267,44 @@ private struct PlanWeeklyTargetCard: View {
     let workouts: [PlanWorkout]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: PlanTargetDisplay.weeklyCardIconName(for: target, evaluation: evaluation))
-                .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(HAYFColor.primary)
-                .frame(width: 26, height: 24, alignment: .leading)
+        HStack(spacing: 10) {
+            Image(PlanTargetDisplay.weeklyCardAssetName(for: target))
+                .resizable()
+                .scaledToFit()
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
 
             Text(PlanTargetDisplay.weeklyCardValue(for: target, evaluation: evaluation))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(HAYFColor.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.68)
+                .font(ForteTypography.editorial(size: 18, relativeTo: .title3))
+                .foregroundStyle(ForteColor.ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            PlanTargetProgressBar(progress: PlanTargetDisplay.weeklyCardProgress(for: target, evaluation: evaluation, workouts: workouts))
-                .frame(height: 4)
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(PlanTargetDisplay.weeklyCardProgressLabel(
+                    for: target,
+                    evaluation: evaluation,
+                    workouts: workouts
+                ))
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(ForteColor.inkMuted)
+                .lineLimit(1)
+
+                PlanTargetProgressBar(
+                    progress: PlanTargetDisplay.weeklyCardProgress(
+                        for: target,
+                        evaluation: evaluation,
+                        workouts: workouts
+                    )
+                )
+                .frame(width: 64, height: 3)
+            }
+            .frame(minWidth: 68, alignment: .trailing)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-        .background(HAYFColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(HAYFColor.borderStrong, lineWidth: 1)
-        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 }
@@ -2241,9 +2342,12 @@ private struct PlanWeekStatusChip: View {
 
 private struct PlanWorkoutDayRow: View {
     let group: PlanWorkoutDayGroup
+    let emptyRowPosition: PlanEmptyRowPosition
     let homeLocationLabel: String?
+    let expandedWorkoutID: UUID?
     let movingWorkout: PlanWorkout?
     let isAnalyzingEdit: Bool
+    let expandWorkout: (PlanWorkout) -> Void
     let moveWorkout: (PlanWorkout, String, Int?) -> Void
     let beginMoveWorkout: (PlanWorkout) -> Void
     let deleteWorkout: (PlanWorkout) -> Void
@@ -2252,116 +2356,179 @@ private struct PlanWorkoutDayRow: View {
     let showDayActions: (PlanWorkoutDayGroup) -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(PlanDate.weekdayLabel(group.date))
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(HAYFColor.secondary)
+        Group {
+            if group.workouts.isEmpty {
+                PlanEmptyDayRow(
+                    date: group.date,
+                    constraint: group.constraint,
+                    position: emptyRowPosition,
+                    canAdd: canShowDayActions,
+                    add: { showDayActions(group) }
+                )
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    if isMoveTarget {
+                        PlanMoveTargetDayRow(date: group.date)
+                    }
 
-                Text(PlanDate.dayLabel(group.date))
-                    .font(.system(size: 21, weight: .regular))
-                    .foregroundStyle(HAYFColor.primary)
-            }
-            .frame(width: 38, alignment: .leading)
-            .padding(.top, 10)
-
-            PlanTimelineMarker(availabilityKind: group.constraint?.kind)
-                .frame(width: 12)
-
-            VStack(alignment: .leading, spacing: 8) {
-                if isMoveTarget && group.workouts.isEmpty {
-                    PlanEmptyDayDropZone(isMoveTarget: true)
-                } else {
-                    if canShowDayActions {
-                        PlanDaySlotActionControl(
-                            open: { showDayActions(group) }
+                    ForEach(group.workouts) { workout in
+                        PlanWorkoutCard(
+                            workout: workout,
+                            fallbackLocationLabel: homeLocationLabel,
+                            isExpanded: workout.id == expandedWorkoutID,
+                            isDisabled: isAnalyzingEdit || isMoveMode,
+                            expand: { expandWorkout(workout) },
+                            moveWorkout: { beginMoveWorkout(workout) },
+                            deleteWorkout: { deleteWorkout(workout) },
+                            replaceWorkout: { replaceWorkout(workout) },
+                            showWorkoutDetail: { showWorkoutDetail(workout) }
                         )
                     }
 
-                    if group.workouts.isEmpty {
-                        if !canShowDayActions && PlanDate.isPast(group.date) {
-                            PlanHistoryEmptyRow()
+                    if canShowDayActions {
+                        Button {
+                            showDayActions(group)
+                        } label: {
+                            Label("Add session", systemImage: "plus")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(ForteColor.indigoDeep)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
-                    } else {
-                        ForEach(group.workouts) { workout in
-                            PlanWorkoutCard(
-                                workout: workout,
-                                fallbackLocationLabel: homeLocationLabel,
-                                isDisabled: isAnalyzingEdit || isMoveTarget,
-                                moveWorkout: { beginMoveWorkout(workout) },
-                                deleteWorkout: { deleteWorkout(workout) },
-                                replaceWorkout: { replaceWorkout(workout) },
-                                showWorkoutDetail: { showWorkoutDetail(workout) }
-                            )
-                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Add another session or edit availability for \(PlanDate.longLabel(group.date))")
                     }
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: dayContentMinHeight, alignment: .topLeading)
         }
-        .padding(.vertical, isMoveTarget ? 4 : 0)
-        .padding(.horizontal, isMoveTarget ? 6 : 0)
+        .padding(isMoveTarget ? 8 : 0)
         .contentShape(Rectangle())
         .background {
             if isMoveTarget {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(HAYFColor.orange.opacity(0.06))
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(ForteColor.indigoMist)
             }
         }
         .overlay {
             if isMoveTarget {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(HAYFColor.orange.opacity(0.45), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(ForteColor.indigo.opacity(0.32), lineWidth: 1)
             }
         }
         .onTapGesture {
-            guard let movingWorkout, !isAnalyzingEdit else { return }
+            guard isMoveTarget, let movingWorkout, !isAnalyzingEdit else { return }
             moveWorkout(movingWorkout, group.date, group.workouts.count + 1)
         }
         .accessibilityAddTraits(isMoveTarget ? .isButton : [])
     }
 
     private var isMoveTarget: Bool {
+        isMoveMode && PlanDate.isTodayOrFuture(group.date)
+    }
+
+    private var isMoveMode: Bool {
         movingWorkout != nil
     }
 
     private var canShowDayActions: Bool {
-        !isAnalyzingEdit && !isMoveTarget && PlanDate.isTodayOrFuture(group.date) && group.weeklyPlanID != nil
+        !isAnalyzingEdit &&
+            !isMoveMode &&
+            group.weeklyPlanID != nil &&
+            PlanDate.isTodayOrFuture(group.date)
     }
 
-    private var dayContentMinHeight: CGFloat? {
-        guard group.workouts.isEmpty,
-              canShowDayActions else {
-            return nil
-        }
+}
 
-        return 44
+private struct PlanEmptyRowPosition {
+    let joinsPrevious: Bool
+    let joinsNext: Bool
+}
+
+private struct PlanEmptyDayRow: View {
+    let date: String
+    let constraint: PlanDayConstraint?
+    let position: PlanEmptyRowPosition
+    let canAdd: Bool
+    let add: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("\(PlanDate.weekdayLabel(date)) \(PlanDate.dayLabel(date))")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ForteColor.ink)
+                .frame(width: 54, alignment: .leading)
+
+            if let constraint {
+                Image(systemName: constraint.kind == .unavailable ? "xmark" : "exclamationmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(constraint.kind == .unavailable ? HAYFColor.error : ForteColor.indigoDeep)
+                    .frame(width: 22, height: 22)
+                    .background(constraint.kind == .unavailable ? HAYFColor.error.opacity(0.09) : ForteColor.indigoMist)
+                    .clipShape(Circle())
+                    .accessibilityHidden(true)
+            }
+
+            Text("No session planned")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(ForteColor.inkMuted)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            if canAdd {
+                Button(action: add) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(ForteColor.indigo)
+                        .frame(width: 32, height: 32)
+                        .background(ForteColor.indigoMist)
+                        .clipShape(Circle())
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Add a session or edit availability for \(PlanDate.longLabel(date))")
+            }
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
+        .background {
+            UnevenRoundedRectangle(
+                topLeadingRadius: position.joinsPrevious ? 0 : 16,
+                bottomLeadingRadius: position.joinsNext ? 0 : 16,
+                bottomTrailingRadius: position.joinsNext ? 0 : 16,
+                topTrailingRadius: position.joinsPrevious ? 0 : 16,
+                style: .continuous
+            )
+            .fill(ForteColor.surface)
+        }
+        .overlay(alignment: .bottom) {
+            if position.joinsNext {
+                Divider()
+                    .overlay(ForteColor.borderSubtle)
+                    .padding(.leading, 68)
+            }
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
-private struct PlanHistoryEmptyRow: View {
+private struct PlanMoveTargetDayRow: View {
+    let date: String
+
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
-                .frame(width: 24, height: 24)
+        HStack {
+            Text("\(PlanDate.weekdayLabel(date)) \(PlanDate.dayLabel(date))")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(ForteColor.ink)
 
-            Text("No imported workout")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(HAYFColor.muted)
+            Spacer()
 
-            Spacer(minLength: 8)
+            Label("Move here", systemImage: "arrow.down.circle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(ForteColor.indigoDeep)
         }
-        .padding(.horizontal, 12)
-        .frame(minHeight: 52)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(HAYFColor.surface.opacity(0.56))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(HAYFColor.border, lineWidth: 1)
-        }
+        .frame(minHeight: 48)
     }
 }
 
@@ -2493,7 +2660,9 @@ private struct PlanEmptyDayDropZone: View {
 private struct PlanWorkoutCard: View {
     let workout: PlanWorkout
     let fallbackLocationLabel: String?
+    let isExpanded: Bool
     let isDisabled: Bool
+    let expand: () -> Void
     let moveWorkout: () -> Void
     let deleteWorkout: () -> Void
     let replaceWorkout: () -> Void
@@ -2502,8 +2671,8 @@ private struct PlanWorkoutCard: View {
     @State private var horizontalOffset: CGFloat = 0
     @State private var dragStartOffset: CGFloat = 0
     @State private var isDragging = false
-    private let actionWidth: CGFloat = 132
-    private let actionSpacing: CGFloat = 4
+    @State private var dragAxis: PlanCardDragAxis?
+    private let actionWidth: CGFloat = 204
 
     private var display: WorkoutCardDisplayModel {
         WorkoutCardDisplayModel(workout: workout, fallbackLocationLabel: fallbackLocationLabel)
@@ -2518,12 +2687,16 @@ private struct PlanWorkoutCard: View {
             cardContent
                 .offset(x: horizontalOffset)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 12, coordinateSpace: .local)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 16, coordinateSpace: .local)
                 .onChanged { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    if dragAxis == nil {
+                        dragAxis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical
+                    }
+
+                    guard dragAxis == .horizontal else { return }
                     if !isDragging {
                         dragStartOffset = horizontalOffset
                         isDragging = true
@@ -2531,13 +2704,15 @@ private struct PlanWorkoutCard: View {
                     horizontalOffset = min(0, max(-actionWidth, dragStartOffset + value.translation.width))
                 }
                 .onEnded { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    let shouldOpen = horizontalOffset < -actionWidth / 2 || value.predictedEndTranslation.width < -actionWidth
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                        horizontalOffset = shouldOpen ? -actionWidth : 0
+                    if dragAxis == .horizontal {
+                        let shouldOpen = horizontalOffset < -actionWidth / 2 || value.predictedEndTranslation.width < -actionWidth
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            horizontalOffset = shouldOpen ? -actionWidth : 0
+                        }
                     }
                     dragStartOffset = 0
                     isDragging = false
+                    dragAxis = nil
                 }
         )
         .contextMenu {
@@ -2545,84 +2720,90 @@ private struct PlanWorkoutCard: View {
                 closeActions()
                 replaceWorkout()
             } label: {
-                Label("Replace workout", systemImage: "arrow.triangle.2.circlepath")
+                Label("Generate alternative", systemImage: "arrow.triangle.2.circlepath")
             }
 
             Button {
                 closeActions()
                 moveWorkout()
             } label: {
-                Label("Move workout", systemImage: "calendar.badge.clock")
+                Label("Move session", systemImage: "calendar.badge.clock")
             }
 
             Button(role: .destructive) {
                 closeActions()
                 deleteWorkout()
             } label: {
-                Label("Delete workout", systemImage: "trash")
+                Label("Delete session", systemImage: "trash")
             }
         }
         .onTapGesture {
             guard canOpenDetail else { return }
-            showWorkoutDetail()
+            if isExpanded {
+                showWorkoutDetail()
+            } else {
+                expand()
+            }
         }
         .allowsHitTesting(!isDisabled)
         .opacity(isDisabled ? 0.82 : 1)
+        .accessibilityAction(named: Text("Generate alternative")) {
+            closeActions()
+            replaceWorkout()
+        }
+        .accessibilityAction(named: Text("Move session")) {
+            closeActions()
+            moveWorkout()
+        }
+        .accessibilityAction(named: Text("Delete session")) {
+            closeActions()
+            deleteWorkout()
+        }
+        .onChange(of: isExpanded) { _, _ in
+            closeActions()
+        }
     }
 
     private var actionButtons: some View {
-        HStack(spacing: actionSpacing) {
-            Button(action: {
+        HStack(spacing: 4) {
+            PlanSwipeActionButton(
+                title: "Alternative",
+                systemName: "arrow.triangle.2.circlepath",
+                foreground: ForteColor.indigoDeep,
+                background: ForteColor.indigoMist,
+                height: cardMinHeight - 8
+            ) {
                 closeActions()
                 replaceWorkout()
-            }) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: actionButtonWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(HAYFColor.orange)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Replace workout")
 
-            Button(action: {
+            PlanSwipeActionButton(
+                title: "Move",
+                systemName: "calendar.badge.clock",
+                foreground: ForteColor.inkSoft,
+                background: ForteColor.surfaceRaised,
+                height: cardMinHeight - 8
+            ) {
                 closeActions()
                 moveWorkout()
-            }) {
-                Image(systemName: "calendar.badge.clock")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: actionButtonWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(HAYFColor.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Move workout")
 
-            Button(role: .destructive, action: {
+            PlanSwipeActionButton(
+                title: "Delete",
+                systemName: "trash",
+                foreground: HAYFColor.error,
+                background: Color(red: 248 / 255, green: 233 / 255, blue: 227 / 255),
+                height: cardMinHeight - 8
+            ) {
                 closeActions()
                 deleteWorkout()
-            }) {
-                Image(systemName: "trash")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: actionButtonWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(HAYFColor.error)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete workout")
         }
+        .padding(4)
         .frame(width: actionWidth, alignment: .trailing)
-        .frame(minHeight: cardMinHeight)
-    }
-
-    private var actionButtonWidth: CGFloat {
-        (actionWidth - (actionSpacing * 2)) / 3
+        .frame(height: cardMinHeight)
+        .background(ForteColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var actionOpacity: Double {
@@ -2634,52 +2815,290 @@ private struct PlanWorkoutCard: View {
     }
 
     private var cardMinHeight: CGFloat {
-        workout.status == .current ? 138 : 130
+        isExpanded ? 236 : 78
     }
 
     private func closeActions() {
-        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+        withAnimation(.easeOut(duration: 0.2)) {
             horizontalOffset = 0
         }
     }
 
     private var cardContent: some View {
-        WorkoutCardBody(
-            display: display,
-            minHeight: cardMinHeight,
-            titleSize: titleSize,
-            titleWeight: titleWeight
-        ) {
-            PlanWorkoutStateMark(display: display, markSize: titleSize)
+        Group {
+            if isExpanded {
+                PlanSessionCardBody(display: display, minHeight: cardMinHeight)
+            } else {
+                PlanCollapsedSessionCardBody(display: display, height: cardMinHeight)
+            }
+        }
+    }
+}
+
+private enum PlanCardDragAxis {
+    case horizontal
+    case vertical
+}
+
+private struct PlanSwipeActionButton: View {
+    let title: String
+    let systemName: String
+    let foreground: Color
+    let background: Color
+    let height: CGFloat
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: systemName)
+                    .font(.system(size: 18, weight: .medium))
+
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+            .foregroundStyle(foreground)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+}
+
+private struct PlanCollapsedSessionCardBody: View {
+    let display: WorkoutCardDisplayModel
+    let height: CGFloat
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(display.modalityAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 54, height: 54)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    if let stateSymbolName = display.stateSymbolName {
+                        Image(systemName: stateSymbolName)
+                    }
+
+                    Text(display.dateAndModalityLabel)
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(ForteColor.inkMuted)
+
+                Text(display.title)
+                    .font(ForteTypography.editorial(size: 18, relativeTo: .title3))
+                    .foregroundStyle(ForteColor.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+
+                Text(metricSummary)
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(ForteColor.inkSoft)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(ForteColor.indigo)
+                .frame(width: 30, height: 30)
+                .background(ForteColor.indigoMist)
+                .clipShape(Circle())
+                .accessibilityHidden(true)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+        .background(ForteColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(display.stateAccentColor)
+                .frame(width: 3, height: 42)
+                .padding(.leading, 7)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(ForteColor.borderSubtle.opacity(0.6), lineWidth: 1)
+        }
+        .shadow(color: ForteColor.ink.opacity(0.045), radius: 7, x: 0, y: 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(display.accessibilityLabel)
+        .accessibilityHint("Expands this session. Swipe left for more actions")
+    }
+
+    private var metricSummary: String {
+        display.sessionMetrics
+            .prefix(3)
+            .map(\.value)
+            .joined(separator: " · ")
+    }
+}
+
+private struct PlanSessionCardBody: View {
+    let display: WorkoutCardDisplayModel
+    let minHeight: CGFloat
+
+    var body: some View {
+        VStack(spacing: 0) {
+            hero
+            metrics
+            footer
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: minHeight)
+        .background(ForteColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(ForteColor.borderSubtle.opacity(0.55), lineWidth: 1)
+        }
+        .shadow(color: ForteColor.ink.opacity(0.06), radius: 10, x: 0, y: 5)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(display.accessibilityLabel)
+        .accessibilityHint("Opens session details. Swipe left for more actions")
+    }
+
+    private var hero: some View {
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if let stateSymbolName = display.stateSymbolName {
+                        Image(systemName: stateSymbolName)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+
+                    Text(display.dateAndModalityLabel)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(1.0)
+                .foregroundStyle(ForteColor.inkSoft)
+
+                Text(display.title)
+                    .font(ForteTypography.editorial(size: 24, relativeTo: .title2))
+                    .foregroundStyle(ForteColor.ink)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
+
+                if !display.purpose.isEmpty {
+                    Text(display.purpose)
+                        .font(.system(size: 12.5, weight: .regular))
+                        .foregroundStyle(ForteColor.inkSoft)
+                        .lineSpacing(0.5)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.88)
+                        .allowsTightening(true)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Image(display.modalityAssetName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 138, height: 118)
+                .accessibilityHidden(true)
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 12)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 132)
+        .background(display.heroTint)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(display.stateAccentColor)
+                .frame(width: 4)
+                .padding(.vertical, 12)
+                .padding(.leading, 8)
         }
     }
 
-    private var titleSize: CGFloat {
-        switch workout.status {
-        case .current:
-            return 19
-        case .planned, .checkedIn, .adjusted:
-            return 18
-        case .done, .missed, .skipped:
-            return 18
-        case .deleted, .superseded:
-            return 17
+    private var metrics: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(display.sessionMetrics.prefix(3).enumerated()), id: \.element.id) { index, metric in
+                PlanSessionMetricView(metric: metric)
+                    .frame(maxWidth: .infinity)
+
+                if index < min(display.sessionMetrics.count, 3) - 1 {
+                    Divider()
+                        .frame(height: 24)
+                        .overlay(ForteColor.borderSubtle)
+                }
+            }
         }
+        .padding(.horizontal, 14)
+        .frame(height: 52)
+        .background(ForteColor.surface)
     }
 
-    private var titleWeight: Font.Weight {
-        switch workout.status {
-        case .current:
-            return .bold
-        case .planned, .checkedIn, .adjusted:
-            return .medium
-        case .done, .missed, .skipped:
-            return .regular
-        case .deleted, .superseded:
-            return .regular
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Image(systemName: display.weatherSystemName)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(ForteColor.indigo)
+
+            Text(display.weatherText)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(ForteColor.inkSoft)
+
+            Text("·")
+                .foregroundStyle(ForteColor.inkMuted)
+
+            Text(display.locationText)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(ForteColor.inkSoft)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(ForteColor.indigo)
+                .clipShape(Circle())
+        }
+        .padding(.leading, 20)
+        .padding(.trailing, 10)
+        .frame(height: 52)
+        .overlay(alignment: .top) {
+            Divider()
+                .overlay(ForteColor.borderSubtle)
+                .padding(.horizontal, 16)
         }
     }
+}
 
+private struct PlanSessionMetricView: View {
+    let metric: PlanSessionMetric
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: metric.systemName)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(ForteColor.indigo)
+
+            Text(metric.value)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ForteColor.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
 }
 
 private struct PlanWorkoutStateMark: View {
@@ -3476,7 +3895,19 @@ private struct WorkoutPillFlow: Layout {
 
 private struct WorkoutCardDisplayModel {
     let title: String
+    let purpose: String
     let modalityEmoji: String
+    let modalityAssetName: String
+    let modalityLabel: String
+    let dateAndModalityLabel: String
+    let heroTint: Color
+    let stateAccentColor: Color
+    let stateSymbolName: String?
+    let sessionMetrics: [PlanSessionMetric]
+    let weatherSystemName: String
+    let weatherText: String
+    let locationText: String
+    let accessibilityLabel: String
     let stateEmoji: String?
     let stateColor: Color
     let borderColor: Color
@@ -3530,29 +3961,45 @@ private struct WorkoutCardDisplayModel {
     private init(source: WorkoutCardDisplaySource) {
         let titleBuilder = WorkoutCardTaxonomy(source: source)
         title = titleBuilder.title
+        purpose = source.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
         modalityEmoji = titleBuilder.modalityEmoji
+        modalityAssetName = titleBuilder.modalityAssetName
+        modalityLabel = titleBuilder.modalityLabel
+        heroTint = titleBuilder.modalityHeroTint
+
+        let dateLabel = "\(PlanDate.weekdayLabel(source.scheduledDate)) \(PlanDate.dayLabel(source.scheduledDate))"
+            .uppercased()
+        dateAndModalityLabel = "\(dateLabel) · \(titleBuilder.modalityLabel.uppercased())"
 
         switch (source.status, source.source) {
         case (.done, _), (_, "healthkit_detected"):
             stateEmoji = "✅"
+            stateAccentColor = Color(red: 63 / 255, green: 139 / 255, blue: 104 / 255)
+            stateSymbolName = "checkmark.circle.fill"
             stateColor = HAYFColor.primary
             borderColor = HAYFColor.primary.opacity(0.74)
             borderWidth = 1
             backgroundTintOpacity = 0
         case (.missed, _):
             stateEmoji = "❌"
+            stateAccentColor = ForteColor.inkMuted
+            stateSymbolName = "xmark.circle"
             stateColor = HAYFColor.primary
             borderColor = HAYFColor.primary.opacity(0.74)
             borderWidth = 1
             backgroundTintOpacity = 0
         case (.current, _):
             stateEmoji = nil
+            stateAccentColor = ForteColor.indigo
+            stateSymbolName = nil
             stateColor = HAYFColor.orange
             borderColor = HAYFColor.orange
             borderWidth = 1
             backgroundTintOpacity = 0.035
         default:
             stateEmoji = nil
+            stateAccentColor = source.status == .skipped ? ForteColor.inkMuted : ForteColor.indigo
+            stateSymbolName = source.status == .skipped ? "forward.circle" : nil
             stateColor = HAYFColor.primary
             borderColor = HAYFColor.primary.opacity(0.74)
             borderWidth = 1
@@ -3581,10 +4028,48 @@ private struct WorkoutCardDisplayModel {
             storedForecast: source.weatherForecast,
             scheduledDate: source.scheduledDate
         )
+        weatherSystemName = forecast.systemImageName
+        weatherText = forecast.temperatureDisplayText
+        locationText = Self.shortLocation(location)
         contextPills = [
             PlanWorkoutCardPillModel(emoji: forecast.emoji, text: forecast.temperatureText),
             PlanWorkoutCardPillModel(emoji: Self.locationEmoji(for: plannedLocation, fallbackLocationLabel: source.fallbackLocationLabel), text: Self.shortLocation(location))
         ]
+
+        let effort = Self.effortText(titleBuilder.intensityText)
+        var primaryMetrics = [
+            PlanSessionMetric(systemName: "clock", value: Self.durationText(source.durationMinutes)),
+            PlanSessionMetric(systemName: "chart.bar.fill", value: effort)
+        ]
+        if let distanceText = titleBuilder.distanceText {
+            primaryMetrics.append(PlanSessionMetric(systemName: "location", value: distanceText))
+        } else if let elevationText = titleBuilder.elevationText {
+            primaryMetrics.append(PlanSessionMetric(systemName: "mountain.2", value: elevationText))
+        } else {
+            primaryMetrics.append(PlanSessionMetric(systemName: "scope", value: titleBuilder.targetText))
+        }
+        sessionMetrics = primaryMetrics
+        accessibilityLabel = [
+            dateAndModalityLabel,
+            title,
+            purpose,
+            Self.durationText(source.durationMinutes),
+            effort,
+            titleBuilder.distanceText,
+            forecast.temperatureDisplayText,
+            Self.shortLocation(location)
+        ]
+        .compactMap { $0 }
+        .filter { !$0.isEmpty }
+        .joined(separator: ", ")
+    }
+
+    private static func effortText(_ intensity: String) -> String {
+        switch intensity.lowercased() {
+        case "high": return "Hard"
+        case "mid", "medium", "moderate": return "Moderate"
+        default: return "Easy"
+        }
     }
 
     private static func durationText(_ minutes: Int) -> String {
@@ -3626,6 +4111,12 @@ private struct WorkoutCardDisplayModel {
     }
 }
 
+private struct PlanSessionMetric: Identifiable {
+    let id = UUID()
+    let systemName: String
+    let value: String
+}
+
 private struct WorkoutCardDisplaySource {
     let activityType: String
     let title: String
@@ -3652,6 +4143,8 @@ private struct PlanWorkoutCardPillModel: Identifiable {
 private struct PlanWorkoutForecastDisplay {
     let emoji: String
     let temperatureText: String
+    let systemImageName: String
+    let temperatureDisplayText: String
 
     init(storedForecast: JSONValue?, scheduledDate: String) {
         let object = storedForecast?.planObjectValue ?? [:]
@@ -3662,11 +4155,30 @@ private struct PlanWorkoutForecastDisplay {
         else {
             emoji = "🌡"
             temperatureText = "Pending"
+            systemImageName = "thermometer.medium"
+            temperatureDisplayText = "Pending"
             return
         }
 
         emoji = storedEmoji
         temperatureText = "\(Int(temperature.rounded()))C"
+        temperatureDisplayText = "\(Int(temperature.rounded()))°"
+        systemImageName = Self.systemImageName(for: storedEmoji)
+    }
+
+    private static func systemImageName(for emoji: String) -> String {
+        switch emoji {
+        case "☀️", "☀": return "sun.max"
+        case "🌤️", "🌤": return "cloud.sun"
+        case "⛅️", "⛅": return "cloud.sun"
+        case "☁️", "☁": return "cloud"
+        case "🌧️", "🌧", "☔️", "☔": return "cloud.rain"
+        case "⛈️", "⛈", "🌩️", "🌩": return "cloud.bolt.rain"
+        case "❄️", "❄", "🌨️", "🌨": return "cloud.snow"
+        case "🌫️", "🌫": return "cloud.fog"
+        case "💨": return "wind"
+        default: return "thermometer.medium"
+        }
     }
 }
 
@@ -3763,6 +4275,49 @@ private struct WorkoutCardTaxonomy {
         case .mobility: return "🧘"
         case .recovery: return "🛌"
         case .other: return "🏃🏻‍♂️‍➡️"
+        }
+    }
+
+    var modalityAssetName: String {
+        switch modality {
+        case .ride: return "ForteModalityCycling"
+        case .run: return "ForteModalityRunning"
+        case .swim: return "ForteModalitySwimming"
+        case .walk: return "ForteModalityWalking"
+        case .strength: return "ForteModalityStrength"
+        case .mobility: return "ForteModalityMobility"
+        case .recovery: return "ForteHealthRecovery"
+        case .row, .hike, .other: return "ForteSummaryTraining"
+        }
+    }
+
+    var modalityLabel: String {
+        switch modality {
+        case .ride: return "Cycling"
+        case .run: return "Running"
+        case .swim: return "Swimming"
+        case .row: return "Rowing"
+        case .hike: return "Hiking"
+        case .walk: return "Walking"
+        case .strength: return "Strength"
+        case .mobility: return "Mobility"
+        case .recovery: return "Recovery"
+        case .other: return "Training"
+        }
+    }
+
+    var modalityHeroTint: Color {
+        switch modality {
+        case .ride, .walk:
+            return Color(red: 230 / 255, green: 240 / 255, blue: 234 / 255)
+        case .run, .mobility:
+            return Color(red: 240 / 255, green: 236 / 255, blue: 248 / 255)
+        case .swim, .row:
+            return Color(red: 234 / 255, green: 242 / 255, blue: 246 / 255)
+        case .strength, .hike:
+            return Color(red: 245 / 255, green: 238 / 255, blue: 220 / 255)
+        case .recovery, .other:
+            return ForteColor.indigoMist
         }
     }
 
@@ -6143,6 +6698,34 @@ private enum PlanTargetDisplay {
         }
     }
 
+    static func weeklyCardAssetName(for target: PlanGoalTarget) -> String {
+        if let modality = weeklyTargetModality(for: target) {
+            switch modality {
+            case "cycling", "ride": return "ForteModalityCycling"
+            case "running", "run": return "ForteModalityRunning"
+            case "swimming", "swim": return "ForteModalitySwimming"
+            case "strength": return "ForteModalityStrength"
+            case "mobility": return "ForteModalityMobility"
+            case "walking", "walk": return "ForteModalityWalking"
+            case "recovery": return "ForteFloorIntentionalRest"
+            default: return "ForteFloorEasySession"
+            }
+        }
+
+        switch weeklyTargetFamily(for: target) {
+        case "planned_session_completion", "minimum_viable_week":
+            return "ForteFloorEasySession"
+        case "active_days":
+            return "ForteModalityWalking"
+        case "max_gap_guardrail":
+            return "ForteBlockerWorkSchedule"
+        case "body_weight_logging":
+            return "ForteBlockerNoPlan"
+        default:
+            return "ForteBlockerNoPlan"
+        }
+    }
+
     static func weeklyCardValue(for target: PlanGoalTarget, evaluation: PlanGoalEvaluation?) -> String {
         let family = weeklyTargetFamily(for: target)
         let modality = weeklyTargetModality(for: target)
@@ -6154,7 +6737,8 @@ private enum PlanTargetDisplay {
 
         switch family {
         case "planned_session_completion":
-            return "Complete \(formatted(targetValue))"
+            let noun = abs(targetValue - 1) < 0.001 ? "Session" : "Sessions"
+            return "\(formatted(targetValue)) \(noun)"
         case "modality_session_count", "support_modality_presence":
             return "\(formatted(targetValue)) \(modalityCountLabel(for: modality))"
         case "modality_minutes":
@@ -6215,6 +6799,58 @@ private enum PlanTargetDisplay {
 
         guard let currentValue else { return nil }
         return min(max(currentValue / targetValue, 0), 1)
+    }
+
+    static func weeklyCardProgressLabel(
+        for target: PlanGoalTarget,
+        evaluation: PlanGoalEvaluation?,
+        workouts: [PlanWorkout]
+    ) -> String {
+        guard let targetValue = evaluation?.targetValue ?? target.targetValue else {
+            return status(for: target, evaluation: evaluation).displayName
+        }
+
+        let family = weeklyTargetFamily(for: target)
+        let completed = workouts.filter { $0.status == .done }
+        let modality = weeklyTargetModality(for: target)
+        let matchingCompleted = completed.filter { workout in
+            guard let modality else { return true }
+            return workoutModality(for: workout) == modality
+                || (modality == "cycling" && workoutModality(for: workout) == "ride")
+                || (modality == "running" && workoutModality(for: workout) == "run")
+                || (modality == "walking" && workoutModality(for: workout) == "walk")
+                || (modality == "swimming" && workoutModality(for: workout) == "swim")
+        }
+
+        let currentValue: Double
+        if isFutureWeekTarget(target) {
+            currentValue = 0
+        } else {
+            switch family {
+            case "planned_session_completion", "minimum_viable_week":
+                currentValue = Double(completed.count)
+            case "modality_session_count", "support_modality_presence":
+                currentValue = Double(matchingCompleted.count)
+            case "modality_minutes":
+                currentValue = matchingCompleted.reduce(0) { $0 + Double($1.durationMinutes) }
+            case "modality_distance":
+                currentValue = matchingCompleted.reduce(0) { $0 + ($1.estimatedDistanceKilometers ?? 0) }
+            case "active_days":
+                currentValue = Double(Set(completed.map(\.scheduledDate)).count)
+            default:
+                currentValue = evaluation?.currentValue ?? 0
+            }
+        }
+
+        let suffix: String
+        switch family {
+        case "modality_minutes": suffix = " min"
+        case "modality_distance": suffix = unitSuffix(compactDistanceUnit(target.unit))
+        case "active_days": suffix = " days"
+        default: suffix = ""
+        }
+
+        return "\(formatted(currentValue)) of \(formatted(targetValue))\(suffix)"
     }
 
     static func iconName(for target: PlanGoalTarget) -> String {
@@ -6942,7 +7578,9 @@ private enum PlanWorkoutCardPreviewFixtures {
                     fuelingSummary: "Carbs + water before riding."
                 ),
                 fallbackLocationLabel: "Munich",
+                isExpanded: true,
                 isDisabled: false,
+                expand: {},
                 moveWorkout: {},
                 deleteWorkout: {},
                 replaceWorkout: {},
@@ -6961,7 +7599,9 @@ private enum PlanWorkoutCardPreviewFixtures {
                     location: "Lisbon"
                 ),
                 fallbackLocationLabel: "Munich",
+                isExpanded: false,
                 isDisabled: false,
+                expand: {},
                 moveWorkout: {},
                 deleteWorkout: {},
                 replaceWorkout: {},
@@ -6981,7 +7621,9 @@ private enum PlanWorkoutCardPreviewFixtures {
                     fuelingSummary: "Protein + carbs."
                 ),
                 fallbackLocationLabel: "Munich",
+                isExpanded: false,
                 isDisabled: false,
+                expand: {},
                 moveWorkout: {},
                 deleteWorkout: {},
                 replaceWorkout: {},
@@ -7000,7 +7642,9 @@ private enum PlanWorkoutCardPreviewFixtures {
                     source: "healthkit_detected"
                 ),
                 fallbackLocationLabel: "Munich",
+                isExpanded: false,
                 isDisabled: false,
+                expand: {},
                 moveWorkout: {},
                 deleteWorkout: {},
                 replaceWorkout: {},

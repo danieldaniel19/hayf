@@ -1,0 +1,10 @@
+[
+  { "name": "rich hybrid", "kind": "richHybrid", "expectedAvailable": ["consistency", "momentum", "strength", "training_base", "endurance"] },
+  { "name": "strength only", "kind": "strengthOnly", "expectedAvailable": ["consistency", "momentum", "strength", "training_base", "endurance"] },
+  { "name": "endurance only", "kind": "enduranceOnly", "expectedAvailable": ["consistency", "momentum", "strength", "training_base", "endurance"] },
+  { "name": "stale", "kind": "stale", "expectedAvailable": ["consistency", "momentum", "strength", "training_base", "endurance"] },
+  { "name": "sparse", "kind": "sparse", "expectedAvailable": ["momentum"] },
+  { "name": "no HealthKit", "kind": "noHealthKit", "expectedAvailable": [] },
+  { "name": "interrupted", "kind": "interrupted", "expectedAvailable": ["consistency", "momentum", "strength", "training_base", "endurance"] },
+  { "name": "returning athlete", "kind": "returningAthlete", "expectedAvailable": ["consistency", "momentum", "strength", "training_base", "endurance"] }
+]

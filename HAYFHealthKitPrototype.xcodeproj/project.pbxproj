@@ -36,6 +36,31 @@
 		D00000020000000000000001 /* daniel-health-snapshot.json in Resources */ = {isa = PBXBuildFile; fileRef = D00000120000000000000001 /* daniel-health-snapshot.json */; };
 		E00000010000000000000001 /* TodayScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E00000110000000000000001 /* TodayScreenView.swift */; };
 		F00000010000000000000001 /* TodayModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000110000000000000001 /* TodayModelsTests.swift */; };
+		G00000010000000000000001 /* ForteDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000110000000000000001 /* ForteDesign.swift */; };
+		G00000020000000000000001 /* ForteIntentScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000120000000000000001 /* ForteIntentScreen.swift */; };
+		G00000030000000000000001 /* ForteModalityScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000130000000000000001 /* ForteModalityScreen.swift */; };
+		G00000040000000000000001 /* ForteStackedChoiceList.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000140000000000000001 /* ForteStackedChoiceList.swift */; };
+		G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000150000000000000001 /* ForteInfrastructureScreen.swift */; };
+		G00000060000000000000001 /* ForteTextArea.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000160000000000000001 /* ForteTextArea.swift */; };
+		G00000070000000000000001 /* ForteMotivationAnchorScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000170000000000000001 /* ForteMotivationAnchorScreen.swift */; };
+		G00000080000000000000001 /* ForteWheelSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000180000000000000001 /* ForteWheelSelector.swift */; };
+		G00000090000000000000001 /* ForteWeeklyCapacityScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000190000000000000001 /* ForteWeeklyCapacityScreen.swift */; };
+		G000000A0000000000000001 /* ForteImageChoiceTile.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001A0000000000000001 /* ForteImageChoiceTile.swift */; };
+		G000000B0000000000000001 /* ForteWeeklyAvailabilityScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001B0000000000000001 /* ForteWeeklyAvailabilityScreen.swift */; };
+		G000000C0000000000000001 /* ForteConsistencyBlockerScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001C0000000000000001 /* ForteConsistencyBlockerScreen.swift */; };
+		G000000D0000000000000001 /* ForteInjuryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001D0000000000000001 /* ForteInjuryScreen.swift */; };
+		G000000E0000000000000001 /* ForteBodyBasicsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */; };
+		G000000F0000000000000001 /* ForteEditorialChoiceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */; };
+		G00000100000000000000001 /* ForteBodyFatEstimateScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */; };
+		H00000010000000000000001 /* ForteSupportStyleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000110000000000000001 /* ForteSupportStyleScreen.swift */; };
+		H00000020000000000000001 /* ForteBadDayFloorScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000120000000000000001 /* ForteBadDayFloorScreen.swift */; };
+		H00000030000000000000001 /* ForteOnboardingLoadingScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000130000000000000001 /* ForteOnboardingLoadingScreen.swift */; };
+		H00000040000000000000001 /* ForteOnboardingSummaryScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */; };
+		H00000050000000000000001 /* ForteAppleHealthScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = H00000150000000000000001 /* ForteAppleHealthScreen.swift */; };
+		J00000010000000000000001 /* ForteAthleteBlueprintScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */; };
+		K00000010000000000000001 /* ForteFitnessStrategyScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */; };
+		L00000010000000000000001 /* ForteOnboardingChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = L00000110000000000000001 /* ForteOnboardingChrome.swift */; };
+		L00000020000000000000001 /* ForteGoalIntentScreens.swift in Sources */ = {isa = PBXBuildFile; fileRef = L00000120000000000000001 /* ForteGoalIntentScreens.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -81,6 +106,31 @@
 		E00000110000000000000001 /* TodayScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayScreenView.swift; sourceTree = "<group>"; };
 		F00000110000000000000001 /* TodayModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayModelsTests.swift; sourceTree = "<group>"; };
 		F00000120000000000000001 /* HAYFHealthKitPrototypeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HAYFHealthKitPrototypeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		G00000110000000000000001 /* ForteDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteDesign.swift; sourceTree = "<group>"; };
+		G00000120000000000000001 /* ForteIntentScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteIntentScreen.swift; sourceTree = "<group>"; };
+		G00000130000000000000001 /* ForteModalityScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteModalityScreen.swift; sourceTree = "<group>"; };
+		G00000140000000000000001 /* ForteStackedChoiceList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteStackedChoiceList.swift; sourceTree = "<group>"; };
+		G00000150000000000000001 /* ForteInfrastructureScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteInfrastructureScreen.swift; sourceTree = "<group>"; };
+		G00000160000000000000001 /* ForteTextArea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteTextArea.swift; sourceTree = "<group>"; };
+		G00000170000000000000001 /* ForteMotivationAnchorScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteMotivationAnchorScreen.swift; sourceTree = "<group>"; };
+		G00000180000000000000001 /* ForteWheelSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteWheelSelector.swift; sourceTree = "<group>"; };
+		G00000190000000000000001 /* ForteWeeklyCapacityScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteWeeklyCapacityScreen.swift; sourceTree = "<group>"; };
+		G000001A0000000000000001 /* ForteImageChoiceTile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteImageChoiceTile.swift; sourceTree = "<group>"; };
+		G000001B0000000000000001 /* ForteWeeklyAvailabilityScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteWeeklyAvailabilityScreen.swift; sourceTree = "<group>"; };
+		G000001C0000000000000001 /* ForteConsistencyBlockerScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteConsistencyBlockerScreen.swift; sourceTree = "<group>"; };
+		G000001D0000000000000001 /* ForteInjuryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteInjuryScreen.swift; sourceTree = "<group>"; };
+		G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBodyBasicsScreen.swift; sourceTree = "<group>"; };
+		G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteEditorialChoiceCard.swift; sourceTree = "<group>"; };
+		G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBodyFatEstimateScreen.swift; sourceTree = "<group>"; };
+		H00000110000000000000001 /* ForteSupportStyleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteSupportStyleScreen.swift; sourceTree = "<group>"; };
+		H00000120000000000000001 /* ForteBadDayFloorScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteBadDayFloorScreen.swift; sourceTree = "<group>"; };
+		H00000130000000000000001 /* ForteOnboardingLoadingScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingLoadingScreen.swift; sourceTree = "<group>"; };
+		H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingSummaryScreen.swift; sourceTree = "<group>"; };
+		H00000150000000000000001 /* ForteAppleHealthScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteAppleHealthScreen.swift; sourceTree = "<group>"; };
+		J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteAthleteBlueprintScreen.swift; sourceTree = "<group>"; };
+		K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteFitnessStrategyScreen.swift; sourceTree = "<group>"; };
+		L00000110000000000000001 /* ForteOnboardingChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteOnboardingChrome.swift; sourceTree = "<group>"; };
+		L00000120000000000000001 /* ForteGoalIntentScreens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForteGoalIntentScreens.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,6 +235,13 @@
 			children = (
 				A000001C000000000000001 /* HAYFColor.swift */,
 				A000001D000000000000001 /* HAYFLogo.swift */,
+				G00000110000000000000001 /* ForteDesign.swift */,
+				L00000110000000000000001 /* ForteOnboardingChrome.swift */,
+				G00000140000000000000001 /* ForteStackedChoiceList.swift */,
+				G00000160000000000000001 /* ForteTextArea.swift */,
+				G00000180000000000000001 /* ForteWheelSelector.swift */,
+				G000001A0000000000000001 /* ForteImageChoiceTile.swift */,
+				G000001F0000000000000001 /* ForteEditorialChoiceCard.swift */,
 			);
 			path = DesignSystem;
 			sourceTree = "<group>";
@@ -249,6 +306,24 @@
 			isa = PBXGroup;
 			children = (
 				A0000027000000000000001 /* OnboardingFlowView.swift */,
+				L00000120000000000000001 /* ForteGoalIntentScreens.swift */,
+				G00000120000000000000001 /* ForteIntentScreen.swift */,
+				G00000130000000000000001 /* ForteModalityScreen.swift */,
+				G00000150000000000000001 /* ForteInfrastructureScreen.swift */,
+				G00000170000000000000001 /* ForteMotivationAnchorScreen.swift */,
+				G00000190000000000000001 /* ForteWeeklyCapacityScreen.swift */,
+				G000001B0000000000000001 /* ForteWeeklyAvailabilityScreen.swift */,
+				G000001C0000000000000001 /* ForteConsistencyBlockerScreen.swift */,
+				G000001D0000000000000001 /* ForteInjuryScreen.swift */,
+				G000001E0000000000000001 /* ForteBodyBasicsScreen.swift */,
+				G00000200000000000000001 /* ForteBodyFatEstimateScreen.swift */,
+				H00000110000000000000001 /* ForteSupportStyleScreen.swift */,
+				H00000120000000000000001 /* ForteBadDayFloorScreen.swift */,
+				H00000130000000000000001 /* ForteOnboardingLoadingScreen.swift */,
+				H00000140000000000000001 /* ForteOnboardingSummaryScreen.swift */,
+				H00000150000000000000001 /* ForteAppleHealthScreen.swift */,
+				J00000110000000000000001 /* ForteAthleteBlueprintScreen.swift */,
+				K00000110000000000000001 /* ForteFitnessStrategyScreen.swift */,
 			);
 			path = Onboarding;
 			sourceTree = "<group>";
@@ -379,7 +454,32 @@
 				A000000C000000000000001 /* SupabaseClientProvider.swift in Sources */,
 				A00000090000000000000001 /* HAYFColor.swift in Sources */,
 				A000000A000000000000001 /* HAYFLogo.swift in Sources */,
+				G00000010000000000000001 /* ForteDesign.swift in Sources */,
+				L00000010000000000000001 /* ForteOnboardingChrome.swift in Sources */,
+				G00000040000000000000001 /* ForteStackedChoiceList.swift in Sources */,
+				G00000060000000000000001 /* ForteTextArea.swift in Sources */,
+				G00000080000000000000001 /* ForteWheelSelector.swift in Sources */,
+				G000000A0000000000000001 /* ForteImageChoiceTile.swift in Sources */,
+				G000000F0000000000000001 /* ForteEditorialChoiceCard.swift in Sources */,
 				A000001200000000000001 /* OnboardingFlowView.swift in Sources */,
+				L00000020000000000000001 /* ForteGoalIntentScreens.swift in Sources */,
+				G00000020000000000000001 /* ForteIntentScreen.swift in Sources */,
+				G00000030000000000000001 /* ForteModalityScreen.swift in Sources */,
+				G00000050000000000000001 /* ForteInfrastructureScreen.swift in Sources */,
+				G00000070000000000000001 /* ForteMotivationAnchorScreen.swift in Sources */,
+				G00000090000000000000001 /* ForteWeeklyCapacityScreen.swift in Sources */,
+				G000000B0000000000000001 /* ForteWeeklyAvailabilityScreen.swift in Sources */,
+				G000000C0000000000000001 /* ForteConsistencyBlockerScreen.swift in Sources */,
+				G000000D0000000000000001 /* ForteInjuryScreen.swift in Sources */,
+				G000000E0000000000000001 /* ForteBodyBasicsScreen.swift in Sources */,
+				G00000100000000000000001 /* ForteBodyFatEstimateScreen.swift in Sources */,
+				H00000010000000000000001 /* ForteSupportStyleScreen.swift in Sources */,
+				H00000020000000000000001 /* ForteBadDayFloorScreen.swift in Sources */,
+				H00000030000000000000001 /* ForteOnboardingLoadingScreen.swift in Sources */,
+				H00000040000000000000001 /* ForteOnboardingSummaryScreen.swift in Sources */,
+				H00000050000000000000001 /* ForteAppleHealthScreen.swift in Sources */,
+				J00000010000000000000001 /* ForteAthleteBlueprintScreen.swift in Sources */,
+				K00000010000000000000001 /* ForteFitnessStrategyScreen.swift in Sources */,
 				A00000030000000000000001 /* HealthKitManager.swift in Sources */,
 				B00000010000000000000001 /* HealthSyncService.swift in Sources */,
 				D00000010000000000000001 /* HealthFeatureSnapshotFixtureStore.swift in Sources */,
@@ -469,11 +569,38 @@
 			};
 			name = Release;
 		};
+		G00000610000000000000001 /* Forte Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG FORTE_DEV";
+				SWIFT_VERSION = 5.0;
+			};
+			name = "Forte Dev";
+		};
 		A00000630000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = HAYF;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTH_CALLBACK_SCHEME = hayf;
 				CODE_SIGN_ENTITLEMENTS = HAYFHealthKitPrototype/HAYFHealthKitPrototype.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
@@ -502,8 +629,10 @@
 		A00000640000000000000001 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APP_DISPLAY_NAME = HAYF;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTH_CALLBACK_SCHEME = hayf;
 				CODE_SIGN_ENTITLEMENTS = HAYFHealthKitPrototype/HAYFHealthKitPrototype.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
@@ -524,6 +653,38 @@
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
+		};
+		G00000620000000000000001 /* Forte Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APP_DISPLAY_NAME = "Forte Dev";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				AUTH_CALLBACK_SCHEME = fortedev;
+				CODE_SIGN_ENTITLEMENTS = HAYFHealthKitPrototype/HAYFHealthKitPrototype.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"HAYFHealthKitPrototype/Preview Content\"";
+				DEVELOPMENT_TEAM = C46LARA4B9;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = HAYFHealthKitPrototype/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit.fortedev;
+				PRODUCT_NAME = HAYF;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG FORTE_DEV";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = "Forte Dev";
 		};
 		F00000610000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -570,6 +731,29 @@
 			};
 			name = Release;
 		};
+		G00000630000000000000001 /* Forte Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = C46LARA4B9;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hayf.prototype.healthkit.fortedev.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG FORTE_DEV";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/HAYF.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/HAYF";
+			};
+			name = "Forte Dev";
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -577,6 +761,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000630000000000000001 /* Debug */,
+				G00000620000000000000001 /* Forte Dev */,
 				A00000640000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -586,6 +771,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000610000000000000001 /* Debug */,
+				G00000610000000000000001 /* Forte Dev */,
 				A00000620000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
@@ -595,6 +781,7 @@
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				F00000610000000000000001 /* Debug */,
+				G00000630000000000000001 /* Forte Dev */,
 				F00000620000000000000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;

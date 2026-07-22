@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import HAYF
 
 final class TodayModelsTests: XCTestCase {
@@ -140,18 +141,186 @@ final class TodayModelsTests: XCTestCase {
     }
 }
 
+final class AthleteProfileScoresTests: XCTestCase {
+    func testDecodesCanonicalEnvelopeAndSerializesAcceptedArtifactExactly() throws {
+        let scores = try decodeScores(availableKeys: Set(AthleteProfileDimensionKey.allCases))
+
+        XCTAssertEqual(scores.orderedDimensions.map(\.key), AthleteProfileDimensionKey.allCases)
+        XCTAssertEqual(scores.presentation, .complete)
+        XCTAssertEqual(scores.availableCount, 5)
+
+        let artifact = try XCTUnwrap(scores.jsonValue)
+        XCTAssertEqual(AthleteProfileScores.decode(jsonValue: artifact), scores)
+    }
+
+    func testPartialAndUnavailableProfilesChooseTheCorrectPresentation() throws {
+        let partial = try decodeScores(availableKeys: [.consistency, .strength, .endurance])
+        XCTAssertEqual(partial.presentation, .partial)
+
+        let sparse = try decodeScores(availableKeys: [.consistency, .endurance])
+        XCTAssertEqual(sparse.presentation, .partial)
+        XCTAssertNil(sparse.orderedDimensions.first { $0.key == .momentum }?.score)
+    }
+
+    func testAccessibilityDescriptionsDoNotTurnMissingEvidenceIntoAValue() throws {
+        let scores = try decodeScores(availableKeys: [.consistency, .strength, .endurance])
+        XCTAssertEqual(
+            scores.orderedDimensions.first { $0.key == .consistency }?.accessibilityDescription,
+            "Consistency, 9 out of 10"
+        )
+        XCTAssertEqual(
+            scores.orderedDimensions.first { $0.key == .momentum }?.accessibilityDescription,
+            "Momentum, not enough evidence"
+        )
+    }
+
+    func testZeroIsAnAvailableScoreAtTheRadarOrigin() throws {
+        let scores = try decodeScores(availableKeys: Set(AthleteProfileDimensionKey.allCases), score: 0)
+        let momentum = try XCTUnwrap(scores.orderedDimensions.first { $0.key == .momentum })
+
+        XCTAssertTrue(momentum.isAvailable)
+        XCTAssertEqual(momentum.displayValue, "0")
+        XCTAssertEqual(momentum.accessibilityDescription, "Momentum, 0 out of 10")
+    }
+
+    func testDisplayScoreRoundsHalfDownWithoutDecimals() throws {
+        let half = try decodeScores(availableKeys: Set(AthleteProfileDimensionKey.allCases), score: 65)
+        let aboveHalf = try decodeScores(availableKeys: Set(AthleteProfileDimensionKey.allCases), score: 66)
+
+        XCTAssertEqual(half.orderedDimensions[0].displayValue, "6")
+        XCTAssertEqual(aboveHalf.orderedDimensions[0].displayValue, "7")
+    }
+
+    func testRejectsMalformedOrReorderedServiceEnvelope() throws {
+        let scores = try decodeScores(availableKeys: Set(AthleteProfileDimensionKey.allCases))
+        guard case let .object(object) = try XCTUnwrap(scores.jsonValue),
+              case let .array(dimensions) = object["dimensions"] else {
+            return XCTFail("Expected an encoded score envelope")
+        }
+        let malformed = JSONValue.object(object.merging(["dimensions": .array(Array(dimensions.reversed()))]) { _, replacement in replacement })
+        XCTAssertNil(AthleteProfileScores.decode(jsonValue: malformed))
+    }
+
+    func testOlderPersistedRevisionWithoutScoresKeepsTextFallback() throws {
+        let raw = try JSONDecoder().decode(ProfileRawBlueprintRevision.self, from: Data("""
+        {
+          "id":"10000000-0000-0000-0000-000000000001",
+          "revision_number":1,
+          "generation_reason":"initial_post_onboarding",
+          "coach_read":"Your established rhythm is the coaching anchor.",
+          "athlete_archetype_json":{},
+          "current_training_state_json":{},
+          "history_findings_json":[],
+          "goal_fit_json":{},
+          "planning_inputs_json":{"acceptedBlueprint":{}},
+          "generated_at":"2026-05-19T12:00:00Z",
+          "accepted_at":"2026-05-19T12:00:00Z"
+        }
+        """.utf8))
+
+        XCTAssertNil(ProfileAthleteBlueprint(raw: raw).profileScores)
+    }
+
+    private func decodeScores(availableKeys: Set<AthleteProfileDimensionKey>, score: Int = 92) throws -> AthleteProfileScores {
+        let dimensions = AthleteProfileDimensionKey.allCases.map { key -> String in
+            let available = availableKeys.contains(key)
+            return """
+            {
+              "key":"\(key.rawValue)",
+              "score":\(available ? String(score) : "null"),
+              "status":"\(available ? "available" : "unavailable")",
+              "confidence":"\(available ? "high" : "insufficient")",
+              "components":[],
+              "evidenceIds":[]
+            }
+            """
+        }.joined(separator: ",")
+        let json = """
+        {
+          "schemaVersion":"athlete-profile-scores.v1",
+          "scoreVersion":"profile-radar-v1.2.0",
+          "evaluatedAt":"2026-05-19T12:00:00.000Z",
+          "dimensions":[\(dimensions)],
+          "sourceSummary":{"importedWorkoutCount":837}
+        }
+        """
+        return try JSONDecoder().decode(AthleteProfileScores.self, from: Data(json.utf8))
+    }
+}
+
 final class OnboardingPolicyTests: XCTestCase {
     func testOnlySupportedModalitiesAreEnabled() {
         XCTAssertEqual(
             Set(TrainingOption.allCases.filter(\.isOnboardingEnabled)),
             Set([.cycling, .strength, .running])
         )
+        XCTAssertEqual(
+            TrainingOption.allCases.map(\.forteAssetName),
+            [
+                "ForteModalityStrength",
+                "ForteModalityRunning",
+                "ForteModalityCycling",
+                "ForteModalitySwimming",
+                "ForteModalityTennis",
+                "ForteModalityFootball",
+                "ForteModalityBasketball",
+                "ForteModalityMobility",
+                "ForteModalityWalking",
+                "ForteModalityYoga"
+            ]
+        )
         var draft = ConsistencyOnboardingDraft()
         draft.toggleTrainingOption(.swimming)
         XCTAssertTrue(draft.trainingOptions.isEmpty)
     }
 
+    func testInfrastructureChoicesReuseExistingAssetsWherePossible() {
+        XCTAssertEqual(
+            InfrastructureAccess.allCases.map(\.forteAssetName),
+            [
+                "ForteModalityStrength",
+                "ForteAccessHomeWeights",
+                "ForteModalityRunning",
+                "ForteAccessTreadmill",
+                "ForteModalityCycling",
+                "ForteAccessIndoorBike",
+                "ForteModalitySwimming",
+                "ForteModalityTennis",
+                "ForteModalityFootball",
+                "ForteModalityBasketball",
+                "ForteModalityYoga"
+            ]
+        )
+
+        var draft = ConsistencyOnboardingDraft()
+        draft.toggleTrainingOption(.cycling)
+        draft.toggleTrainingOption(.strength)
+        draft.toggleTrainingOption(.running)
+        XCTAssertEqual(
+            draft.requiredInfrastructureOptions,
+            [.gym, .indoorBike, .outdoorBike, .outdoorRoutes, .treadmill, .homeWeights]
+        )
+
+        draft.infrastructureAccess = [.gym, .indoorBike, .outdoorBike]
+        draft.toggleTrainingOption(.cycling)
+        XCTAssertEqual(draft.infrastructureAccess, [.gym])
+    }
+
     func testUnsureMotivationIsMutuallyExclusive() {
+        XCTAssertEqual(
+            MotivationAnchor.allCases.map(\.forteAssetName),
+            [
+                "ForteModalityStrength",
+                "ForteAnchorEnergy",
+                "ForteAnchorStress",
+                "ForteAnchorBodyConfidence",
+                "ForteAnchorLongTermHealth",
+                "ForteModalityRunning",
+                "ForteIntentConsistency",
+                "ForteAnchorUnsure"
+            ]
+        )
+
         var draft = ConsistencyOnboardingDraft()
         draft.toggleMotivationAnchor(.dailyEnergy)
         draft.toggleMotivationAnchor(.unsure)
@@ -161,6 +330,12 @@ final class OnboardingPolicyTests: XCTestCase {
     }
 
     func testUltraFlexibleAvailabilityAndManualOverride() {
+        XCTAssertEqual(DayPart.allCases.map(\.forteAssetName), [
+            "ForteDayPartMorning",
+            "ForteDayPartAfternoon",
+            "ForteDayPartEvening"
+        ])
+
         var draft = ConsistencyOnboardingDraft()
         draft.toggleUltraFlexibleAvailability()
         XCTAssertTrue(draft.ultraFlexibleAvailability)
@@ -203,6 +378,18 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(OnboardingStep.weeklyAvailability.activeSegments(for: .findGoal), 10)
     }
 
+    func testEveryIntentPreservesItsExistingStepTwoBranch() {
+        XCTAssertEqual(OnboardingStep.firstStep(after: .stayConsistent), .options)
+        XCTAssertEqual(OnboardingStep.firstStep(after: .concreteGoal), .goalBrief)
+        XCTAssertEqual(OnboardingStep.firstStep(after: .findGoal), .options)
+        XCTAssertEqual(OnboardingStep.options.activeSegments(for: .stayConsistent), 2)
+        XCTAssertEqual(OnboardingStep.options.activeSegments(for: .concreteGoal), 5)
+        XCTAssertEqual(OnboardingStep.options.activeSegments(for: .findGoal), 2)
+        XCTAssertEqual(OnboardingStep.infrastructure.activeSegments(for: .stayConsistent), 3)
+        XCTAssertEqual(OnboardingStep.infrastructure.activeSegments(for: .concreteGoal), 6)
+        XCTAssertEqual(OnboardingStep.infrastructure.activeSegments(for: .findGoal), 3)
+    }
+
     func testGoalIntensityContractAndCopy() throws {
         XCTAssertEqual(GoalIntensity.allCases.map(\.rawValue), [0, 1, 2, 3])
         XCTAssertEqual(GoalIntensity.allCases.map(\.identifier), ["gentle", "steady", "ambitious", "extreme"])
@@ -210,10 +397,10 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(
             GoalIntensity.allCases.map(\.explanation),
             [
-                "HAYF will suggest approachable goals with modest demands and room to build confidence.",
-                "HAYF will suggest meaningful goals that require consistent effort without making the outcome overly aggressive.",
-                "HAYF will suggest demanding goals with a clear stretch outcome and stronger commitment.",
-                "HAYF will suggest the boldest defensible goals while respecting your selected training setup and avoidances."
+                "Forte will suggest approachable goals with modest demands and room to build confidence.",
+                "Forte will suggest meaningful goals that require consistent effort without making the outcome overly aggressive.",
+                "Forte will suggest demanding goals with a clear stretch outcome and stronger commitment.",
+                "Forte will suggest the boldest defensible goals while respecting your selected training setup and avoidances."
             ]
         )
 
@@ -236,6 +423,104 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(GoalIntensity.nearest(to: 1.51), .ambitious)
         XCTAssertEqual(GoalIntensity.nearest(to: 2.51), .extreme)
         XCTAssertEqual(GoalIntensity.nearest(to: 8), .extreme)
+    }
+
+    func testIntentSpecificArtworkMappingsAreExhaustiveAndLoadable() {
+        XCTAssertEqual(GoalExperience.allCases.map(\.forteAssetName), [
+            "ForteExperienceUnderOneYear",
+            "ForteExperienceOneToThreeYears",
+            "ForteExperienceThreeToFiveYears",
+            "ForteExperienceFivePlusYears"
+        ])
+        XCTAssertEqual(GoalPriority.allCases.map(\.forteAssetName), [
+            "FortePriorityGoalProgress",
+            "FortePriorityBalance",
+            "FortePriorityInjuryProtection",
+            "FortePriorityPreserveTraining"
+        ])
+        XCTAssertEqual(GoalDirection.allCases.map(\.forteAssetName), [
+            "ForteDirectionAthletic",
+            "ForteDirectionStrength",
+            "ForteDirectionEndurance",
+            "ForteDirectionSport"
+        ])
+        XCTAssertEqual(ChallengeStyle.allCases.map(\.forteAssetName), [
+            "ForteChallengeNumbers",
+            "ForteChallengeDeadline",
+            "ForteChallengeSkill",
+            "ForteChallengeSelf"
+        ])
+        XCTAssertEqual(GoalAvoidance.onboardingCases.map(\.forteAssetName), [
+            "ForteIntentSpecificGoal",
+            "ForteBlockerNoPlan",
+            "ForteBlockerLowEnergy",
+            "ForteAccessHomeWeights",
+            "ForteAvailabilityFlexible"
+        ])
+
+        let mappedAssets = GoalExperience.allCases.map(\.forteAssetName)
+            + GoalPriority.allCases.map(\.forteAssetName)
+            + GoalDirection.allCases.map(\.forteAssetName)
+            + ChallengeStyle.allCases.map(\.forteAssetName)
+            + GoalAvoidance.onboardingCases.map(\.forteAssetName)
+
+        XCTAssertTrue(mappedAssets.allSatisfy { $0.hasPrefix("Forte") })
+        for assetName in mappedAssets {
+            XCTAssertNotNil(UIImage(named: assetName), "Missing production asset: \(assetName)")
+        }
+    }
+
+    func testStableSummaryCandidateAndPhaseArtworkRolesHaveNoFallbacks() {
+        let summaryAssets = ForteSummaryAnswerRole.allCases.map(\.assetName)
+        let candidateAssets = ForteGoalCandidateVisualRole.allCases.map(\.forteAssetName)
+        let phaseAssets = ForteStrategyPhaseVisualRole.allCases.map(\.assetName)
+        let phaseTargetAssets = ForteStrategyPhaseTargetVisualRole.allCases.map(\.assetName)
+        let allAssets = summaryAssets + candidateAssets + phaseAssets + phaseTargetAssets
+
+        XCTAssertEqual(summaryAssets.count, 18)
+        XCTAssertEqual(candidateAssets.count, 6)
+        XCTAssertEqual(phaseAssets, [
+            "ForteBlueprintCurrentState",
+            "ForteStrategyDriver",
+            "ForteStrategyTarget"
+        ])
+        XCTAssertTrue(allAssets.allSatisfy { $0.hasPrefix("Forte") })
+        for assetName in Set(allAssets) {
+            XCTAssertNotNil(UIImage(named: assetName), "Missing production asset: \(assetName)")
+        }
+
+        let misleadingSystemImage = GoalCandidate(
+            id: "candidate-general",
+            title: "Move with more confidence",
+            rationale: "A broad goal",
+            tracking: "Weekly check-in",
+            timeline: .eightWeeks,
+            systemImage: "arbitrary-ai-asset-name"
+        )
+        XCTAssertEqual(ForteGoalCandidateVisualRole(candidate: misleadingSystemImage), .general)
+        XCTAssertEqual(ForteStrategyPhaseVisualRole(phaseID: "base"), .base)
+        XCTAssertEqual(ForteStrategyPhaseVisualRole(phaseID: "build"), .build)
+        XCTAssertEqual(ForteStrategyPhaseVisualRole(phaseID: "anything-else"), .review)
+        XCTAssertEqual(ForteStrategyPhaseTargetVisualRole(targetID: "weekly-exposures", title: "Weekly sessions"), .capacity)
+        XCTAssertEqual(ForteStrategyPhaseTargetVisualRole(targetID: "result", title: "Goal signal"), .goalSignal)
+    }
+
+    func testDiscoveryAvoidanceAndBlendSelectionRulesRemainBounded() {
+        var avoidances: Set<GoalAvoidance> = [.longWorkouts, .highIntensity]
+        avoidances.toggleOnboardingAvoidance(.nothingSpecific)
+        XCTAssertEqual(avoidances, [.nothingSpecific])
+        avoidances.toggleOnboardingAvoidance(.strictPlans)
+        XCTAssertEqual(avoidances, [.strictPlans])
+
+        var blend: Set<String> = []
+        blend = GoalCandidateBlendSelection.toggling("one", in: blend)
+        blend = GoalCandidateBlendSelection.toggling("two", in: blend)
+        XCTAssertEqual(blend, ["one", "two"])
+        blend = GoalCandidateBlendSelection.toggling("three", in: blend)
+        XCTAssertEqual(blend.count, 2)
+        XCTAssertTrue(blend.contains("three"))
+        blend = GoalCandidateBlendSelection.toggling("three", in: blend)
+        XCTAssertEqual(blend.count, 1)
     }
 
     func testAdultBodyFatEstimateUsesBMIProfileAgeAndPhysiology() throws {
@@ -281,9 +566,79 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(payload.bodyFatEstimateMidpoint, 20.3, accuracy: 0.001)
     }
 
+    func testBodyFatBandsShareTheSixStageTreeProgression() {
+        XCTAssertEqual(BodyFatBand.options(for: .male).map(\.forteAssetName), [
+            "ForteBodyFatTreeBare",
+            "ForteBodyFatTreeSparse",
+            "ForteBodyFatTreeLight",
+            "ForteBodyFatTreeMedium",
+            "ForteBodyFatTreeFull",
+            "ForteBodyFatTreeLush"
+        ])
+        XCTAssertEqual(BodyFatBand.options(for: .female).map(\.forteAssetName), [
+            "ForteBodyFatTreeBare",
+            "ForteBodyFatTreeSparse",
+            "ForteBodyFatTreeLight",
+            "ForteBodyFatTreeMedium",
+            "ForteBodyFatTreeFull",
+            "ForteBodyFatTreeLush"
+        ])
+    }
+
+    func testBodyFatBandCopyFitsCompactChoiceCards() {
+        let subtitles = BodyFatBand.options(for: .male).map(\.subtitle)
+        XCTAssertEqual(subtitles, [
+            "Rare outside serious\nor professional sport.",
+            "Visible abs and vascularity\nat very lean levels.",
+            "Some abs and vascularity\naround major muscles.",
+            "Clear muscle, without\nextreme leanness.",
+            "More strength, with softer\ndefinition.",
+            "Definition is harder\nto see."
+        ])
+        XCTAssertTrue(BodyFatBand.allCases.allSatisfy {
+            $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
+        XCTAssertTrue(BodyFatBand.allCases.allSatisfy {
+            !$0.subtitle.contains(";") && !$0.subtitle.contains(",\nand")
+        })
+    }
+
+    func testCoachingSupportStylesUseTheMatchedObjectFamily() {
+        XCTAssertEqual(CoachingSupportStyle.allCases.map(\.forteAssetName), [
+            "ForteSupportCalmReset",
+            "ForteSupportDirectPush",
+            "ForteSupportEasiestUseful",
+            "ForteSupportExplainTradeoff",
+            "ForteSupportRemindWhy"
+        ])
+        XCTAssertTrue(CoachingSupportStyle.allCases.allSatisfy {
+            $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
+        XCTAssertTrue(CoachingSupportStyle.allCases.allSatisfy {
+            !$0.subtitle.contains(";") && !$0.subtitle.contains(",\nand")
+        })
+    }
+
     func testVariableBadDayFloorSerializesAsModelDiscretion() {
         XCTAssertTrue(BadDayFloor.varies.planningValue.hasPrefix("Model discretion:"))
         XCTAssertNotEqual(BadDayFloor.varies.planningValue, BadDayFloor.varies.title)
+    }
+
+    func testBadDayFloorsReuseTheMatchedObjectFamily() {
+        XCTAssertEqual(BadDayFloor.allCases.map(\.forteAssetName), [
+            "ForteModalityWalking",
+            "ForteFloorEasySession",
+            "ForteModalityStrength",
+            "ForteFloorIntentionalRest",
+            "ForteAvailabilityFlexible"
+        ])
+        XCTAssertEqual(BadDayFloor.varies.subtitle, "Let Forte choose\nwhat fits.")
+        XCTAssertTrue(BadDayFloor.allCases.allSatisfy {
+            $0.subtitle.filter { $0 == "\n" }.count == 1
+        })
+        XCTAssertTrue(BadDayFloor.allCases.allSatisfy {
+            !$0.subtitle.contains(";") && !$0.subtitle.contains(",\nand")
+        })
     }
 
     func testRemovedBlockersStayUnavailableAndWeatherRemains() {
@@ -292,6 +647,15 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertTrue(titles.contains("Not having a plan"))
         XCTAssertFalse(titles.contains("Gym access"))
         XCTAssertFalse(titles.contains("All-or-nothing weeks"))
+        XCTAssertEqual(ConsistencyBlocker.allCases.map(\.forteAssetName), [
+            "ForteBlockerWorkSchedule",
+            "ForteBlockerLowEnergy",
+            "ForteBlockerSoreness",
+            "ForteBlockerNoPlan",
+            "ForteBlockerTravel",
+            "ForteBlockerMotivation",
+            "ForteBlockerWeather"
+        ])
     }
 
     func testSummaryReadbackAllowsSpecificOneOrTwoSentenceInterpretation() {

@@ -4,6 +4,14 @@ import {
   onboardingAITouchpoint,
   type AITouchpointConfig,
 } from "../_shared/ai-touchpoints.ts";
+import {
+  compactProfileScoresForTrace,
+  enrichBlueprintContext,
+  mergeBlueprintProfileScores,
+  redactBlueprintScoringInput,
+  type AthleteProfileScores,
+  validAthleteProfileScores,
+} from "../_shared/athlete-profile-scoring.ts";
 
 type OnboardingTask =
   | "generate_summary"
@@ -18,6 +26,9 @@ type OnboardingAIRequest = {
   context: Record<string, unknown>;
   candidates?: Array<Record<string, unknown>>;
 };
+
+const defaultAthleteProfileEngineURL =
+  "https://nehwppenlaxozpwqepwp.supabase.co/functions/v1/athlete-profile-engine";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,7 +75,11 @@ const taskSchemas: Record<OnboardingTask, Record<string, unknown>> = {
     additionalProperties: false,
     required: ["coachRead", "athleteArchetype", "currentTrainingState", "physicalBaseline", "historyFindings", "goalFit"],
     properties: {
-      coachRead: { type: "string" },
+      coachRead: {
+        type: "string",
+        maxLength: 190,
+        description: "One or two AI-authored sentences synthesizing the athlete's history, present state, and one coaching implication without quoting or ranking radar scores.",
+      },
       athleteArchetype: blueprintTextPairSchema(),
       currentTrainingState: blueprintTextPairSchema(),
       physicalBaseline: blueprintTextPairSchema(),
@@ -222,18 +237,35 @@ Deno.serve(async (req) => {
     validateRequest(requestBody);
     touchpointConfig = onboardingAITouchpoint(requestBody.task);
 
-    const output = await runOpenAI(requestBody, touchpointConfig);
+    const profileScoreResult = requestBody.task === "generate_athlete_blueprint"
+      ? await fetchAthleteProfileScores(requestBody.context, serviceRoleKey, authHeader)
+      : { scores: null, telemetry: null };
+    const profileScores = profileScoreResult.scores;
+    const enrichedRequest = requestBody.task === "generate_athlete_blueprint"
+      ? { ...requestBody, context: enrichBlueprintContext(requestBody.context, profileScores) }
+      : requestBody;
+    const authoredOutput = await runOpenAI(enrichedRequest, touchpointConfig);
+    const output = requestBody.task === "generate_athlete_blueprint"
+      ? mergeBlueprintProfileScores(authoredOutput, profileScores)
+      : authoredOutput;
     await insertTrace(admin, {
       userID,
       task: requestBody.task,
       model: touchpointConfig.model,
       compactRequest: compactTraceRequest(requestBody),
-      structuredResponse: output,
+      structuredResponse: requestBody.task === "generate_athlete_blueprint"
+        ? { ...output, profileScores: compactProfileScoresForTrace(profileScores) }
+        : output,
       status: "success",
       latencyMS: Date.now() - startedAt,
     });
 
-    return jsonResponse({ task: requestBody.task, model: touchpointConfig.model, output });
+    return jsonResponse({
+      task: requestBody.task,
+      model: touchpointConfig.model,
+      output,
+      ...(profileScoreResult.telemetry ? { profileScoring: profileScoreResult.telemetry } : {}),
+    });
   } catch (error) {
     if (userID && requestBody?.task) {
       await insertTrace(admin, {
@@ -358,6 +390,7 @@ function compactPromptContext(task: OnboardingTask, context: Record<string, unkn
       "onboardingSignals",
       "evidenceSummary",
       "sectionSeeds",
+      "profileScores",
       "doNotClaim",
     ]);
   }
@@ -642,11 +675,133 @@ function extractOutputText(payload: Record<string, any>) {
 }
 
 function compactTraceRequest(requestBody: OnboardingAIRequest) {
+  const context = requestBody.task === "generate_athlete_blueprint"
+    ? redactBlueprintScoringInput(requestBody.context)
+    : requestBody.context;
   return {
     task: requestBody.task,
-    context: requestBody.context,
+    context,
     candidates: requestBody.candidates ?? [],
   };
+}
+
+async function fetchAthleteProfileScores(
+  context: Record<string, unknown>,
+  serviceRoleKey: string,
+  userAuthorization: string,
+) {
+  const configuredServiceURL = Deno.env.get("ATHLETE_PROFILE_ENGINE_URL")?.trim();
+  const serviceURL = configuredServiceURL || defaultAthleteProfileEngineURL;
+  const serviceAPIKey = Deno.env.get("ATHLETE_PROFILE_ENGINE_API_KEY")?.trim()
+    || serviceRoleKey.trim();
+  const scoringInput = context.scoringInput;
+  if (!scoringInput || typeof scoringInput !== "object") {
+    return profileScoreFetchResult(null, "missing_scoring_input", 0);
+  }
+  const evaluatedInput = {
+    ...(scoringInput as Record<string, unknown>),
+    evaluatedAt: new Date().toISOString(),
+  };
+  if (!serviceURL) return profileScoreFetchResult(null, "service_not_configured", 0);
+  const scoreURL = `${serviceURL.replace(/\/$/, "")}/v1/blueprints/score`;
+  const servicePath = new URL(scoreURL).pathname;
+
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(scoreURL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(userAuthorization ? {
+          "X-HAYF-User-Token": userAuthorization.replace(/^Bearer\s+/i, ""),
+        } : {}),
+        ...(serviceAPIKey ? {
+          "X-HAYF-Profile-Key": serviceAPIKey,
+        } : {}),
+      },
+      body: JSON.stringify(evaluatedInput),
+      signal: AbortSignal.timeout(athleteProfileEngineTimeoutMS()),
+    });
+    if (!response.ok) {
+      const serviceError = await response.json()
+        .then((body) => typeof body?.error === "string" ? body.error : undefined)
+        .catch(() => undefined);
+      console.warn(JSON.stringify({
+        event: "athlete_profile_scoring",
+        status: "failure",
+        statusCode: response.status,
+        latencyMS: Date.now() - startedAt,
+      }));
+      return profileScoreFetchResult(
+        null,
+        "service_http_error",
+        Date.now() - startedAt,
+        response.status,
+        servicePath,
+        serviceError,
+      );
+    }
+    const payload = await response.json();
+    if (!validAthleteProfileScores(payload)) {
+      console.warn(JSON.stringify({
+        event: "athlete_profile_scoring",
+        status: "invalid_response",
+        latencyMS: Date.now() - startedAt,
+      }));
+      return profileScoreFetchResult(null, "invalid_service_response", Date.now() - startedAt);
+    }
+    console.info(JSON.stringify({
+      event: "athlete_profile_scoring",
+      status: "success",
+      scoreVersion: payload.scoreVersion,
+      unavailableDimensions: payload.dimensions
+        .filter((dimension: Record<string, unknown>) => dimension.status === "unavailable")
+        .map((dimension: Record<string, unknown>) => dimension.key),
+      latencyMS: Date.now() - startedAt,
+    }));
+    return profileScoreFetchResult(payload, "success", Date.now() - startedAt);
+  } catch (error) {
+    const status = error instanceof DOMException && error.name === "TimeoutError"
+      ? "service_timeout"
+      : "service_unreachable";
+    console.warn(JSON.stringify({
+      event: "athlete_profile_scoring",
+      status,
+      latencyMS: Date.now() - startedAt,
+    }));
+    return profileScoreFetchResult(null, status, Date.now() - startedAt);
+  }
+}
+
+function profileScoreFetchResult(
+  scores: AthleteProfileScores | null,
+  status: string,
+  latencyMS: number,
+  serviceStatusCode?: number,
+  servicePath?: string,
+  serviceError?: string,
+) {
+  return {
+    scores,
+    telemetry: {
+      status,
+      latencyMS,
+      ...(serviceStatusCode === undefined ? {} : { serviceStatusCode }),
+      ...(servicePath === undefined ? {} : { servicePath }),
+      ...(serviceError === undefined ? {} : { serviceError }),
+      ...(scores ? {
+        scoreVersion: scores.scoreVersion,
+        unavailableDimensions: scores.dimensions
+          .filter((dimension: Record<string, unknown>) => dimension.status === "unavailable")
+          .map((dimension: Record<string, unknown>) => dimension.key),
+      } : {}),
+    },
+  };
+}
+
+function athleteProfileEngineTimeoutMS() {
+  const configured = Number(Deno.env.get("ATHLETE_PROFILE_ENGINE_TIMEOUT_MS") ?? 3_000);
+  return Number.isFinite(configured) && configured >= 250 ? Math.round(configured) : 3_000;
 }
 
 async function insertTrace(

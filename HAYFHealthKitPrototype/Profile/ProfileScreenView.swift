@@ -324,19 +324,27 @@ private struct AthleteBlueprintCard: View {
                 if isLoading {
                     ProfileLoadingRow(text: "Loading athlete blueprint")
                 } else if let blueprint {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(blueprint.coachRead.summary)
-                            .font(.system(size: 15, weight: .regular))
-                            .foregroundStyle(HAYFColor.secondary)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if let profileScores = blueprint.profileScores {
+                        AthleteProfileChartCard(
+                            scores: profileScores,
+                            summary: blueprint.coachRead.summary,
+                            layout: .profileCompact
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(blueprint.coachRead.summary)
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(HAYFColor.secondary)
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
 
-                        ForEach(blueprint.previewSections.prefix(3)) { section in
-                            ProfileIconSummaryRow(
-                                icon: ProfileDisplay.blueprintIcon(for: section),
-                                text: section.title,
-                                detail: section.summary
-                            )
+                            ForEach(blueprint.previewSections.prefix(3)) { section in
+                                ProfileIconSummaryRow(
+                                    icon: ProfileDisplay.blueprintIcon(for: section),
+                                    text: section.title,
+                                    detail: section.summary
+                                )
+                            }
                         }
                     }
                 } else {
@@ -545,7 +553,17 @@ private struct AthleteBlueprintDetailSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 12) {
                     if let blueprint {
-                        ForEach(blueprint.detailSections) { section in
+                        if let profileScores = blueprint.profileScores {
+                            AthleteProfileChartCard(
+                                scores: profileScores,
+                                summary: blueprint.coachRead.summary,
+                                layout: .profileDetail
+                            )
+                        }
+
+                        ForEach(blueprint.profileScores != nil
+                            ? Array(blueprint.detailSections.dropFirst())
+                            : blueprint.detailSections) { section in
                             ProfileBlueprintDetailCard(section: section)
                         }
                     } else {

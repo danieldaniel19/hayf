@@ -184,7 +184,7 @@ final class ProfileDataStore: ObservableObject {
         do {
             return try await supabase
                 .from("athlete_blueprint_revisions")
-                .select("id, revision_number, generation_reason, coach_read, athlete_archetype_json, current_training_state_json, history_findings_json, goal_fit_json, planning_inputs_json, generated_at, accepted_at")
+                .select("id, revision_number, generation_reason, coach_read, athlete_archetype_json, current_training_state_json, history_findings_json, goal_fit_json, profile_scores_json, profile_score_version, planning_inputs_json, generated_at, accepted_at")
                 .eq("id", value: id.uuidString.lowercased())
                 .single()
                 .execute()
@@ -219,6 +219,7 @@ struct ProfileAthleteBlueprint: Identifiable {
     let physicalBaseline: ProfileBlueprintSection?
     let historyFindings: [ProfileBlueprintSection]
     let goalFit: ProfileBlueprintSection
+    let profileScores: AthleteProfileScores?
 
     init(raw: ProfileRawBlueprintRevision) {
         let acceptedBlueprint = raw.planningInputs.profileValue("acceptedBlueprint")
@@ -230,6 +231,10 @@ struct ProfileAthleteBlueprint: Identifiable {
         let historyObjects = acceptedBlueprint.profileArray("historyFindings").isEmpty
             ? raw.historyFindings.profileArrayValue
             : acceptedBlueprint.profileArray("historyFindings")
+        let persistedProfileScores = raw.profileScores ?? .object([:])
+        let profileScoresObject = persistedProfileScores.profileIsEmpty
+            ? acceptedBlueprint.profileValue("profileScores")
+            : persistedProfileScores
 
         id = raw.id
         revisionNumber = raw.revisionNumber
@@ -274,6 +279,7 @@ struct ProfileAthleteBlueprint: Identifiable {
             fallbackSummary: goalFitObject.profileString("summary"),
             json: goalFitObject
         )
+        profileScores = AthleteProfileScores.decode(jsonValue: profileScoresObject)
     }
 
     var previewSections: [ProfileBlueprintSection] {
@@ -391,6 +397,8 @@ struct ProfileRawBlueprintRevision: Decodable {
     let currentTrainingState: JSONValue
     let historyFindings: JSONValue
     let goalFit: JSONValue
+    let profileScores: JSONValue?
+    let profileScoreVersion: String?
     let planningInputs: JSONValue
     let generatedAt: String
     let acceptedAt: String?
@@ -404,6 +412,8 @@ struct ProfileRawBlueprintRevision: Decodable {
         case currentTrainingState = "current_training_state_json"
         case historyFindings = "history_findings_json"
         case goalFit = "goal_fit_json"
+        case profileScores = "profile_scores_json"
+        case profileScoreVersion = "profile_score_version"
         case planningInputs = "planning_inputs_json"
         case generatedAt = "generated_at"
         case acceptedAt = "accepted_at"

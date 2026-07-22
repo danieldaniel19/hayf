@@ -78,6 +78,20 @@ Deno.test("deterministic recovery plan honors weekdays and emits complete prescr
     rhythm.modalityTargets.reduce((sum, target) => sum + target.sessions, 0) ===
       rhythm.workouts.length
   )));
+  const purposes = plan.rhythms.flatMap((rhythm) =>
+    rhythm.workouts.map((workout) => workout.purpose)
+  );
+  assertEquals(new Set(purposes.map((purpose) => purpose.toLowerCase())).size, purposes.length);
+  assert(purposes.every((purpose) => {
+    const words = purpose.trim().split(/\s+/).length;
+    return purpose.length <= 52 && words >= 5 && words <= 8 && !purpose.includes("...");
+  }));
+  const ridePurposes = plan.rhythms.flatMap((rhythm) =>
+    rhythm.workouts
+      .filter((workout) => workout.activityType === "ride")
+      .map((workout) => workout.purpose)
+  );
+  assertEquals(new Set(ridePurposes).size, ridePurposes.length);
 });
 
 function planWithPrescription(

@@ -20,12 +20,14 @@ The blueprint is not the plan. It is the evidence-backed read of the athlete tha
 
 The user-facing Athlete Blueprint shows:
 
-1. `coach_read`
+1. `athlete_profile_scores` with the short `coach_read` interpretation when sufficient evidence exists
 2. `athlete_archetype`
 3. `current_training_state`
 4. `physical_baseline`
 5. `history_findings`
 6. `goal_fit`
+
+Whenever a valid score envelope exists, the first section shows the radar and its `coach_read` interpretation. The text-only card is reserved for a missing or invalid envelope.
 
 The coach-side model may also maintain:
 
@@ -69,6 +71,49 @@ The AI never sees raw HealthKit samples. It sees:
 
 ## Section Contracts
 
+### 0. `athlete_profile_scores`
+
+#### Job
+
+Give the athlete a stable, legible view of the evidence HAYF can currently support. The deterministic contract retains integer evidence indicators from 0–100, while the product presents rounded whole numbers from 0–10. Exact halves round down. They are not percentiles, medical assessments, or predictions of target completion.
+
+#### Fixed axis order
+
+The clockwise order is immutable for `profile-radar-v1.2.0`:
+
+1. Consistency
+2. Momentum
+3. Strength
+4. Training base
+5. Endurance
+
+#### Deterministic ownership
+
+All scores are produced by `hayf-athlete-profile-engine`. The AI may never author, repair, reorder, alter, quote, or rank a number in the narrative below the chart. The envelope uses `athlete-profile-scores.v1` and carries `profile-radar-v1.2.0` in `scoreVersion`.
+
+Each dimension includes its key, integer score or `null`, availability status, confidence, weighted components, and evidence IDs. A dimension is `unavailable` when less than 70% of its required evidence weight is trustworthy. Missing evidence is never represented as zero or 50. Fresh 7-, 28-, and 90-day components are excluded when the source snapshot is more than 36 hours old; remaining component weights are re-normalized only at or above 70% coverage.
+
+#### Rubric
+
+| Dimension | Version 1 components |
+| --- | --- |
+| Consistency | Active-week rate 30%: `(0,0) (.25,30) (.50,65) (.75,90) (.90,100)`; longest streak 20%: `(0,0) (4,35) (12,70) (24,90) (40,100)`; absolute imported-workout recency 25%: `0–2d=100, 7d=75, 21d=35, 60d=0`; fresh 28-day cadence against declared weekly frequency 25%: `(0,0) (.50,60) (.80,85) (1,100)` |
+| Momentum | Absolute workout recency 70%: `0–2d=100, 7d=75, 21d=35, 60d=0`; fresh 7-day minutes versus 28-day weekly baseline 20%: `(0,0) (.50,60) (.80,90) (1–1.25,100) (1.5,85) (2,60) (3,30)`; fresh current-week cadence 10%: `(0,0) (.50,60) (.80,85) (1+,100)` |
+| Strength | Historical strength sessions 40%: `(0,0) (12,15) (50,35) (150,55) (300,70) (600,85) (1000,100)`; historical strength share 25%: `(0,0) (.10,30) (.25,60) (.50,85) (.75,100)`; fresh 90-day sessions 20%: `(0,0) (3,25) (12,70) (24,100)`; absolute strength recency 15%: `0d=100, 7d=85, 28d=40, 90d=0` |
+| Training base | A goal-independent longitudinal foundation: consistency 35%, current continuity 20%, the stronger available strength/endurance foundation 35%, and the complementary foundation 10%. This is stable across onboarding intents and can evolve as the athlete continues training. |
+| Endurance | Recognized historical sessions 30% using the same de-saturated session curve as strength; endurance share of minutes 25%: `(0,0) (.15,25) (.35,50) (.60,75) (.85,95) (1,100)`; longest session 20%: `(0m,0) (30m,25) (60m,55) (120m,85) (240m,100)`; best-distance effort breadth 10%: `0=0, 1=55, 2=75, 3=90, 4=100`; absolute endurance recency 15%: `0d=100, 7d=90, 28d=60, 60d=30, 120d=0` |
+
+Body composition, sleep, HRV, VO₂ max, and all other recovery signals remain excluded from `profile-radar-v1.2.0`. Apple Health currently supplies recent recovery snapshots, but the scoring contract does not yet have the personal baselines, trend windows, source coverage, and freshness metadata required for a trustworthy longitudinal Recovery axis.
+
+#### Rendering and fallback
+
+- Five available dimensions render the filled and outlined pentagon.
+- Fewer than five available dimensions render the grid and every supported point without filling through missing vertices; unavailable axes remain visible as `—`.
+- An older revision, an invalid envelope, or a scoring-service outage renders the text-only Coach's Read card.
+- Available axes show the rounded whole-number 0–10 presentation value; unavailable axes show `—` and read as “not enough evidence” to VoiceOver. A supported zero is available and is plotted at the chart origin.
+- The full onboarding card includes the one-to-two-sentence interpretation and imported-workout count.
+- The accepted envelope is persisted exactly on the blueprint revision and reused by the compact Profile card and full Profile detail sheet.
+
 ### 1. `coach_read`
 
 #### Job
@@ -104,8 +149,8 @@ Deliver the opening verdict. This is the emotional center of the screen: one sho
 
 #### Length
 
-- 2 to 4 sentences
-- 45 to 90 words
+- With `athlete_profile_scores`: 1 to 2 AI-authored sentences, fewer than 190 characters. Synthesize the athlete's history, present state, and one coaching implication without quoting, ranking, or mentioning radar scores or axis labels.
+- Without scores: retain the established concise text fallback.
 
 #### Example
 
@@ -397,7 +442,7 @@ Recommended evidence object:
 
 ## AI Output Schema
 
-The AI should return structured JSON only.
+The AI should return structured JSON only. `athlete_profile_scores` is intentionally absent from this authored schema: the backend merges the exact deterministic envelope after structured generation.
 
 ```json
 {

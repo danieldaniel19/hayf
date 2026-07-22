@@ -6,6 +6,11 @@ import {
 } from "../_shared/ai-touchpoints.ts";
 import { touchpointResponseMetadata } from "../_shared/ai-touchpoint-schemas.ts";
 import {
+  modalitySafeSessionSummaryFallback,
+  sessionSummaryContradictsActivity,
+} from "../_shared/session-summary.ts";
+import { validAthleteProfileScores } from "../_shared/athlete-profile-scoring.ts";
+import {
   currentBodyMetricContext,
   healthSnapshotFreshness,
   workoutContinuityEvidence,
@@ -715,7 +720,7 @@ const planSchema: Record<string, unknown> = {
                 title: { type: "string" },
                 durationMinutes: { type: "integer" },
                 intensityLabel: { type: "string" },
-                purpose: { type: "string" },
+                purpose: { type: "string", maxLength: 80 },
                 prescription: generatedRichPrescriptionSchema,
                 fuelingSummary: { type: "string" },
               },
@@ -1532,7 +1537,7 @@ async function startAcceptPreparedStrategyAndCreateInitialPlan(
 
   return {
     userID,
-    model: "deterministic",
+    model,
     status: "running",
     fitnessStrategyID: strategy.id,
   };
@@ -1699,18 +1704,22 @@ async function acceptPreparedStrategyAndCreateInitialPlan(
 
   let activationCommitted = false;
   try {
-    let planOrchestration = edgeDeterministicInitialPlanOrchestration({
-      reason: "Initial onboarding plans compile locally so acceptance never waits for a remote model.",
-      recordFailure: false,
-      goal,
-      strategy,
-      onboarding,
-      trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
-      committedWeekStart,
-      ownerStartDate,
-      programStartDate,
-      acceptedTargetDate,
-    });
+    let planOrchestration: TwoWeekPlanOrchestrationOutput;
+    try {
+      planOrchestration = await runTwoWeekPlanOrchestration(context, model);
+    } catch (error) {
+      planOrchestration = edgeDeterministicInitialPlanOrchestration({
+        reason: `AI initial plan generation failed: ${errorMessage(error)}`,
+        goal,
+        strategy,
+        onboarding,
+        trainingArchitecture: trainingArchitecture?.architecture_json ?? null,
+        committedWeekStart,
+        ownerStartDate,
+        programStartDate,
+        acceptedTargetDate,
+      });
+    }
     const initialActuals = actualWorkoutsForInitialWeek(
       requestBody.actualWorkouts ?? [],
       isoDate(committedWeekStart),
@@ -3311,6 +3320,239 @@ async function refreshPlanWindowForUser(
   }
 }
 
+type SessionSummaryRefreshOutput = {
+  summaries: Array<{ workoutID: string; summary: string }>;
+};
+
+async function refreshLegacySessionSummaries(
+  admin: SupabaseAdminClient,
+  args: {
+    userID: string;
+    model: string;
+    goal: Record<string, any>;
+    strategy: Record<string, any>;
+    trainingArchitecture: Record<string, any>;
+    weeklyPlans: Record<string, any>[];
+  },
+) {
+  const weeklyPlanIDs = args.weeklyPlans.map((plan) => String(plan.id)).filter(Boolean);
+  if (weeklyPlanIDs.length === 0) return 0;
+
+  const workouts: Record<string, any>[] = await list(
+    admin
+      .from("planned_workouts")
+      .select("id,weekly_plan_id,scheduled_date,sequence_order,activity_type,title,duration_minutes,intensity_label,purpose,estimated_distance_kilometers,estimated_elevation_meters,prescription_json,status,source")
+      .eq("user_id", args.userID)
+      .in("weekly_plan_id", weeklyPlanIDs)
+      .in("status", ["planned", "current"])
+      .in("source", ["generated", "replanned", "user_added"])
+      .order("scheduled_date", { ascending: true })
+      .order("sequence_order", { ascending: true }),
+  );
+  if (workouts.length === 0) return 0;
+
+  const summaryCounts = new Map<string, number>();
+  for (const workout of workouts) {
+    const key = normalizedSessionSummary(workout.purpose);
+    if (key) summaryCounts.set(key, (summaryCounts.get(key) ?? 0) + 1);
+  }
+  const workoutsToRefresh = workouts.filter((workout) => {
+    const key = normalizedSessionSummary(workout.purpose);
+    return needsSessionSummaryRefresh(String(workout.purpose ?? ""), workout.activity_type) ||
+      (summaryCounts.get(key) ?? 0) > 1;
+  });
+  if (workoutsToRefresh.length === 0) return 0;
+
+  const weeklyTargets: Record<string, any>[] = await list(
+    admin
+      .from("planning_targets")
+      .select("weekly_plan_id,title,description,metric_key,target_value,unit,direction")
+      .eq("user_id", args.userID)
+      .in("weekly_plan_id", weeklyPlanIDs)
+      .eq("target_scope", "week")
+      .in("status", ["on_track", "lagging", "achieved", "needs_review"]),
+  );
+  const planByID = new Map(args.weeklyPlans.map((plan) => [String(plan.id), plan]));
+  const workoutsByPlan = new Map<string, Record<string, any>[]>();
+  for (const workout of workouts) {
+    const planID = String(workout.weekly_plan_id ?? "");
+    workoutsByPlan.set(planID, [...(workoutsByPlan.get(planID) ?? []), workout]);
+  }
+  const summaries = await runSessionSummaryRefreshGeneration({
+    goal: {
+      kind: args.goal.goal_kind,
+      title: args.goal.title,
+      targetDate: args.goal.target_date,
+    },
+    strategy: {
+      title: args.strategy.title,
+      acceptedStrategy: args.strategy.context_json?.acceptedStrategy ?? null,
+    },
+    trainingArchitecture: {
+      priorityOrder: args.trainingArchitecture.priority_order,
+      modalityRoles: args.trainingArchitecture.modality_roles,
+      reentry: args.trainingArchitecture.reentry,
+      phases: args.trainingArchitecture.phase_logic?.phases,
+    },
+    retainedSummaries: workouts
+      .filter((workout) => !workoutsToRefresh.some((candidate) => candidate.id === workout.id))
+      .map((workout) => workout.purpose)
+      .filter(Boolean),
+    sessions: workoutsToRefresh.map((workout) => {
+      const planID = String(workout.weekly_plan_id ?? "");
+      const plan = planByID.get(planID) ?? {};
+      const ordered = workoutsByPlan.get(planID) ?? [];
+      const ordinal = Math.max(1, ordered.findIndex((candidate) => candidate.id === workout.id) + 1);
+      return {
+        workoutID: workout.id,
+        scheduledDate: workout.scheduled_date,
+        weekday: weekdayNameForPlanning(parseDateOnly(workout.scheduled_date) ?? new Date(`${workout.scheduled_date}T00:00:00Z`)),
+        ordinalInWeek: ordinal,
+        sessionCountInWeek: ordered.length,
+        activityType: workout.activity_type,
+        title: workout.title,
+        durationMinutes: workout.duration_minutes,
+        intensityLabel: workout.intensity_label,
+        estimatedDistanceKilometers: workout.estimated_distance_kilometers,
+        estimatedElevationMeters: workout.estimated_elevation_meters,
+        prescriptionSummary: workout.prescription_json?.summary ?? null,
+        whyToday: workout.prescription_json?.whyToday ?? null,
+        week: {
+          status: plan.status,
+          startDate: plan.week_start_date,
+          objective: plan.objective,
+          programStage: plan.rhythm_json?.programStage ?? null,
+          programWeekNumber: plan.rhythm_json?.programWeekNumber ?? null,
+          strategyExplanation: plan.context_json?.strategyExplanation ?? null,
+          modalityTargets: plan.rhythm_json?.modalityTargets ?? [],
+          targets: weeklyTargets.filter((target) => String(target.weekly_plan_id) === planID),
+        },
+      };
+    }),
+  }, args.model);
+
+  const requestedIDs = new Set<string>(workoutsToRefresh.map((workout) => String(workout.id)));
+  const returnedIDs = new Set(summaries.summaries.map((item) => item.workoutID));
+  if (returnedIDs.size !== requestedIDs.size || [...requestedIDs].some((id) => !returnedIDs.has(id))) {
+    throw new Error("Session summary refresh did not return exactly one summary for every requested workout.");
+  }
+
+  const used = new Set(
+    workouts
+      .filter((workout) => !requestedIDs.has(String(workout.id)))
+      .map((workout) => normalizedSessionSummary(workout.purpose))
+      .filter(Boolean),
+  );
+  for (const item of summaries.summaries) {
+    const workout = workoutsToRefresh.find((candidate) => String(candidate.id) === item.workoutID);
+    assertGeneratedSessionSummary(item.summary, workout?.activity_type);
+    const key = normalizedSessionSummary(item.summary);
+    if (used.has(key)) throw new Error(`Session summary refresh repeated a summary: ${item.summary}`);
+    used.add(key);
+  }
+
+  for (const item of summaries.summaries) {
+    await throwOnError(
+      admin
+        .from("planned_workouts")
+        .update({ purpose: item.summary.trim() })
+        .eq("id", item.workoutID)
+        .eq("user_id", args.userID),
+    );
+  }
+  return summaries.summaries.length;
+}
+
+async function runSessionSummaryRefreshGeneration(
+  context: Record<string, unknown>,
+  model: string,
+): Promise<SessionSummaryRefreshOutput> {
+  const apiKey = mustGetEnv("OPENAI_API_KEY");
+  const sessionCount = Array.isArray(context.sessions) ? context.sessions.length : 0;
+  const config: AITouchpointConfig = {
+    id: "session_summary_refresh",
+    model,
+    systemPrompt: "You are HAYF's session-card summary writer. Return strict JSON only. You may rewrite only the supplied summaries and must not alter the plan.",
+    userRules: "Write one distinct athlete-facing sentence per workout, 7-12 words and at most 80 characters. Treat each session's activityType as immutable truth: the opening subject must describe that exact modality, so walking is never called running, cycling, or hiking. Other modalities may appear later only as neighboring-session context. For each sentence synthesize at least three useful signals from modality and prescription, weekday, ordinal position, duration and intensity, Launch or program week, neighboring load, phase or re-entry state, and the goal or weekly target advanced. Make the reason for this particular session legible without listing metadata. Compare all new and retained summaries; rewrite repeats and near-duplicates. Never copy the title, week explanation, prescription text, or another summary. Never use generic labels such as Build aerobic rhythm, truncate, or add ellipses.",
+    text: { verbosity: "low" },
+  };
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(responsesRequestPayload(
+      model,
+      config,
+      { task: "refresh_legacy_session_summaries", context, rules: config.userRules },
+      {
+        type: "json_schema",
+        name: "session_summary_refresh",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["summaries"],
+          properties: {
+            summaries: {
+              type: "array",
+              minItems: sessionCount,
+              maxItems: sessionCount,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["workoutID", "summary"],
+                properties: {
+                  workoutID: { type: "string" },
+                  summary: { type: "string", maxLength: 80 },
+                },
+              },
+            },
+          },
+        },
+      },
+    )),
+    signal: AbortSignal.timeout(90_000),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload?.error?.message ?? "OpenAI session summary refresh failed");
+  const outputText = extractOutputText(payload);
+  if (!outputText) throw new Error("OpenAI returned no session summary refresh output");
+  return JSON.parse(outputText) as SessionSummaryRefreshOutput;
+}
+
+function needsSessionSummaryRefresh(value: string, activityType?: unknown) {
+  const normalized = normalizedSessionSummary(value);
+  const wordCount = value.trim().split(/\s+/).filter(Boolean).length;
+  return !normalized ||
+    wordCount < 5 ||
+    value.length > 80 ||
+    /^(?:build aerobic rhythm|build durable strength|build a repeatable rhythm|aerobic endurance base|endurance|strength)[.!]?$/i.test(value.trim()) ||
+    sessionSummaryContradictsActivity(activityType, value) ||
+    /…|\.\.\./.test(value);
+}
+
+function normalizedSessionSummary(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function assertGeneratedSessionSummary(value: string, activityType?: unknown) {
+  const summary = value.trim();
+  const words = summary.split(/\s+/).filter(Boolean).length;
+  if (
+    summary.length > 80 ||
+    words < 7 ||
+    words > 12 ||
+    !/[.!?]$/.test(summary) ||
+    needsSessionSummaryRefresh(summary, activityType) ||
+    /[—–…]|\.\.\./.test(summary)
+  ) {
+    throw new Error(`Generated session summary is not specific and compact: ${summary}`);
+  }
+}
+
 async function refreshPlanWindowForUserUnlocked(
   admin: SupabaseAdminClient,
   userID: string,
@@ -3350,6 +3592,22 @@ async function refreshPlanWindowForUserUnlocked(
     });
   }
 
+  let refreshedSessionSummaries = 0;
+  if (trigger === "user" && windowAlreadyExists) {
+    try {
+      refreshedSessionSummaries = await refreshLegacySessionSummaries(admin, {
+        userID,
+        model,
+        goal: scope.goal,
+        strategy: scope.strategy,
+        trainingArchitecture,
+        weeklyPlans: existingWeeklyPlans,
+      });
+    } catch (error) {
+      console.error(`Session summary refresh deferred: ${errorMessage(error)}`);
+    }
+  }
+
   if (pendingManualReview.hasPending && windowAlreadyExists) {
     const event = await createPlanEvent(admin, {
       userID,
@@ -3363,6 +3621,7 @@ async function refreshPlanWindowForUserUnlocked(
         window,
         pendingEditCount: pendingManualReview.pendingEditCount,
         pendingProposalID: pendingManualReview.pendingProposalID,
+        refreshedSessionSummaries,
       },
     });
 
@@ -3373,6 +3632,7 @@ async function refreshPlanWindowForUserUnlocked(
       reason: "pending_manual_review",
       pendingEditCount: pendingManualReview.pendingEditCount,
       pendingProposalID: pendingManualReview.pendingProposalID,
+      refreshedSessionSummaries,
       fitnessStrategyID: scope.strategy.id,
       eventID: event.id,
     };
@@ -3388,9 +3648,12 @@ async function refreshPlanWindowForUserUnlocked(
         trigger,
         trainingArchitectureID: scope.trainingArchitectureID,
         skipped: true,
-        reason: "visible_two_week_window_already_exists",
+        reason: refreshedSessionSummaries > 0
+          ? "legacy_session_summaries_refreshed"
+          : "visible_two_week_window_already_exists",
         window,
         duplicateGeneratedWorkouts,
+        refreshedSessionSummaries,
       },
     });
 
@@ -3398,9 +3661,12 @@ async function refreshPlanWindowForUserUnlocked(
       userID,
       model: "deterministic",
       skipped: true,
-      reason: "visible_two_week_window_already_exists",
+      reason: refreshedSessionSummaries > 0
+        ? "legacy_session_summaries_refreshed"
+        : "visible_two_week_window_already_exists",
       fitnessStrategyID: scope.strategy.id,
       eventID: event.id,
+      refreshedSessionSummaries,
     };
   }
 
@@ -7365,7 +7631,10 @@ function sanitizeWorkoutCandidate(
   const activityType = normalizeActivity(candidate?.activityType || fallback.activityType || "training");
   const intensityLabel = compactWorkoutText(candidate?.intensityLabel || fallback.intensityLabel || "Moderate", 28);
   const title = compactWorkoutTitle(candidate?.title || fallback.title || titleCase(activityType), activityType);
-  const purpose = compactWorkoutText(candidate?.purpose || fallback.purpose || "Useful workout", 48);
+  const rawPurpose = compactWorkoutText(candidate?.purpose || fallback.purpose || "Useful workout", 80);
+  const purpose = sessionSummaryContradictsActivity(activityType, rawPurpose)
+    ? modalitySafeSessionSummaryFallback(activityType, intensityLabel)
+    : rawPurpose;
   const text = `${activityType} ${title} ${intensityLabel} ${purpose} ${JSON.stringify(candidate?.prescription ?? fallback.prescription ?? {})}`.toLowerCase();
   const distanceEligible = distanceEligibleActivity(activityType, title, purpose);
   return {
@@ -7706,7 +7975,9 @@ function withResolvedWorkoutModality(candidate: WorkoutCandidate, userText: stri
       activityType: "walk",
       title: easy ? "Recovery Walk" : "Walk",
       estimatedElevationMeters: null,
-      purpose: candidate.purpose || (easy ? "Recovery support" : "Walking"),
+      purpose: sessionSummaryContradictsActivity("walk", candidate.purpose)
+        ? modalitySafeSessionSummaryFallback("walk", easy ? "Easy" : candidate.intensityLabel)
+        : candidate.purpose || modalitySafeSessionSummaryFallback("walk", easy ? "Easy" : candidate.intensityLabel),
     };
   }
   return candidate;
@@ -8062,6 +8333,8 @@ async function createAcceptedBlueprintRevision(
   healthSnapshot: Record<string, unknown> | null | undefined,
   acceptedAt: Date,
 ) {
+  const profileScoresCandidate = objectAt(acceptedBlueprint, "profileScores");
+  const profileScores = validAthleteProfileScores(profileScoresCandidate) ? profileScoresCandidate : null;
   const existing = await list(
     admin
       .from("athlete_blueprint_revisions")
@@ -8071,28 +8344,37 @@ async function createAcceptedBlueprintRevision(
       .limit(1),
   );
   const revisionNumber = Number(existing[0]?.revision_number ?? 0) + 1;
-  const revision = await single(
-    admin
-      .from("athlete_blueprint_revisions")
-      .insert({
-        athlete_profile_id: athleteProfile.id,
-        user_id: userID,
-        revision_number: revisionNumber,
-        generation_reason: "initial_post_onboarding",
-        coach_read: stringAt(objectAt(acceptedBlueprint, "coachRead"), "text") || stringAt(acceptedBlueprint, "coachRead") || "",
-        athlete_archetype_json: objectAt(acceptedBlueprint, "archetype") ?? {},
-        current_training_state_json: objectAt(acceptedBlueprint, "currentTrainingState") ?? {},
-        history_findings_json: arrayAt(acceptedBlueprint, "historyFindings"),
-        goal_fit_json: objectAt(acceptedBlueprint, "goalFit") ?? {},
-        planning_inputs_json: { acceptedBlueprint },
-        evidence_packet_json: { healthSnapshot: healthSnapshot ?? null },
-        evidence_packet_version: "v1",
-        accepted_at: acceptedAt.toISOString(),
-      })
-      .select()
-      .single(),
-    "Could not create athlete blueprint revision",
-  );
+  const revisionPayload = {
+    athlete_profile_id: athleteProfile.id,
+    user_id: userID,
+    revision_number: revisionNumber,
+    generation_reason: "initial_post_onboarding",
+    coach_read: stringAt(objectAt(acceptedBlueprint, "coachRead"), "text") || stringAt(acceptedBlueprint, "coachRead") || "",
+    athlete_archetype_json: objectAt(acceptedBlueprint, "archetype") ?? {},
+    current_training_state_json: objectAt(acceptedBlueprint, "currentTrainingState") ?? {},
+    history_findings_json: arrayAt(acceptedBlueprint, "historyFindings"),
+    goal_fit_json: objectAt(acceptedBlueprint, "goalFit") ?? {},
+    profile_scores_json: profileScores ?? {},
+    profile_score_version: profileScores ? stringAt(profileScores, "scoreVersion") || null : null,
+    planning_inputs_json: { acceptedBlueprint },
+    evidence_packet_json: { healthSnapshot: healthSnapshot ?? null },
+    evidence_packet_version: "v1",
+    accepted_at: acceptedAt.toISOString(),
+  };
+  let revision;
+  try {
+    revision = await single(
+      admin.from("athlete_blueprint_revisions").insert(revisionPayload).select().single(),
+      "Could not create athlete blueprint revision",
+    );
+  } catch (error) {
+    if (!isMissingProfileScoreColumns(error)) throw error;
+    const { profile_scores_json: _profileScores, profile_score_version: _scoreVersion, ...legacyPayload } = revisionPayload;
+    revision = await single(
+      admin.from("athlete_blueprint_revisions").insert(legacyPayload).select().single(),
+      "Could not create athlete blueprint revision",
+    );
+  }
 
   await throwOnError(
     admin
@@ -8103,6 +8385,15 @@ async function createAcceptedBlueprintRevision(
   );
 
   return revision;
+}
+
+function isMissingProfileScoreColumns(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  return (message.includes("profile_scores_json") || message.includes("profile_score_version")) && (
+    message.includes("does not exist") ||
+    message.includes("schema cache") ||
+    message.includes("column")
+  );
 }
 
 function preparedGoalTitle(onboarding: Record<string, any>) {
@@ -10847,6 +11138,7 @@ function assertInitialPlanCoherence(
     ? selectedPriority
     : compactStringArray(trainingArchitecture?.priority_order ?? []);
   const primary = normalizeActivity(priorityOrder[0] ?? "");
+  const purposeKeys = new Set<string>();
 
   for (const [index, expected] of policy.rhythms.entries()) {
     const rhythm = generated.rhythms[index];
@@ -10888,6 +11180,11 @@ function assertInitialPlanCoherence(
         throw new Error(`Generated workout ${workout.title} requires a version 2 prescription and whyToday.`);
       }
       assertGeneratedWorkoutVisibleCopy(workout);
+      const purposeKey = workout.purpose.trim().toLowerCase().replace(/\s+/g, " ");
+      if (purposeKeys.has(purposeKey)) {
+        throw new Error(`Initial plan repeated a session-card summary: ${workout.purpose}.`);
+      }
+      purposeKeys.add(purposeKey);
     }
 
     for (const target of rhythm.modalityTargets ?? []) {
@@ -10913,6 +11210,17 @@ function assertGeneratedWorkoutVisibleCopy(workout: GeneratedWorkout) {
   }
   if (workout.fuelingSummary.length > 20 || workout.fuelingSummary.trim().split(/\s+/).length > 3) {
     throw new Error(`Generated workout fuel exceeds the compact copy budget: ${workout.title}.`);
+  }
+  const purpose = workout.purpose.trim();
+  const purposeWords = purpose.split(/\s+/).length;
+  if (
+    purpose.length > 80 ||
+    purposeWords < 5 ||
+    purposeWords > 12 ||
+    !/[.!?]$/.test(purpose) ||
+    /^build aerobic rhythm[.!]?$/i.test(purpose)
+  ) {
+    throw new Error(`Generated workout session-card summary is not compact and specific: ${workout.title}.`);
   }
 
   const rawArchetypeLabels = workout.archetypeId
